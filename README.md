@@ -13,6 +13,7 @@ Auto-Crypto is a paper-first crypto trading automation service for Discord and w
 - Optional CCXT adapter boundary for future live exchange integrations
 - Optional HMAC-signed webhook verification through `AUTO_CRYPTO_WEBHOOK_SECRET`
 - SQLite repository for signal, paper-order, and audit history
+- Operator halt/resume controls that block new orders and record audit events
 
 Live trading is intentionally not enabled by default. Do not grant withdrawal permissions to exchange API keys.
 
@@ -25,6 +26,8 @@ python -m pip install -e ".[dev]"
 python -m pytest
 python -m uvicorn autocrypto.app:app --reload
 ```
+
+For environment-backed settings, import and run `autocrypto.app:create_app_from_env()` from your ASGI launcher. `AUTO_CRYPTO_DB_PATH` enables SQLite persistence, and `AUTO_CRYPTO_WEBHOOK_SECRET` enables signed webhook enforcement.
 
 Send a test signal:
 
@@ -56,6 +59,12 @@ When a signed request is accepted, the same timestamp/body pair is rejected on r
 - `GET /orders`: accepted paper orders
 - `GET /audit`: signal and order lifecycle audit events
 
+## Operator Controls
+
+- `GET /control/status`: halt status
+- `POST /control/halt` with `{"reason": "..."}`: blocks new order execution
+- `POST /control/resume`: resumes new order execution
+
 ## Signal Schema
 
 Required:
@@ -77,8 +86,8 @@ Forbidden signal actions include withdrawal and transfer actions.
 
 ## Roadmap
 
-1. Load repository and risk settings from environment/application config.
-2. Expand Discord controls with approve/reject/halt flows.
-3. Add official sandbox/live adapters behind explicit config gates.
-4. Add portfolio reconciliation and exchange user-stream workers.
-5. Add PostgreSQL deployment option for multi-user hosting.
+1. Expand Discord controls with approve/reject/halt flows.
+2. Add official sandbox/live adapters behind explicit config gates.
+3. Add portfolio reconciliation and exchange user-stream workers.
+4. Add PostgreSQL deployment option for multi-user hosting.
+5. Add deployment manifests and CI.

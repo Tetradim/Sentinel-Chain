@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 
+from .config import load_settings
 from .engine import TradingEngine
 from .execution import PaperExchange
 from .repository import SQLiteRepository
@@ -40,7 +41,33 @@ def create_app(
 
     @app.get("/health")
     def health() -> dict[str, Any]:
-        return {"status": "ok", "default_mode": "paper", "orders": len(engine.exchange.orders)}
+        return {
+            "status": "ok",
+            "default_mode": "paper",
+            "orders": len(engine.exchange.orders),
+            "halted": engine.halted,
+            "halt_reason": engine.halt_reason,
+        }
+
+    @app.get("/control/status")
+    def control_status() -> dict[str, Any]:
+        return {"halted": engine.halted, "reason": engine.halt_reason}
+
+    @app.post("/control/halt")
+    async def halt(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        reason = str(payload.get("reason") or "manual halt")
+        engine.halt(reason)
+        if repository:
+            repository.record_audit("trading.halted", {"reason": reason})
+        return {"halted": True, "reason": reason}
+
+    @app.post("/control/resume")
+    def resume() -> dict[str, Any]:
+        engine.resume()
+        if repository:
+            repository.record_audit("trading.resumed", {})
+        return {"halted": False, "reason": ""}
 
     @app.post("/webhooks/tradingview")
     async def tradingview_webhook(request: Request) -> dict[str, Any]:
@@ -73,6 +100,11 @@ def create_app(
             if result.order:
                 repository.save_order(result.order)
                 repository.record_audit("order.accepted", {"order_id": result.order.order_id})
+            elif result.status == "halted":
+                repository.record_audit(
+                    "order.halted",
+                    {"signal_id": signal.signal_id, "reason": result.reason},
+                )
             elif result.status == "rejected":
                 repository.record_audit(
                     "order.rejected",
@@ -95,6 +127,17 @@ def create_app(
         return {"events": [event.to_dict() for event in repository.list_audit()] if repository else []}
 
     return app
+
+
+def create_app_from_env() -> FastAPI:
+    settings = load_settings()
+    repository = SQLiteRepository(settings.db_path) if settings.db_path else None
+    return create_app(
+        risk_config=settings.risk,
+        webhook_secret=settings.webhook_secret,
+        webhook_tolerance_seconds=settings.webhook_tolerance_seconds,
+        repository=repository,
+    )
 
 
 app = create_app()
