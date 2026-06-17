@@ -62,9 +62,27 @@ def test_exchanges_endpoint_returns_paper_and_ccxt_exchange_ids(monkeypatch):
     assert response.json() == {
         "ccxt_available": True,
         "exchanges": [
-            {"exchange_id": "paper", "driver": "paper", "live_trading": False},
-            {"exchange_id": "binance", "driver": "ccxt", "live_trading": True},
-            {"exchange_id": "kraken", "driver": "ccxt", "live_trading": True},
+            {
+                "exchange_id": "paper",
+                "driver": "paper",
+                "driver_available": True,
+                "credentials_configured": False,
+                "live_execution_enabled": False,
+            },
+            {
+                "exchange_id": "binance",
+                "driver": "ccxt",
+                "driver_available": True,
+                "credentials_configured": False,
+                "live_execution_enabled": False,
+            },
+            {
+                "exchange_id": "kraken",
+                "driver": "ccxt",
+                "driver_available": True,
+                "credentials_configured": False,
+                "live_execution_enabled": False,
+            },
         ],
     }
 

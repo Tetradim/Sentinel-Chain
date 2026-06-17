@@ -176,16 +176,13 @@ def create_app(
 
     @app.get("/exchanges")
     def exchanges() -> dict[str, Any]:
-        exchange_rows = [{"exchange_id": "paper", "driver": "paper", "live_trading": False}]
+        exchange_rows = [_exchange_row("paper", "paper")]
         try:
             ccxt_exchange_ids = list_ccxt_exchange_ids()
         except CcxtNotInstalledError:
             return {"ccxt_available": False, "exchanges": exchange_rows}
 
-        exchange_rows.extend(
-            {"exchange_id": exchange_id, "driver": "ccxt", "live_trading": True}
-            for exchange_id in ccxt_exchange_ids
-        )
+        exchange_rows.extend(_exchange_row(exchange_id, "ccxt") for exchange_id in ccxt_exchange_ids)
         return {"ccxt_available": True, "exchanges": exchange_rows}
 
     @app.get("/exchanges/{exchange_id}/capabilities")
@@ -333,3 +330,13 @@ def _paper_capabilities() -> ExchangeCapabilities:
         cancel_order=False,
         fetch_balance=False,
     )
+
+
+def _exchange_row(exchange_id: str, driver: str) -> dict[str, Any]:
+    return {
+        "exchange_id": exchange_id,
+        "driver": driver,
+        "driver_available": True,
+        "credentials_configured": False,
+        "live_execution_enabled": False,
+    }

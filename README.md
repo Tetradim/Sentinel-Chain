@@ -77,11 +77,11 @@ When `AUTO_CRYPTO_DB_PATH` is enabled, signal IDs are claimed with an insert-onl
 
 ## Exchange Discovery
 
-- `GET /exchanges`: returns paper mode plus installed CCXT exchange IDs
+- `GET /exchanges`: returns paper mode plus installed CCXT exchange IDs with separate `driver_available`, `credentials_configured`, and `live_execution_enabled` flags
 - `GET /exchanges/paper/capabilities`: returns paper execution capabilities
 - `GET /exchanges/{exchange_id}/capabilities`: returns CCXT-reported venue capabilities when `auto-crypto[exchange]` is installed
 
-Exchange discovery does not enable live trading by itself. Live order placement still requires an explicit adapter path and exchange API keys without withdrawal permissions.
+Exchange discovery does not enable live trading by itself. CCXT rows mean the adapter driver can be inspected, not that credentials are configured or live order placement is enabled.
 Signals whose `exchange` value is not in `AUTO_CRYPTO_ALLOWED_EXCHANGES` are rejected by risk checks.
 
 ## Paper Price Updates
