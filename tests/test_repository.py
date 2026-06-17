@@ -62,3 +62,43 @@ def test_sqlite_repository_claims_signal_once(tmp_path):
     assert repo.claim_signal(signal) is True
     assert repo.claim_signal(signal) is False
     assert len(repo.list_signals()) == 1
+
+
+def test_sqlite_repository_persists_and_pops_pending_approval(tmp_path):
+    repo = SQLiteRepository(tmp_path / "pending.sqlite3")
+    signal = normalize_signal(
+        {
+            "signal_id": "needs-review",
+            "symbol": "ETH/USDT",
+            "side": "buy",
+            "quote_amount": "40",
+            "price": "3000",
+            "stop_loss_pct": "2",
+            "take_profit_pct": "4",
+        },
+        source="test",
+    )
+
+    repo.save_pending_approval(signal)
+    reopened = SQLiteRepository(repo.path)
+
+    assert reopened.list_pending_approvals() == [
+        {
+            "signal_id": "needs-review",
+            "symbol": "ETH/USDT",
+            "side": "buy",
+            "exchange": "paper",
+            "quote_amount": "40",
+            "base_amount": None,
+            "price": "3000",
+            "strategy_id": "manual",
+        }
+    ]
+
+    popped = reopened.pop_pending_approval("needs-review")
+
+    assert popped is not None
+    assert popped.signal_id == "needs-review"
+    assert popped.symbol == "ETH/USDT"
+    assert reopened.pop_pending_approval("needs-review") is None
+    assert reopened.list_pending_approvals() == []

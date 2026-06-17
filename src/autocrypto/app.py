@@ -102,9 +102,11 @@ def create_app(
                 }
             repository.record_audit("signal.received", {"signal_id": signal.signal_id})
         if require_approval:
-            approvals.add(signal)
             if repository:
+                repository.save_pending_approval(signal)
                 repository.record_audit("approval.requested", {"signal_id": signal.signal_id})
+            else:
+                approvals.add(signal)
             return {"status": "approval_required", "signal_id": signal.signal_id}
         result = engine.process_signal(signal)
         if repository:
@@ -226,11 +228,13 @@ def create_app(
 
     @app.get("/approvals")
     def list_approvals() -> dict[str, Any]:
+        if repository:
+            return {"pending": repository.list_pending_approvals()}
         return {"pending": approvals.list_pending()}
 
     @app.post("/approvals/{signal_id}/approve")
     def approve_signal(signal_id: str) -> dict[str, Any]:
-        signal = approvals.pop(signal_id)
+        signal = repository.pop_pending_approval(signal_id) if repository else approvals.pop(signal_id)
         if signal is None:
             raise HTTPException(status_code=404, detail="pending signal not found")
         result = engine.process_signal(signal)
@@ -247,7 +251,7 @@ def create_app(
 
     @app.post("/approvals/{signal_id}/reject")
     async def reject_signal(signal_id: str, request: Request) -> dict[str, Any]:
-        signal = approvals.pop(signal_id)
+        signal = repository.pop_pending_approval(signal_id) if repository else approvals.pop(signal_id)
         if signal is None:
             raise HTTPException(status_code=404, detail="pending signal not found")
         payload = await request.json()

@@ -60,3 +60,50 @@ def test_operator_can_reject_pending_signal(tmp_path):
     audit_types = [event["event_type"] for event in client.get("/audit").json()["events"]]
     assert audit_types == ["signal.received", "approval.requested", "approval.rejected"]
 
+
+def test_pending_approval_survives_restart_and_can_be_approved(tmp_path):
+    db_path = tmp_path / "approval_restart.sqlite3"
+    first_client = TestClient(create_app(repository=SQLiteRepository(db_path), require_approval=True))
+    response = first_client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "restart-approval",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "40",
+            "price": "50000",
+            "stop_loss_pct": "2",
+        },
+    )
+    assert response.json()["status"] == "approval_required"
+
+    second_client = TestClient(create_app(repository=SQLiteRepository(db_path), require_approval=True))
+
+    assert second_client.get("/approvals").json()["pending"][0]["signal_id"] == "restart-approval"
+    approved = second_client.post("/approvals/restart-approval/approve")
+
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "accepted"
+    assert SQLiteRepository(db_path).list_orders()[0]["signal_id"] == "restart-approval"
+
+
+def test_rejected_pending_approval_is_removed_from_repository(tmp_path):
+    db_path = tmp_path / "approval_reject_restart.sqlite3"
+    client = TestClient(create_app(repository=SQLiteRepository(db_path), require_approval=True))
+    response = client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "reject-persisted",
+            "symbol": "ETHUSDT",
+            "side": "buy",
+            "quote_amount": "40",
+            "price": "3000",
+            "stop_loss_pct": "2",
+        },
+    )
+    signal_id = response.json()["signal_id"]
+
+    rejected = client.post(f"/approvals/{signal_id}/reject", json={"reason": "skip"})
+
+    assert rejected.status_code == 200
+    assert SQLiteRepository(db_path).list_pending_approvals() == []

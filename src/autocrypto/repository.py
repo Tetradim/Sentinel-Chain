@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .execution import PaperOrder
-from .signals import CryptoSignal
+from .signals import CryptoSignal, normalize_signal
 
 
 @dataclass(frozen=True)
@@ -65,6 +65,33 @@ class SQLiteRepository:
             rows = conn.execute("SELECT payload FROM signals ORDER BY rowid ASC").fetchall()
         return [json.loads(row["payload"]) for row in rows]
 
+    def save_pending_approval(self, signal: CryptoSignal) -> None:
+        payload = _signal_to_dict(signal)
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO pending_approvals (signal_id, payload)
+                VALUES (?, ?)
+                """,
+                (signal.signal_id, json.dumps(payload, sort_keys=True)),
+            )
+
+    def list_pending_approvals(self) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT payload FROM pending_approvals ORDER BY rowid ASC").fetchall()
+        return [_pending_summary(_signal_from_dict(json.loads(row["payload"]))) for row in rows]
+
+    def pop_pending_approval(self, signal_id: str) -> CryptoSignal | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM pending_approvals WHERE signal_id = ?",
+                (signal_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            conn.execute("DELETE FROM pending_approvals WHERE signal_id = ?", (signal_id,))
+        return _signal_from_dict(json.loads(row["payload"]))
+
     def save_order(self, order: PaperOrder) -> None:
         with self._connect() as conn:
             conn.execute(
@@ -121,6 +148,12 @@ class SQLiteRepository:
                 CREATE TABLE IF NOT EXISTS signal_claims (
                     signal_id TEXT PRIMARY KEY
                 );
+
+                CREATE TABLE IF NOT EXISTS pending_approvals (
+                    signal_id TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
                 """
             )
 
@@ -145,5 +178,22 @@ def _signal_to_dict(signal: CryptoSignal) -> dict[str, Any]:
         "take_profit_pct": str(signal.take_profit_pct) if signal.take_profit_pct is not None else None,
         "leverage": str(signal.leverage),
         "max_slippage_bps": signal.max_slippage_bps,
+        "strategy_id": signal.strategy_id,
+    }
+
+
+def _signal_from_dict(payload: dict[str, Any]) -> CryptoSignal:
+    return normalize_signal(payload, source=str(payload["source"]))
+
+
+def _pending_summary(signal: CryptoSignal) -> dict[str, Any]:
+    return {
+        "signal_id": signal.signal_id,
+        "symbol": signal.symbol,
+        "side": signal.side,
+        "exchange": signal.exchange,
+        "quote_amount": str(signal.quote_amount) if signal.quote_amount is not None else None,
+        "base_amount": str(signal.base_amount) if signal.base_amount is not None else None,
+        "price": str(signal.price) if signal.price is not None else None,
         "strategy_id": signal.strategy_id,
     }
