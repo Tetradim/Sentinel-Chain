@@ -17,6 +17,7 @@ from .exchanges.ccxt_adapter import (
     list_ccxt_exchange_ids,
 )
 from .execution import PaperExchange
+from .intake import SignalIntakeService
 from .repository import SQLiteRepository
 from .risk import AccountState, RiskConfig
 from .security import (
@@ -25,7 +26,7 @@ from .security import (
     WebhookSignatureError,
     verify_webhook_signature,
 )
-from .signals import CryptoSignal, SignalValidationError, normalize_signal, normalize_symbol
+from .signals import SignalValidationError, normalize_signal, normalize_symbol
 from .text_signals import parse_text_signal
 
 
@@ -48,7 +49,12 @@ def create_app(
     )
     secret = webhook_secret if webhook_secret is not None else os.getenv("AUTO_CRYPTO_WEBHOOK_SECRET")
     replay_store = InMemoryWebhookReplayStore()
-    approvals = ApprovalQueue()
+    intake = SignalIntakeService(
+        engine=engine,
+        approvals=ApprovalQueue(),
+        repository=repository,
+        require_approval=require_approval,
+    )
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -80,51 +86,6 @@ def create_app(
             repository.record_audit("trading.resumed", {})
         return {"halted": False, "reason": ""}
 
-    def handle_incoming_signal(signal: CryptoSignal) -> dict[str, Any]:
-        if engine.halted:
-            if repository:
-                repository.save_signal(signal)
-                repository.record_audit("signal.received", {"signal_id": signal.signal_id})
-            result = engine.process_signal(signal)
-            if repository:
-                repository.record_audit(
-                    "order.halted",
-                    {"signal_id": signal.signal_id, "reason": result.reason},
-                )
-            return result.to_dict()
-        if repository:
-            if not repository.claim_signal(signal):
-                repository.record_audit("signal.duplicate", {"signal_id": signal.signal_id})
-                return {
-                    "status": "duplicate",
-                    "reason": "duplicate_signal",
-                    "signal_id": signal.signal_id,
-                }
-            repository.record_audit("signal.received", {"signal_id": signal.signal_id})
-        if require_approval:
-            if repository:
-                repository.save_pending_approval(signal)
-                repository.record_audit("approval.requested", {"signal_id": signal.signal_id})
-            else:
-                approvals.add(signal)
-            return {"status": "approval_required", "signal_id": signal.signal_id}
-        result = engine.process_signal(signal)
-        if repository:
-            if result.order:
-                repository.save_order(result.order)
-                repository.record_audit("order.accepted", {"order_id": result.order.order_id})
-            elif result.status == "halted":
-                repository.record_audit(
-                    "order.halted",
-                    {"signal_id": signal.signal_id, "reason": result.reason},
-                )
-            elif result.status == "rejected":
-                repository.record_audit(
-                    "order.rejected",
-                    {"signal_id": signal.signal_id, "reason_codes": result.decision.reason_codes},
-                )
-        return result.to_dict()
-
     def verify_signed_request(request: Request, body: bytes) -> None:
         try:
             verify_webhook_signature(
@@ -151,7 +112,7 @@ def create_app(
             signal = normalize_signal(payload, source="tradingview")
         except SignalValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return handle_incoming_signal(signal)
+        return intake.handle(signal)
 
     @app.post("/webhooks/text-alert")
     async def text_alert_webhook(request: Request) -> dict[str, Any]:
@@ -162,7 +123,7 @@ def create_app(
             signal = parse_text_signal(str(payload.get("message") or ""), source="text-alert")
         except SignalValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return handle_incoming_signal(signal)
+        return intake.handle(signal)
 
     @app.get("/orders")
     def orders() -> dict[str, Any]:
@@ -225,40 +186,23 @@ def create_app(
 
     @app.get("/approvals")
     def list_approvals() -> dict[str, Any]:
-        if repository:
-            return {"pending": repository.list_pending_approvals()}
-        return {"pending": approvals.list_pending()}
+        return {"pending": intake.list_approvals()}
 
     @app.post("/approvals/{signal_id}/approve")
     def approve_signal(signal_id: str) -> dict[str, Any]:
-        signal = repository.pop_pending_approval(signal_id) if repository else approvals.pop(signal_id)
-        if signal is None:
+        result = intake.approve(signal_id)
+        if result is None:
             raise HTTPException(status_code=404, detail="pending signal not found")
-        result = engine.process_signal(signal)
-        if repository:
-            if result.order:
-                repository.save_order(result.order)
-                repository.record_audit("order.accepted", {"order_id": result.order.order_id})
-            elif result.status == "rejected":
-                repository.record_audit(
-                    "order.rejected",
-                    {"signal_id": signal.signal_id, "reason_codes": result.decision.reason_codes},
-                )
-        return result.to_dict()
+        return result
 
     @app.post("/approvals/{signal_id}/reject")
     async def reject_signal(signal_id: str, request: Request) -> dict[str, Any]:
-        signal = repository.pop_pending_approval(signal_id) if repository else approvals.pop(signal_id)
-        if signal is None:
-            raise HTTPException(status_code=404, detail="pending signal not found")
         payload = await request.json()
         reason = str(payload.get("reason") or "")
-        if repository:
-            repository.record_audit(
-                "approval.rejected",
-                {"signal_id": signal.signal_id, "reason": reason},
-            )
-        return {"status": "rejected", "signal_id": signal.signal_id}
+        result = intake.reject(signal_id, reason)
+        if result is None:
+            raise HTTPException(status_code=404, detail="pending signal not found")
+        return result
 
     @app.get("/signals")
     def signals() -> dict[str, Any]:
