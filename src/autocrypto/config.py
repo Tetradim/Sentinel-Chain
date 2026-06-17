@@ -29,6 +29,7 @@ def load_settings() -> AppSettings:
         require_approval=_bool(os.getenv("AUTO_CRYPTO_REQUIRE_APPROVAL", "false")),
         risk=RiskConfig(
             max_order_notional=Decimal(os.getenv("AUTO_CRYPTO_MAX_ORDER_NOTIONAL", "1000")),
+            max_open_notional=Decimal(os.getenv("AUTO_CRYPTO_MAX_OPEN_NOTIONAL", "0")),
             max_leverage=Decimal(os.getenv("AUTO_CRYPTO_MAX_LEVERAGE", "1")),
             max_daily_loss=Decimal(os.getenv("AUTO_CRYPTO_MAX_DAILY_LOSS", "500")),
             require_stop_loss=_bool(os.getenv("AUTO_CRYPTO_REQUIRE_STOP_LOSS", "true")),

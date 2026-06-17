@@ -96,3 +96,25 @@ def test_risk_allows_explicitly_allowlisted_exchange():
 
     assert decision.approved is True
     assert decision.reason_codes == []
+
+
+def test_risk_rejects_buy_that_would_exceed_max_open_notional():
+    signal = normalize_signal(
+        {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "75",
+            "price": "50000",
+            "stop_loss_pct": "2",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(
+        signal,
+        RiskConfig(max_open_notional=Decimal("100")),
+        AccountState(open_notional=Decimal("50")),
+    )
+
+    assert decision.approved is False
+    assert "max_open_notional_exceeded" in decision.reason_codes

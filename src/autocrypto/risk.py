@@ -9,6 +9,7 @@ from .signals import CryptoSignal
 @dataclass(frozen=True)
 class RiskConfig:
     max_order_notional: Decimal = Decimal("1000")
+    max_open_notional: Decimal = Decimal("0")
     max_leverage: Decimal = Decimal("1")
     max_daily_loss: Decimal = Decimal("500")
     require_stop_loss: bool = True
@@ -50,6 +51,13 @@ def evaluate_signal(
         reasons.append("stop_loss_required")
     if order_notional is not None and config.max_order_notional > 0 and order_notional > config.max_order_notional:
         reasons.append("max_order_notional_exceeded")
+    if (
+        signal.side == "buy"
+        and order_notional is not None
+        and config.max_open_notional > 0
+        and account_state.open_notional + order_notional > config.max_open_notional
+    ):
+        reasons.append("max_open_notional_exceeded")
     if config.max_leverage > 0 and signal.leverage > config.max_leverage:
         reasons.append("max_leverage_exceeded")
     if config.max_daily_loss > 0 and account_state.daily_pnl <= -config.max_daily_loss:

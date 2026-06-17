@@ -61,3 +61,43 @@ def test_engine_blocks_duplicate_signal_before_second_order():
     assert second.status == "duplicate"
     assert len(exchange.orders) == 1
 
+
+def test_engine_updates_open_notional_and_blocks_cumulative_exposure():
+    account = AccountState(open_notional=Decimal("0"))
+    engine = TradingEngine(
+        exchange=PaperExchange(),
+        risk_config=RiskConfig(max_order_notional=Decimal("500"), max_open_notional=Decimal("150")),
+        account_state=account,
+        idempotency=InMemoryIdempotencyStore(),
+    )
+    first_signal = normalize_signal(
+        {
+            "signal_id": "first-exposure",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "50000",
+            "stop_loss_pct": "2",
+        },
+        source="test",
+    )
+    second_signal = normalize_signal(
+        {
+            "signal_id": "second-exposure",
+            "symbol": "ETH/USDT",
+            "side": "buy",
+            "quote_amount": "75",
+            "price": "3000",
+            "stop_loss_pct": "2",
+        },
+        source="test",
+    )
+
+    first = engine.process_signal(first_signal)
+    second = engine.process_signal(second_signal)
+
+    assert first.status == "accepted"
+    assert account.open_notional == Decimal("100")
+    assert second.status == "rejected"
+    assert "max_open_notional_exceeded" in second.decision.reason_codes
+    assert len(engine.exchange.orders) == 1

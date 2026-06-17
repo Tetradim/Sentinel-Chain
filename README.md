@@ -8,7 +8,7 @@ Auto-Crypto is a paper-first crypto trading automation service for Discord and w
 - Text alert webhook endpoint: `POST /webhooks/text-alert`
 - Strict crypto signal normalization for pairs such as `BTCUSDT` and `BTC/USDT`
 - Duplicate signal suppression with idempotency keys, including SQLite-backed restart safety
-- Pre-trade risk checks for stop-loss requirement, max notional, leverage, slippage, allowed venues, blocked symbols, and daily loss
+- Pre-trade risk checks for stop-loss requirement, max order notional, max open notional, leverage, slippage, allowed venues, blocked symbols, and daily loss
 - Paper exchange that records accepted orders, planned stop-loss/take-profit exits, and triggered paper exits per filled lot
 - Minimal Discord slash-command client using `/health` and `/signal_test`
 - Optional CCXT adapter boundary for future live exchange integrations
@@ -35,6 +35,7 @@ python -m uvicorn autocrypto.app:app --reload
 
 For environment-backed settings, import and run `autocrypto.app:create_app_from_env()` from your ASGI launcher. `AUTO_CRYPTO_DB_PATH` enables SQLite persistence, and `AUTO_CRYPTO_WEBHOOK_SECRET` enables signed webhook enforcement.
 `AUTO_CRYPTO_ALLOWED_EXCHANGES` defaults to `paper`; add venue IDs such as `binance` or `kraken` only after API keys and live execution controls are ready.
+Set `AUTO_CRYPTO_MAX_OPEN_NOTIONAL` above `0` to cap cumulative open buy exposure across accepted orders.
 
 Install the optional exchange extras to inspect CCXT-supported venues:
 
