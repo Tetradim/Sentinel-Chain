@@ -8,13 +8,14 @@ Auto-Crypto is a paper-first crypto trading automation service for Discord and w
 - Strict crypto signal normalization for pairs such as `BTCUSDT` and `BTC/USDT`
 - Duplicate signal suppression with idempotency keys
 - Pre-trade risk checks for stop-loss requirement, max notional, leverage, slippage, blocked symbols, and daily loss
-- Paper exchange that records accepted orders and planned stop-loss/take-profit exits
+- Paper exchange that records accepted orders, planned stop-loss/take-profit exits, and triggered paper exits
 - Minimal Discord slash-command client using `/health` and `/signal_test`
 - Optional CCXT adapter boundary for future live exchange integrations
 - Optional HMAC-signed webhook verification through `AUTO_CRYPTO_WEBHOOK_SECRET`
 - SQLite repository for signal, paper-order, and audit history
 - Operator halt/resume controls that block new orders and record audit events
 - Paper portfolio accounting with weighted average entry and realized PnL
+- Paper market price updates that trigger stop-loss/take-profit exits and audit events
 - Approval-required mode for human review before order execution
 - Conservative text alert parser for Discord-style messages
 
@@ -62,6 +63,17 @@ When a signed request is accepted, the same timestamp/body pair is rejected on r
 - `GET /orders`: accepted paper orders
 - `GET /positions`: current paper portfolio positions
 - `GET /audit`: signal and order lifecycle audit events
+
+## Paper Price Updates
+
+Use `POST /market/price` to feed paper-mode market prices into the bracket engine. When the new price crosses an active stop loss or take profit, Auto-Crypto records a synthetic sell order, closes the paper position, updates realized PnL, and records an `exit.triggered` audit event.
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/market/price -ContentType "application/json" -Body '{
+  "symbol": "BTCUSDT",
+  "price": "51500"
+}'
+```
 
 ## Operator Controls
 

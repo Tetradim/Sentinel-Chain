@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
@@ -18,7 +19,7 @@ from .security import (
     WebhookSignatureError,
     verify_webhook_signature,
 )
-from .signals import SignalValidationError, normalize_signal
+from .signals import SignalValidationError, normalize_signal, normalize_symbol
 from .text_signals import parse_text_signal
 
 
@@ -131,6 +132,32 @@ def create_app(
     def positions() -> dict[str, Any]:
         return {"positions": engine.exchange.list_positions()}
 
+    @app.post("/market/price")
+    async def market_price(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        try:
+            symbol = normalize_symbol(payload.get("symbol"))
+            price = _positive_decimal(payload.get("price"))
+        except (SignalValidationError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        order_offset = len(engine.exchange.orders)
+        triggered = engine.exchange.update_price(symbol, price)
+        if repository:
+            for order in engine.exchange.orders[order_offset:]:
+                repository.save_order(order)
+            if triggered:
+                repository.record_audit(
+                    "exit.triggered",
+                    {"symbol": symbol, "price": str(price), "triggered": triggered},
+                )
+        return {
+            "symbol": symbol,
+            "price": str(price),
+            "triggered": triggered,
+            "positions": engine.exchange.list_positions(),
+        }
+
     @app.get("/approvals")
     def list_approvals() -> dict[str, Any]:
         return {"pending": approvals.list_pending()}
@@ -210,3 +237,15 @@ def create_app_from_env() -> FastAPI:
 
 
 app = create_app()
+
+
+def _positive_decimal(value: Any) -> Decimal:
+    if value is None or value == "":
+        raise ValueError("price is required")
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"invalid price: {value}") from exc
+    if parsed <= 0:
+        raise ValueError("price must be positive")
+    return parsed

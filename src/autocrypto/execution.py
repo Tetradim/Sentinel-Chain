@@ -108,10 +108,12 @@ class PaperExchange:
     def __init__(self) -> None:
         self.orders: list[PaperOrder] = []
         self.positions: dict[str, PaperPosition] = {}
+        self.active_exits: dict[str, list[ExitOrder]] = {}
 
     def submit(self, signal: CryptoSignal, decision: RiskDecision) -> PaperOrder:
         if decision.order_notional is None:
             raise ValueError("approved order requires notional")
+        exit_orders = build_exit_orders(signal)
         if signal.price is not None:
             self._apply_fill(signal, decision.order_notional)
         order = PaperOrder(
@@ -123,9 +125,13 @@ class PaperExchange:
             side=signal.side,
             notional=decision.order_notional,
             price=signal.price,
-            exit_orders=build_exit_orders(signal),
+            exit_orders=exit_orders,
         )
         self.orders.append(order)
+        if signal.side == "buy" and exit_orders:
+            self.active_exits[signal.symbol] = exit_orders
+        elif signal.side == "sell" and not self._has_open_position(signal.symbol):
+            self.active_exits.pop(signal.symbol, None)
         return order
 
     def list_positions(self) -> list[dict]:
@@ -134,6 +140,31 @@ class PaperExchange:
             for position in self.positions.values()
             if position.quantity > 0 or position.realized_pnl != 0
         ]
+
+    def update_price(self, symbol: str, price: Decimal) -> list[dict]:
+        position = self.positions.get(symbol)
+        if position is None or position.quantity <= 0:
+            return []
+
+        exit_order = self._triggered_exit(symbol, price)
+        if exit_order is None:
+            return []
+
+        notional = position.quantity * price
+        position.sell(position.quantity, price)
+        order = PaperOrder(
+            order_id=f"paper-exit-{_order_fragment(symbol)}-{len(self.orders) + 1}",
+            signal_id=f"exit-{_order_fragment(symbol)}-{len(self.orders) + 1}",
+            mode="paper",
+            exchange="paper",
+            symbol=symbol,
+            side="sell",
+            notional=notional,
+            price=price,
+        )
+        self.orders.append(order)
+        self.active_exits.pop(symbol, None)
+        return [{"symbol": symbol, "kind": exit_order.kind, "price": _fixed8(price)}]
 
     def _apply_fill(self, signal: CryptoSignal, notional: Decimal) -> None:
         if signal.price is None:
@@ -144,6 +175,19 @@ class PaperExchange:
             position.buy(quantity, signal.price)
         elif signal.side == "sell":
             position.sell(quantity, signal.price)
+
+    def _triggered_exit(self, symbol: str, price: Decimal) -> ExitOrder | None:
+        for exit_order in self.active_exits.get(symbol, []):
+            if exit_order.kind == "stop_loss" and price <= exit_order.trigger_price:
+                return exit_order
+        for exit_order in self.active_exits.get(symbol, []):
+            if exit_order.kind == "take_profit" and price >= exit_order.trigger_price:
+                return exit_order
+        return None
+
+    def _has_open_position(self, symbol: str) -> bool:
+        position = self.positions.get(symbol)
+        return position is not None and position.quantity > 0
 
 
 def build_exit_orders(signal: CryptoSignal) -> list[ExitOrder]:
@@ -166,3 +210,7 @@ def _money(value: Decimal) -> Decimal:
 
 def _fixed8(value: Decimal) -> str:
     return f"{value.quantize(Decimal('0.00000001'), rounding=ROUND_HALF_UP):f}"
+
+
+def _order_fragment(symbol: str) -> str:
+    return symbol.replace("/", "-").lower()

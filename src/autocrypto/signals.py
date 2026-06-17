@@ -50,7 +50,7 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         raise SignalValidationError("signal payload must be an object")
 
     side = _normalize_side(payload.get("side") or payload.get("action"))
-    symbol = _normalize_symbol(payload.get("symbol") or payload.get("ticker") or payload.get("pair"))
+    symbol = normalize_symbol(payload.get("symbol") or payload.get("ticker") or payload.get("pair"))
     quote_amount = _optional_positive_decimal(payload.get("quote_amount") or payload.get("notional"))
     base_amount = _optional_positive_decimal(payload.get("base_amount") or payload.get("quantity") or payload.get("qty"))
 
@@ -113,7 +113,7 @@ def _normalize_side(value: Any) -> str:
     return SIDE_ALIASES[side]
 
 
-def _normalize_symbol(value: Any) -> str:
+def normalize_symbol(value: Any) -> str:
     if value is None:
         raise SignalValidationError("signal requires symbol")
     symbol = str(value).strip().upper().replace("-", "/").replace("_", "/")
@@ -154,4 +154,3 @@ def _non_negative_int(value: Any, *, default: int) -> int:
 def _fingerprint(payload: dict[str, Any]) -> str:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:24]
-
