@@ -19,6 +19,7 @@ from .security import (
     verify_webhook_signature,
 )
 from .signals import SignalValidationError, normalize_signal
+from .text_signals import parse_text_signal
 
 
 def create_app(
@@ -168,6 +169,26 @@ def create_app(
     @app.get("/signals")
     def signals() -> dict[str, Any]:
         return {"signals": repository.list_signals() if repository else []}
+
+    @app.post("/signals/parse-text")
+    async def parse_text(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        try:
+            signal = parse_text_signal(str(payload.get("message") or ""), source="api")
+        except SignalValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "signal": {
+                "signal_id": signal.signal_id,
+                "symbol": signal.symbol,
+                "side": signal.side,
+                "quote_amount": str(signal.quote_amount) if signal.quote_amount is not None else None,
+                "base_amount": str(signal.base_amount) if signal.base_amount is not None else None,
+                "price": str(signal.price) if signal.price is not None else None,
+                "stop_loss_pct": str(signal.stop_loss_pct) if signal.stop_loss_pct is not None else None,
+                "take_profit_pct": str(signal.take_profit_pct) if signal.take_profit_pct is not None else None,
+            }
+        }
 
     @app.get("/audit")
     def audit() -> dict[str, Any]:

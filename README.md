@@ -16,6 +16,7 @@ Auto-Crypto is a paper-first crypto trading automation service for Discord and w
 - Operator halt/resume controls that block new orders and record audit events
 - Paper portfolio accounting with weighted average entry and realized PnL
 - Approval-required mode for human review before order execution
+- Conservative text alert parser for Discord-style messages
 
 Live trading is intentionally not enabled by default. Do not grant withdrawal permissions to exchange API keys.
 
@@ -94,6 +95,17 @@ Recommended:
 - `exchange`
 
 Forbidden signal actions include withdrawal and transfer actions.
+
+## Text Alert Format
+
+The text parser is intentionally strict. Supported examples:
+
+```text
+BUY BTCUSDT $125 @ 50000 SL 2.5% TP 5%
+SELL ETH/USDT 0.25 @ 3000
+```
+
+Use `POST /signals/parse-text` with `{"message": "..."}` to validate a message without placing an order.
 
 ## Roadmap
 
