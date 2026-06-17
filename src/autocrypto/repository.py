@@ -38,6 +38,28 @@ class SQLiteRepository:
                 (signal.signal_id, json.dumps(payload, sort_keys=True)),
             )
 
+    def claim_signal(self, signal: CryptoSignal) -> bool:
+        payload = _signal_to_dict(signal)
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO signal_claims (signal_id)
+                    VALUES (?)
+                    """,
+                    (signal.signal_id,),
+                )
+                conn.execute(
+                    """
+                    INSERT OR REPLACE INTO signals (signal_id, payload)
+                    VALUES (?, ?)
+                    """,
+                    (signal.signal_id, json.dumps(payload, sort_keys=True)),
+                )
+        except sqlite3.IntegrityError:
+            return False
+        return True
+
     def list_signals(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute("SELECT payload FROM signals ORDER BY rowid ASC").fetchall()
@@ -95,6 +117,10 @@ class SQLiteRepository:
                     payload TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
+
+                CREATE TABLE IF NOT EXISTS signal_claims (
+                    signal_id TEXT PRIMARY KEY
+                );
                 """
             )
 
@@ -121,4 +147,3 @@ def _signal_to_dict(signal: CryptoSignal) -> dict[str, Any]:
         "max_slippage_bps": signal.max_slippage_bps,
         "strategy_id": signal.strategy_id,
     }
-

@@ -6,7 +6,7 @@ Auto-Crypto is a paper-first crypto trading automation service for Discord and w
 
 - TradingView/custom webhook endpoint: `POST /webhooks/tradingview`
 - Strict crypto signal normalization for pairs such as `BTCUSDT` and `BTC/USDT`
-- Duplicate signal suppression with idempotency keys
+- Duplicate signal suppression with idempotency keys, including SQLite-backed restart safety
 - Pre-trade risk checks for stop-loss requirement, max notional, leverage, slippage, allowed venues, blocked symbols, and daily loss
 - Paper exchange that records accepted orders, planned stop-loss/take-profit exits, and triggered paper exits
 - Minimal Discord slash-command client using `/health` and `/signal_test`
@@ -71,6 +71,8 @@ When a signed request is accepted, the same timestamp/body pair is rejected on r
 - `GET /orders`: accepted paper orders
 - `GET /positions`: current paper portfolio positions
 - `GET /audit`: signal and order lifecycle audit events
+
+When `AUTO_CRYPTO_DB_PATH` is enabled, signal IDs are claimed with an insert-only write before approval or execution. Replayed signal IDs after a service restart return `status=duplicate` and record a `signal.duplicate` audit event.
 
 ## Exchange Discovery
 

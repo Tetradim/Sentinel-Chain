@@ -44,3 +44,21 @@ def test_sqlite_repository_persists_signals_orders_and_audit_events(tmp_path):
         data={"order_id": "paper-1"},
     )
 
+
+def test_sqlite_repository_claims_signal_once(tmp_path):
+    repo = SQLiteRepository(tmp_path / "claims.sqlite3")
+    signal = normalize_signal(
+        {
+            "signal_id": "duplicate-safe",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "25",
+            "price": "50000",
+            "stop_loss_pct": "2",
+        },
+        source="test",
+    )
+
+    assert repo.claim_signal(signal) is True
+    assert repo.claim_signal(signal) is False
+    assert len(repo.list_signals()) == 1

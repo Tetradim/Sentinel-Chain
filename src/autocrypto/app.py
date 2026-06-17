@@ -103,8 +103,25 @@ def create_app(
             signal = normalize_signal(payload, source="tradingview")
         except SignalValidationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if engine.halted:
+            if repository:
+                repository.save_signal(signal)
+                repository.record_audit("signal.received", {"signal_id": signal.signal_id})
+            result = engine.process_signal(signal)
+            if repository:
+                repository.record_audit(
+                    "order.halted",
+                    {"signal_id": signal.signal_id, "reason": result.reason},
+                )
+            return result.to_dict()
         if repository:
-            repository.save_signal(signal)
+            if not repository.claim_signal(signal):
+                repository.record_audit("signal.duplicate", {"signal_id": signal.signal_id})
+                return {
+                    "status": "duplicate",
+                    "reason": "duplicate_signal",
+                    "signal_id": signal.signal_id,
+                }
             repository.record_audit("signal.received", {"signal_id": signal.signal_id})
         if require_approval:
             approvals.add(signal)
