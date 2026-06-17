@@ -15,6 +15,7 @@ Auto-Crypto is a paper-first crypto trading automation service for Discord and w
 - SQLite repository for signal, paper-order, and audit history
 - Operator halt/resume controls that block new orders and record audit events
 - Paper portfolio accounting with weighted average entry and realized PnL
+- Approval-required mode for human review before order execution
 
 Live trading is intentionally not enabled by default. Do not grant withdrawal permissions to exchange API keys.
 
@@ -67,6 +68,14 @@ When a signed request is accepted, the same timestamp/body pair is rejected on r
 - `POST /control/halt` with `{"reason": "..."}`: blocks new order execution
 - `POST /control/resume`: resumes new order execution
 
+## Approval Mode
+
+Set `AUTO_CRYPTO_REQUIRE_APPROVAL=true` or call `create_app(require_approval=True)` to queue incoming signals instead of executing immediately.
+
+- `GET /approvals`: pending signals
+- `POST /approvals/{signal_id}/approve`: executes the queued signal through the normal risk and execution path
+- `POST /approvals/{signal_id}/reject` with `{"reason": "..."}`: removes the queued signal and records an audit event
+
 ## Signal Schema
 
 Required:
@@ -88,7 +97,7 @@ Forbidden signal actions include withdrawal and transfer actions.
 
 ## Roadmap
 
-1. Expand Discord controls with approve/reject/halt flows.
+1. Wire Discord buttons to approval/halt endpoints.
 2. Add official sandbox/live adapters behind explicit config gates.
 3. Add portfolio reconciliation and exchange user-stream workers.
 4. Add PostgreSQL deployment option for multi-user hosting.

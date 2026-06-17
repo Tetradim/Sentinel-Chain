@@ -13,6 +13,7 @@ class AppSettings:
     db_path: Path | None
     webhook_secret: str | None
     webhook_tolerance_seconds: int | None
+    require_approval: bool
     risk: RiskConfig
 
 
@@ -25,6 +26,7 @@ def load_settings() -> AppSettings:
         db_path=Path(db_path_raw) if db_path_raw else None,
         webhook_secret=webhook_secret,
         webhook_tolerance_seconds=int(tolerance_raw) if tolerance_raw else None,
+        require_approval=_bool(os.getenv("AUTO_CRYPTO_REQUIRE_APPROVAL", "false")),
         risk=RiskConfig(
             max_order_notional=Decimal(os.getenv("AUTO_CRYPTO_MAX_ORDER_NOTIONAL", "1000")),
             max_leverage=Decimal(os.getenv("AUTO_CRYPTO_MAX_LEVERAGE", "1")),
@@ -44,4 +46,3 @@ def _empty_to_none(value: str | None) -> str | None:
         return None
     value = value.strip()
     return value or None
-

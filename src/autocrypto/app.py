@@ -6,6 +6,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 
+from .approvals import ApprovalQueue
 from .config import load_settings
 from .engine import TradingEngine
 from .execution import PaperExchange
@@ -29,6 +30,7 @@ def create_app(
     webhook_clock: Callable[[], float] | None = None,
     webhook_tolerance_seconds: int | None = None,
     repository: SQLiteRepository | None = None,
+    require_approval: bool = False,
 ) -> FastAPI:
     app = FastAPI(title="Auto-Crypto", version="0.1.0")
     engine = TradingEngine(
@@ -38,6 +40,7 @@ def create_app(
     )
     secret = webhook_secret if webhook_secret is not None else os.getenv("AUTO_CRYPTO_WEBHOOK_SECRET")
     replay_store = InMemoryWebhookReplayStore()
+    approvals = ApprovalQueue()
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -95,6 +98,11 @@ def create_app(
         if repository:
             repository.save_signal(signal)
             repository.record_audit("signal.received", {"signal_id": signal.signal_id})
+        if require_approval:
+            approvals.add(signal)
+            if repository:
+                repository.record_audit("approval.requested", {"signal_id": signal.signal_id})
+            return {"status": "approval_required", "signal_id": signal.signal_id}
         result = engine.process_signal(signal)
         if repository:
             if result.order:
@@ -122,6 +130,41 @@ def create_app(
     def positions() -> dict[str, Any]:
         return {"positions": engine.exchange.list_positions()}
 
+    @app.get("/approvals")
+    def list_approvals() -> dict[str, Any]:
+        return {"pending": approvals.list_pending()}
+
+    @app.post("/approvals/{signal_id}/approve")
+    def approve_signal(signal_id: str) -> dict[str, Any]:
+        signal = approvals.pop(signal_id)
+        if signal is None:
+            raise HTTPException(status_code=404, detail="pending signal not found")
+        result = engine.process_signal(signal)
+        if repository:
+            if result.order:
+                repository.save_order(result.order)
+                repository.record_audit("order.accepted", {"order_id": result.order.order_id})
+            elif result.status == "rejected":
+                repository.record_audit(
+                    "order.rejected",
+                    {"signal_id": signal.signal_id, "reason_codes": result.decision.reason_codes},
+                )
+        return result.to_dict()
+
+    @app.post("/approvals/{signal_id}/reject")
+    async def reject_signal(signal_id: str, request: Request) -> dict[str, Any]:
+        signal = approvals.pop(signal_id)
+        if signal is None:
+            raise HTTPException(status_code=404, detail="pending signal not found")
+        payload = await request.json()
+        reason = str(payload.get("reason") or "")
+        if repository:
+            repository.record_audit(
+                "approval.rejected",
+                {"signal_id": signal.signal_id, "reason": reason},
+            )
+        return {"status": "rejected", "signal_id": signal.signal_id}
+
     @app.get("/signals")
     def signals() -> dict[str, Any]:
         return {"signals": repository.list_signals() if repository else []}
@@ -141,6 +184,7 @@ def create_app_from_env() -> FastAPI:
         webhook_secret=settings.webhook_secret,
         webhook_tolerance_seconds=settings.webhook_tolerance_seconds,
         repository=repository,
+        require_approval=settings.require_approval,
     )
 
 
