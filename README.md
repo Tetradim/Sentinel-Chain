@@ -5,6 +5,7 @@ Auto-Crypto is a paper-first crypto trading automation service for Discord and w
 ## Current Capabilities
 
 - TradingView/custom webhook endpoint: `POST /webhooks/tradingview`
+- Text alert webhook endpoint: `POST /webhooks/text-alert`
 - Strict crypto signal normalization for pairs such as `BTCUSDT` and `BTC/USDT`
 - Duplicate signal suppression with idempotency keys, including SQLite-backed restart safety
 - Pre-trade risk checks for stop-loss requirement, max notional, leverage, slippage, allowed venues, blocked symbols, and daily loss
@@ -138,6 +139,7 @@ SELL ETH/USDT 0.25 @ 3000
 ```
 
 Use `POST /signals/parse-text` with `{"message": "..."}` to validate a message without placing an order.
+Use `POST /webhooks/text-alert` with the same payload shape to run the parsed alert through duplicate checks, risk, approval mode, and paper execution.
 
 ## Roadmap
 

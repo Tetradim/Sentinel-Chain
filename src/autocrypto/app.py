@@ -25,7 +25,7 @@ from .security import (
     WebhookSignatureError,
     verify_webhook_signature,
 )
-from .signals import SignalValidationError, normalize_signal, normalize_symbol
+from .signals import CryptoSignal, SignalValidationError, normalize_signal, normalize_symbol
 from .text_signals import parse_text_signal
 
 
@@ -80,29 +80,7 @@ def create_app(
             repository.record_audit("trading.resumed", {})
         return {"halted": False, "reason": ""}
 
-    @app.post("/webhooks/tradingview")
-    async def tradingview_webhook(request: Request) -> dict[str, Any]:
-        body = await request.body()
-        try:
-            verify_webhook_signature(
-                secret=secret,
-                body=body,
-                timestamp=request.headers.get("x-auto-crypto-timestamp"),
-                signature=request.headers.get("x-auto-crypto-signature"),
-                clock=webhook_clock,
-                tolerance_seconds=webhook_tolerance_seconds,
-                replay_store=replay_store,
-            )
-        except WebhookSignatureError as exc:
-            raise HTTPException(status_code=401, detail=str(exc)) from exc
-        except WebhookReplayError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-        payload = await request.json()
-        try:
-            signal = normalize_signal(payload, source="tradingview")
-        except SignalValidationError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    def handle_incoming_signal(signal: CryptoSignal) -> dict[str, Any]:
         if engine.halted:
             if repository:
                 repository.save_signal(signal)
@@ -144,6 +122,45 @@ def create_app(
                     {"signal_id": signal.signal_id, "reason_codes": result.decision.reason_codes},
                 )
         return result.to_dict()
+
+    def verify_signed_request(request: Request, body: bytes) -> None:
+        try:
+            verify_webhook_signature(
+                secret=secret,
+                body=body,
+                timestamp=request.headers.get("x-auto-crypto-timestamp"),
+                signature=request.headers.get("x-auto-crypto-signature"),
+                clock=webhook_clock,
+                tolerance_seconds=webhook_tolerance_seconds,
+                replay_store=replay_store,
+            )
+        except WebhookSignatureError as exc:
+            raise HTTPException(status_code=401, detail=str(exc)) from exc
+        except WebhookReplayError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.post("/webhooks/tradingview")
+    async def tradingview_webhook(request: Request) -> dict[str, Any]:
+        body = await request.body()
+        verify_signed_request(request, body)
+
+        payload = await request.json()
+        try:
+            signal = normalize_signal(payload, source="tradingview")
+        except SignalValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return handle_incoming_signal(signal)
+
+    @app.post("/webhooks/text-alert")
+    async def text_alert_webhook(request: Request) -> dict[str, Any]:
+        body = await request.body()
+        verify_signed_request(request, body)
+        payload = await request.json()
+        try:
+            signal = parse_text_signal(str(payload.get("message") or ""), source="text-alert")
+        except SignalValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return handle_incoming_signal(signal)
 
     @app.get("/orders")
     def orders() -> dict[str, Any]:
