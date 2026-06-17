@@ -36,6 +36,7 @@ python -m uvicorn autocrypto.app:app --reload
 For environment-backed settings, import and run `autocrypto.app:create_app_from_env()` from your ASGI launcher. `AUTO_CRYPTO_DB_PATH` enables SQLite persistence, and `AUTO_CRYPTO_WEBHOOK_SECRET` enables signed webhook enforcement.
 `AUTO_CRYPTO_ALLOWED_EXCHANGES` defaults to `paper`; add venue IDs such as `binance` or `kraken` only after API keys and live execution controls are ready.
 Set `AUTO_CRYPTO_MAX_OPEN_NOTIONAL` above `0` to cap cumulative open buy exposure across accepted orders.
+SQLite-backed paper state restores open exposure after restart, and triggered paper exits release exposure for later risk checks.
 
 Install the optional exchange extras to inspect CCXT-supported venues:
 

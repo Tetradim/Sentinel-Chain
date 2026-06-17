@@ -45,10 +45,12 @@ def create_app(
     paper_exchange = exchange
     if paper_exchange is None:
         paper_exchange = PaperExchange.from_order_history(repository.list_orders()) if repository else PaperExchange()
+    if account_state is None:
+        account_state = AccountState(open_notional=paper_exchange.open_notional())
     engine = TradingEngine(
         exchange=paper_exchange,
         risk_config=risk_config or RiskConfig(),
-        account_state=account_state or AccountState(),
+        account_state=account_state,
     )
     secret = webhook_secret if webhook_secret is not None else os.getenv("AUTO_CRYPTO_WEBHOOK_SECRET")
     replay_store = InMemoryWebhookReplayStore()
@@ -172,6 +174,8 @@ def create_app(
 
         order_offset = len(engine.exchange.orders)
         triggered = engine.exchange.update_price(symbol, price)
+        if triggered:
+            engine.account_state.open_notional = engine.exchange.open_notional()
         if repository:
             for order in engine.exchange.orders[order_offset:]:
                 repository.save_order(order)

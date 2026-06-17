@@ -169,6 +169,12 @@ class PaperExchange:
             if position.quantity > 0 or position.realized_pnl != 0
         ]
 
+    def open_notional(self) -> Decimal:
+        return sum(
+            (position.quantity * position.avg_entry for position in self.positions.values()),
+            Decimal("0"),
+        )
+
     def update_price(self, symbol: str, price: Decimal) -> list[dict]:
         position = self.positions.get(symbol)
         if position is None or position.quantity <= 0:

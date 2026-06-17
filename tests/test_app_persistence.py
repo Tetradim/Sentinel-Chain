@@ -1,7 +1,10 @@
+from decimal import Decimal
+
 from fastapi.testclient import TestClient
 
 from autocrypto.app import create_app
 from autocrypto.repository import SQLiteRepository
+from autocrypto.risk import RiskConfig
 
 
 def test_app_records_signal_order_and_audit_history(tmp_path):
@@ -83,3 +86,36 @@ def test_app_rehydrates_paper_positions_and_brackets_from_order_history(tmp_path
         {"symbol": "SOL/USDT", "kind": "take_profit", "price": "105.00000000"}
     ]
     assert SQLiteRepository(db_path).list_orders()[-1]["side"] == "sell"
+
+
+def test_app_rehydrates_open_notional_for_risk_after_restart(tmp_path):
+    db_path = tmp_path / "rehydrate_risk.sqlite3"
+    risk = RiskConfig(max_order_notional=Decimal("500"), max_open_notional=Decimal("150"))
+    first_client = TestClient(create_app(repository=SQLiteRepository(db_path), risk_config=risk))
+    first_client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "first-risk-rehydrate",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "50000",
+            "stop_loss_pct": "2",
+        },
+    )
+    second_client = TestClient(create_app(repository=SQLiteRepository(db_path), risk_config=risk))
+
+    response = second_client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "second-risk-rehydrate",
+            "symbol": "ETHUSDT",
+            "side": "buy",
+            "quote_amount": "75",
+            "price": "3000",
+            "stop_loss_pct": "2",
+        },
+    )
+
+    assert response.json()["status"] == "rejected"
+    assert "max_open_notional_exceeded" in response.json()["risk"]["reason_codes"]
