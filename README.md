@@ -19,7 +19,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Triggers paper stop-loss/take-profit exits from `POST /market/price`
 - Previews server-side risk decisions from the operator UI without placing orders
 - Shows persisted signal history with one-click reload into the Trading Desk
-- Supports quote-notional and base-quantity ticket sizing, paper position close controls, bracket trigger tests, and local unrealized P&L marks in the operator UI
+- Supports quote-notional and base-quantity ticket sizing, paper position close controls, bracket lot context and trigger tests, and local unrealized P&L marks in the operator UI
 - Captures inline halt and approval rejection reasons in operator workflows
 - Shows timestamped audit events, exports filtered audit CSVs, and copies JSON payloads from operator panels
 - Exposes CCXT venue discovery and capability inspection without enabling live execution

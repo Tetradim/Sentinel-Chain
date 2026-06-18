@@ -536,6 +536,8 @@ function renderPortfolio() {
           <tr>
             <td>${escapeHtml(exit.symbol)}</td>
             <td>${escapeHtml(exit.kind)}</td>
+            <td>${escapeHtml(exit.remaining_quantity || "-")}</td>
+            <td>${exit.entry_price ? money(exit.entry_price) : "-"}</td>
             <td>${money(exit.trigger_price)}</td>
             <td>
               <div class="row-actions">
@@ -546,7 +548,7 @@ function renderPortfolio() {
           </tr>
         `;
       }).join("")
-      : `<tr><td colspan="4">No active exits. Buy signals with stop/TP create bracket rows.</td></tr>`;
+      : `<tr><td colspan="6">No active exits. Buy signals with stop/TP create bracket rows.</td></tr>`;
 }
 
 function renderExchanges() {

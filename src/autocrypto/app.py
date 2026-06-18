@@ -114,7 +114,7 @@ def create_app(
             "signals": repository.list_signals() if repository else [],
             "approvals": intake.list_approvals(),
             "audit": [event.to_dict() for event in repository.list_audit()] if repository else [],
-            "active_exits": _active_exits_to_dict(engine.exchange.active_exits),
+            "active_exits": _active_exits_to_dict(engine.exchange.lots),
         }
 
     @app.get("/control/status")
@@ -505,9 +505,17 @@ def _signal_preview(
     }
 
 
-def _active_exits_to_dict(active_exits: dict[str, list[Any]]) -> list[dict[str, str]]:
+def _active_exits_to_dict(lots: list[Any]) -> list[dict[str, str]]:
     return [
-        {"symbol": symbol, "kind": exit_order.kind, "trigger_price": str(exit_order.trigger_price)}
-        for symbol, exits in sorted(active_exits.items())
-        for exit_order in exits
+        {
+            "symbol": lot.symbol,
+            "kind": exit_order.kind,
+            "trigger_price": str(exit_order.trigger_price),
+            "signal_id": lot.signal_id,
+            "remaining_quantity": str(lot.remaining_quantity),
+            "entry_price": str(lot.entry_price),
+        }
+        for lot in sorted(lots, key=lambda item: (item.symbol, item.signal_id))
+        if lot.remaining_quantity > 0
+        for exit_order in lot.exit_orders
     ]

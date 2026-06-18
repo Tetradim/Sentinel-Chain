@@ -20,6 +20,7 @@ def test_operator_ui_is_served_from_backend():
     assert "Control reason" in ui.text
     assert "Export CSV" in ui.text
     assert "Reject reason" in ui.text
+    assert "<th>Qty</th>" in ui.text
     assert "<th>Time</th>" in ui.text
     assert "copyCapabilityButton" in ui.text
     assert "copyBitunixButton" in ui.text
@@ -70,6 +71,8 @@ def test_operator_text_submit_reuses_paper_execution_and_audit(tmp_path):
     assert state["orders"][0]["symbol"] == "BTC/USDT"
     assert state["positions"][0]["symbol"] == "BTC/USDT"
     assert state["active_exits"][0]["kind"] == "stop_loss"
+    assert state["active_exits"][0]["remaining_quantity"] == "0.0015"
+    assert state["active_exits"][0]["entry_price"] == "50000"
     assert [event["event_type"] for event in state["audit"]] == ["signal.received", "order.accepted"]
     assert all(event["created_at"] for event in state["audit"])
 
