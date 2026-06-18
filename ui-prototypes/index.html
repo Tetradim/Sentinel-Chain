@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Auto-Crypto UI Prototype Gallery</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <aside class="rail" aria-label="Prototype navigation">
+      <div class="brand">
+        <div class="brand-mark">AC</div>
+        <div>
+          <strong>Auto-Crypto</strong>
+          <span>UI Lab</span>
+        </div>
+      </div>
+
+      <nav class="prototype-nav" aria-label="Prototype iterations">
+        <button class="nav-item is-active" type="button" data-screen="command">
+          <span>01</span> Command
+        </button>
+        <button class="nav-item" type="button" data-screen="desk">
+          <span>02</span> Desk
+        </button>
+        <button class="nav-item" type="button" data-screen="copy">
+          <span>03</span> Strategies
+        </button>
+        <button class="nav-item" type="button" data-screen="portfolio">
+          <span>04</span> Portfolio
+        </button>
+        <button class="nav-item" type="button" data-screen="signals">
+          <span>05</span> Signals
+        </button>
+      </nav>
+
+      <div class="rail-status">
+        <span>Paper Engine</span>
+        <strong>Armed</strong>
+      </div>
+      <div class="rail-status muted">
+        <span>Live Trading</span>
+        <strong>Locked</strong>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div class="market-strip" aria-label="Market strip">
+          <div><span>BTC/USDT</span><strong>$66,234.13</strong><em class="up">+3.15%</em></div>
+          <div><span>ETH/USDT</span><strong>$3,421.90</strong><em class="up">+1.42%</em></div>
+          <div><span>SOL/USDT</span><strong>$148.26</strong><em class="down">-0.68%</em></div>
+          <div><span>USDC Drift</span><strong>0.04%</strong><em class="flat">OK</em></div>
+        </div>
+        <button class="kill-switch" type="button">Global Halt</button>
+      </header>
+
+      <section class="screen is-active command-screen" id="screen-command" data-screen="command" aria-label="Command Center iteration">
+        <div class="screen-head">
+          <div>
+            <p>Iteration 01</p>
+            <h1>Command Center</h1>
+          </div>
+          <div class="mode-pills" aria-label="Execution mode">
+            <span class="pill live">Webhook intake live</span>
+            <span class="pill">Approval gate on</span>
+            <span class="pill paper">Paper fills only</span>
+          </div>
+        </div>
+
+        <div class="command-grid">
+          <section class="panel span-2">
+            <div class="panel-title">
+              <h2>Signal Inbox</h2>
+              <button type="button">Review all</button>
+            </div>
+            <div class="signal-list">
+              <article class="signal-row priority">
+                <div class="coin-dot btc">B</div>
+                <div>
+                  <strong>BUY BTCUSDT</strong>
+                  <span>Discord whale-breakout | $250 quote | SL 2.0% | TP 4.5%</span>
+                </div>
+                <em>needs approval</em>
+              </article>
+              <article class="signal-row">
+                <div class="coin-dot eth">E</div>
+                <div>
+                  <strong>SELL ETH/USDT</strong>
+                  <span>TradingView macd-fade | 0.12 base | trailing stop</span>
+                </div>
+                <em>queued</em>
+              </article>
+              <article class="signal-row">
+                <div class="coin-dot sol">S</div>
+                <div>
+                  <strong>BUY SOLUSDT</strong>
+                  <span>Webhook grid-reentry | $90 quote | max slippage 0.35%</span>
+                </div>
+                <em>risk pass</em>
+              </article>
+            </div>
+          </section>
+
+          <section class="panel risk-panel">
+            <div class="panel-title">
+              <h2>Risk State</h2>
+              <span class="status-good">Normal</span>
+            </div>
+            <div class="risk-meter">
+              <canvas data-chart="ring" width="220" height="220" aria-label="Risk usage ring"></canvas>
+              <div><strong>37%</strong><span>open exposure</span></div>
+            </div>
+            <dl class="metric-stack">
+              <div><dt>Daily loss</dt><dd>$-42.10 / $500</dd></div>
+              <div><dt>Largest order</dt><dd>$250 / $1,000</dd></div>
+              <div><dt>Venue drift</dt><dd>2 warnings</dd></div>
+            </dl>
+          </section>
+
+          <section class="panel exchange-map">
+            <div class="panel-title">
+              <h2>Exchange Fabric</h2>
+              <span>4 venues</span>
+            </div>
+            <div class="venue-grid">
+              <div><strong>Binance</strong><span>Spot ready</span><em class="up">24 ms</em></div>
+              <div><strong>OKX</strong><span>Futures paper</span><em class="up">31 ms</em></div>
+              <div><strong>Coinbase</strong><span>Watch only</span><em class="flat">keyless</em></div>
+              <div><strong>Kraken</strong><span>Sandbox</span><em class="down">retry</em></div>
+            </div>
+          </section>
+
+          <section class="panel span-2">
+            <div class="panel-title">
+              <h2>Bot Runtime</h2>
+              <div class="segmented">
+                <button class="is-selected" type="button">Active</button>
+                <button type="button">Paused</button>
+                <button type="button">Ended</button>
+              </div>
+            </div>
+            <table class="dense-table">
+              <thead><tr><th>Bot</th><th>Pair</th><th>Type</th><th>Exposure</th><th>P&L</th><th>Action</th></tr></thead>
+              <tbody>
+                <tr><td>Breakout Guard</td><td>BTC/USDT</td><td>Signal</td><td>$812</td><td class="up">+$48.21</td><td><button type="button">Edit</button></td></tr>
+                <tr><td>Mean Grid 18</td><td>ETH/USDT</td><td>Grid</td><td>$420</td><td class="up">+$12.88</td><td><button type="button">Stop</button></td></tr>
+                <tr><td>DCA Ladder</td><td>SOL/USDT</td><td>DCA</td><td>$290</td><td class="down">-$6.32</td><td><button type="button">Adjust</button></td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="panel log-panel">
+            <div class="panel-title">
+              <h2>Audit Feed</h2>
+              <span>last 12m</span>
+            </div>
+            <ol class="timeline">
+              <li><strong>21:44</strong><span>Approval requested for BTCUSDT</span></li>
+              <li><strong>21:41</strong><span>Duplicate signal blocked: sol-grid-018</span></li>
+              <li><strong>21:36</strong><span>ETH stop moved to breakeven</span></li>
+              <li><strong>21:32</strong><span>Kraken sandbox heartbeat missed</span></li>
+            </ol>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen desk-screen" id="screen-desk" data-screen="desk" aria-label="Trading Desk iteration">
+        <div class="screen-head">
+          <div>
+            <p>Iteration 02</p>
+            <h1>Trading Desk</h1>
+          </div>
+          <div class="pair-selector">
+            <button type="button">BTC/USDT</button>
+            <button type="button">15m</button>
+            <button type="button">Paper</button>
+          </div>
+        </div>
+
+        <div class="desk-grid">
+          <section class="panel order-ticket">
+            <div class="panel-title">
+              <h2>Bot Order</h2>
+              <span class="status-good">Risk pass</span>
+            </div>
+            <label>Strategy<select><option>Breakout Guard</option><option>DCA Ladder</option></select></label>
+            <label>Side<select><option>Buy</option><option>Sell</option></select></label>
+            <label>Quote amount<input value="$250.00" /></label>
+            <label>Stop loss<input value="2.0%" /></label>
+            <label>Take profit<input value="4.5%" /></label>
+            <div class="ticket-actions">
+              <button type="button">Queue</button>
+              <button class="primary" type="button">Paper Buy</button>
+            </div>
+          </section>
+
+          <section class="panel chart-panel">
+            <div class="panel-title">
+              <h2>BTC/USDT Perpetual Context</h2>
+              <div class="mode-pills"><span class="pill">MA20</span><span class="pill">Volume</span><span class="pill">Brackets</span></div>
+            </div>
+            <canvas class="main-chart" data-chart="candles" width="920" height="480" aria-label="Candlestick chart"></canvas>
+          </section>
+
+          <section class="panel orderbook">
+            <div class="panel-title">
+              <h2>Order Book</h2>
+              <span>0.1 tick</span>
+            </div>
+            <div class="book">
+              <div class="ask" style="--depth: 78%"><span>66,242.8</span><strong>1.384</strong></div>
+              <div class="ask" style="--depth: 52%"><span>66,239.1</span><strong>0.944</strong></div>
+              <div class="ask" style="--depth: 31%"><span>66,236.0</span><strong>0.512</strong></div>
+              <div class="mid">66,234.13</div>
+              <div class="bid" style="--depth: 66%"><span>66,232.4</span><strong>2.114</strong></div>
+              <div class="bid" style="--depth: 42%"><span>66,229.6</span><strong>1.233</strong></div>
+              <div class="bid" style="--depth: 24%"><span>66,226.2</span><strong>0.622</strong></div>
+            </div>
+          </section>
+
+          <section class="panel span-all">
+            <div class="panel-title">
+              <h2>Positions and Bots</h2>
+              <div class="segmented"><button class="is-selected" type="button">Positions</button><button type="button">Open orders</button><button type="button">Bot logs</button></div>
+            </div>
+            <table class="dense-table">
+              <thead><tr><th>Pair</th><th>Venue</th><th>Entry</th><th>Mark</th><th>Stop</th><th>Target</th><th>Unrealized</th></tr></thead>
+              <tbody>
+                <tr><td>BTC/USDT</td><td>OKX paper</td><td>64,930.20</td><td>66,234.13</td><td>63,631.60</td><td>67,852.50</td><td class="up">+$29.70</td></tr>
+                <tr><td>ETH/USDT</td><td>Binance paper</td><td>3,408.44</td><td>3,421.90</td><td>3,340.27</td><td>3,562.80</td><td class="up">+$4.08</td></tr>
+                <tr><td>SOL/USDT</td><td>Kraken sandbox</td><td>149.44</td><td>148.26</td><td>145.12</td><td>155.30</td><td class="down">-$2.31</td></tr>
+              </tbody>
+            </table>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen copy-screen" id="screen-copy" data-screen="copy" aria-label="Strategy Marketplace iteration">
+        <div class="screen-head">
+          <div>
+            <p>Iteration 03</p>
+            <h1>Strategy Marketplace</h1>
+          </div>
+          <div class="mode-pills"><span class="pill live">Copy sandbox</span><span class="pill">Backtest required</span><span class="pill">No auto-live</span></div>
+        </div>
+
+        <div class="marketplace-grid">
+          <section class="panel span-2 texture gold">
+            <div class="banner-copy">
+              <span>Discover</span>
+              <h2>Copy proven crypto automations without giving up risk control.</h2>
+              <p>Every imported strategy lands as paper-only until its limits, exchanges, and brackets are reviewed.</p>
+            </div>
+          </section>
+
+          <article class="strategy-card">
+            <div class="strategy-head"><strong>Tony_Bro</strong><span>Perpetual futures</span><button type="button">Copy</button></div>
+            <canvas data-chart="spark" width="260" height="92" aria-label="Strategy equity sparkline"></canvas>
+            <dl><div><dt>300D ROI</dt><dd class="up">+229.35%</dd></div><div><dt>Win rate</dt><dd>86.44%</dd></div><div><dt>Max DD</dt><dd>8.2%</dd></div></dl>
+          </article>
+
+          <article class="strategy-card">
+            <div class="strategy-head"><strong>CRYPTOBOX</strong><span>Spot grid</span><button type="button">Copy</button></div>
+            <canvas data-chart="spark" width="260" height="92" aria-label="Strategy equity sparkline"></canvas>
+            <dl><div><dt>300D ROI</dt><dd class="up">+110.11%</dd></div><div><dt>Win rate</dt><dd>74.93%</dd></div><div><dt>Max DD</dt><dd>5.9%</dd></div></dl>
+          </article>
+
+          <article class="strategy-card">
+            <div class="strategy-head"><strong>AlphaBot_Long</strong><span>Signal bot</span><button type="button">Copy</button></div>
+            <canvas data-chart="spark" width="260" height="92" aria-label="Strategy equity sparkline"></canvas>
+            <dl><div><dt>300D ROI</dt><dd class="up">+64.28%</dd></div><div><dt>Win rate</dt><dd>80.95%</dd></div><div><dt>Max DD</dt><dd>6.7%</dd></div></dl>
+          </article>
+
+          <section class="panel leaderboard">
+            <div class="panel-title">
+              <h2>Rank Filters</h2>
+              <button type="button">Filter</button>
+            </div>
+            <div class="filter-grid">
+              <button type="button">Spot only</button>
+              <button type="button">Futures</button>
+              <button type="button">Low drawdown</button>
+              <button type="button">High liquidity</button>
+            </div>
+          </section>
+
+          <section class="panel span-2">
+            <div class="panel-title">
+              <h2>Import Checklist</h2>
+              <span>6 required checks</span>
+            </div>
+            <ol class="check-steps">
+              <li class="done"><strong>Backtest window</strong><span>365 days loaded</span></li>
+              <li class="done"><strong>Venue support</strong><span>Binance, OKX, Kraken mapped</span></li>
+              <li><strong>Risk envelope</strong><span>Daily loss and exposure pending</span></li>
+              <li><strong>Approval mode</strong><span>Operator must confirm first live trade</span></li>
+            </ol>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen portfolio-screen" id="screen-portfolio" data-screen="portfolio" aria-label="Portfolio Sentinel iteration">
+        <div class="screen-head">
+          <div>
+            <p>Iteration 04</p>
+            <h1>Portfolio Sentinel</h1>
+          </div>
+          <div class="pair-selector">
+            <button type="button">All exchanges</button>
+            <button type="button">24h</button>
+            <button type="button">Export</button>
+          </div>
+        </div>
+
+        <div class="portfolio-grid">
+          <section class="panel asset-ring">
+            <div class="panel-title">
+              <h2>Allocation</h2>
+              <span>$12,450 paper NAV</span>
+            </div>
+            <canvas data-chart="donut" width="340" height="300" aria-label="Portfolio allocation donut"></canvas>
+          </section>
+
+          <section class="panel span-2">
+            <div class="panel-title">
+              <h2>Equity Curve</h2>
+              <div class="segmented"><button class="is-selected" type="button">1D</button><button type="button">1W</button><button type="button">1M</button><button type="button">YTD</button></div>
+            </div>
+            <canvas class="wide-chart" data-chart="equity" width="920" height="300" aria-label="Portfolio equity chart"></canvas>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h2>Exposure Limits</h2>
+              <span class="status-good">Within bounds</span>
+            </div>
+            <div class="limit-bars">
+              <div><span>BTC</span><meter value="58" min="0" max="100"></meter><strong>58%</strong></div>
+              <div><span>ETH</span><meter value="41" min="0" max="100"></meter><strong>41%</strong></div>
+              <div><span>SOL</span><meter value="29" min="0" max="100"></meter><strong>29%</strong></div>
+              <div><span>Other</span><meter value="18" min="0" max="100"></meter><strong>18%</strong></div>
+            </div>
+          </section>
+
+          <section class="panel span-2">
+            <div class="panel-title">
+              <h2>Bracket Ledger</h2>
+              <span>active exits</span>
+            </div>
+            <table class="dense-table">
+              <thead><tr><th>Pair</th><th>Lots</th><th>Stop</th><th>TP1</th><th>TP2</th><th>Trailing</th><th>Status</th></tr></thead>
+              <tbody>
+                <tr><td>BTC/USDT</td><td>2</td><td>63,631.60</td><td>67,852.50</td><td>69,114.20</td><td>0.8%</td><td class="up">armed</td></tr>
+                <tr><td>ETH/USDT</td><td>1</td><td>3,340.27</td><td>3,562.80</td><td>-</td><td>off</td><td class="up">armed</td></tr>
+                <tr><td>SOL/USDT</td><td>3</td><td>145.12</td><td>155.30</td><td>158.20</td><td>1.1%</td><td class="flat">watch</td></tr>
+              </tbody>
+            </table>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h2>Daily P&L</h2>
+              <span>realized</span>
+            </div>
+            <div class="big-number up">+$64.85</div>
+            <canvas data-chart="bars" width="320" height="160" aria-label="Daily P&L bars"></canvas>
+          </section>
+        </div>
+      </section>
+
+      <section class="screen signals-screen" id="screen-signals" data-screen="signals" aria-label="Signals and Integrations iteration">
+        <div class="screen-head">
+          <div>
+            <p>Iteration 05</p>
+            <h1>Signal Forge</h1>
+          </div>
+          <div class="mode-pills"><span class="pill live">Discord online</span><span class="pill live">TradingView webhooks</span><span class="pill">JWT required</span></div>
+        </div>
+
+        <div class="signals-grid">
+          <section class="panel webhook-builder">
+            <div class="panel-title">
+              <h2>Alert Builder</h2>
+              <span>strict parser</span>
+            </div>
+            <label>Channel<select><option>Discord #crypto-alerts</option><option>TradingView webhook</option><option>Custom API</option></select></label>
+            <label>Signal text<textarea>BUY BTCUSDT $250 @ 66234 SL 2% TP 4.5%</textarea></label>
+            <div class="parsed-signal">
+              <span>symbol <strong>BTCUSDT</strong></span>
+              <span>side <strong>BUY</strong></span>
+              <span>quote <strong>$250</strong></span>
+              <span>risk <strong>pass</strong></span>
+            </div>
+            <button class="primary" type="button">Send Paper Test</button>
+          </section>
+
+          <section class="panel span-2 texture blue">
+            <div class="pipeline">
+              <div><strong>Discord</strong><span>text alert</span></div>
+              <i></i>
+              <div><strong>Parser</strong><span>normalized signal</span></div>
+              <i></i>
+              <div><strong>Risk</strong><span>limits checked</span></div>
+              <i></i>
+              <div><strong>Approval</strong><span>operator gate</span></div>
+              <i></i>
+              <div><strong>Paper Fill</strong><span>audit stored</span></div>
+            </div>
+          </section>
+
+          <section class="panel integrations">
+            <div class="panel-title">
+              <h2>Integrations</h2>
+              <button type="button">Add</button>
+            </div>
+            <div class="integration-row"><strong>TradingView</strong><span>webhook authenticated</span><em class="up">healthy</em></div>
+            <div class="integration-row"><strong>Discord</strong><span>slash commands ready</span><em class="up">healthy</em></div>
+            <div class="integration-row"><strong>Binance</strong><span>read-only key</span><em class="flat">limited</em></div>
+            <div class="integration-row"><strong>OKX</strong><span>paper adapter</span><em class="up">ready</em></div>
+          </section>
+
+          <section class="panel span-2">
+            <div class="panel-title">
+              <h2>Recent Webhook Payloads</h2>
+              <span>redacted</span>
+            </div>
+            <pre class="payload-view">{
+  "signal_id": "btc-breakout-001",
+  "symbol": "BTCUSDT",
+  "side": "buy",
+  "quote_amount": "250",
+  "price": "66234",
+  "strategy_id": "breakout"
+}</pre>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h2>Security Gates</h2>
+              <span class="status-good">enabled</span>
+            </div>
+            <ul class="gate-list">
+              <li><strong>Replay window</strong><span>300 seconds</span></li>
+              <li><strong>Signature</strong><span>HMAC required</span></li>
+              <li><strong>Secrets</strong><span>never in alert body</span></li>
+              <li><strong>Live mode</strong><span>manual unlock</span></li>
+            </ul>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

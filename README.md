@@ -50,6 +50,17 @@ Useful switches:
 
 The workstation suite reserves frontend port `3004` for Auto-Crypto. This checkout currently exposes API docs from the backend on port `8004`.
 
+## UI Prototype Gallery
+
+Five selectable UI iterations are available in `ui-prototypes/` for reviewing the first Auto-Crypto operator interface direction before production wiring.
+
+```powershell
+cd ui-prototypes
+python -m http.server 8064 --bind 127.0.0.1
+```
+
+Open `http://127.0.0.1:8064` and use the left navigation to switch between Command Center, Trading Desk, Strategy Marketplace, Portfolio Sentinel, and Signal Forge.
+
 ## Manual Start
 
 ```powershell
