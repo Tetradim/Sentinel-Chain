@@ -3,9 +3,12 @@ from __future__ import annotations
 import os
 from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .approvals import ApprovalQueue
 from .config import load_settings
@@ -42,6 +45,10 @@ def create_app(
     require_approval: bool = False,
 ) -> FastAPI:
     app = FastAPI(title="Auto-Crypto", version="0.1.0")
+    static_dir = Path(__file__).with_name("static")
+    if static_dir.exists():
+        app.mount("/ui/static", StaticFiles(directory=static_dir), name="ui-static")
+
     paper_exchange = exchange
     if paper_exchange is None:
         paper_exchange = PaperExchange.from_order_history(repository.list_orders()) if repository else PaperExchange()
@@ -69,6 +76,36 @@ def create_app(
             "orders": len(engine.exchange.orders),
             "halted": engine.halted,
             "halt_reason": engine.halt_reason,
+        }
+
+    @app.get("/", include_in_schema=False)
+    @app.get("/ui", include_in_schema=False)
+    def ui_index() -> FileResponse:
+        index_path = static_dir / "index.html"
+        if not index_path.exists():
+            raise HTTPException(status_code=404, detail="operator UI is not installed")
+        return FileResponse(index_path)
+
+    @app.get("/ui/state")
+    def ui_state() -> dict[str, Any]:
+        orders_payload = repository.list_orders() if repository else [order.to_dict() for order in engine.exchange.orders]
+        return {
+            "health": {
+                "status": "ok",
+                "default_mode": "paper",
+                "orders": len(engine.exchange.orders),
+                "halted": engine.halted,
+                "halt_reason": engine.halt_reason,
+            },
+            "control": {"halted": engine.halted, "reason": engine.halt_reason},
+            "risk": _risk_config_to_dict(engine.risk_config),
+            "account": _account_state_to_dict(engine.account_state),
+            "orders": orders_payload,
+            "positions": engine.exchange.list_positions(),
+            "signals": repository.list_signals() if repository else [],
+            "approvals": intake.list_approvals(),
+            "audit": [event.to_dict() for event in repository.list_audit()] if repository else [],
+            "active_exits": _active_exits_to_dict(engine.exchange.active_exits),
         }
 
     @app.get("/control/status")
@@ -235,6 +272,24 @@ def create_app(
             }
         }
 
+    @app.post("/signals/submit-text")
+    async def submit_text(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        try:
+            signal = parse_text_signal(str(payload.get("message") or ""), source="operator-ui")
+        except SignalValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return intake.handle(signal)
+
+    @app.post("/signals/submit")
+    async def submit_signal(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        try:
+            signal = normalize_signal(payload, source="operator-ui")
+        except SignalValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return intake.handle(signal)
+
     @app.get("/audit")
     def audit() -> dict[str, Any]:
         return {"events": [event.to_dict() for event in repository.list_audit()] if repository else []}
@@ -291,3 +346,33 @@ def _exchange_row(exchange_id: str, driver: str) -> dict[str, Any]:
         "credentials_configured": False,
         "live_execution_enabled": False,
     }
+
+
+def _risk_config_to_dict(config: RiskConfig) -> dict[str, Any]:
+    return {
+        "max_order_notional": str(config.max_order_notional),
+        "max_open_notional": str(config.max_open_notional),
+        "max_leverage": str(config.max_leverage),
+        "max_daily_loss": str(config.max_daily_loss),
+        "require_stop_loss": config.require_stop_loss,
+        "max_slippage_bps": config.max_slippage_bps,
+        "allowed_exchanges": sorted(config.allowed_exchanges),
+        "allowed_symbols": sorted(config.allowed_symbols),
+        "blocked_symbols": sorted(config.blocked_symbols),
+    }
+
+
+def _account_state_to_dict(account_state: AccountState) -> dict[str, Any]:
+    return {
+        "equity": str(account_state.equity),
+        "daily_pnl": str(account_state.daily_pnl),
+        "open_notional": str(account_state.open_notional),
+    }
+
+
+def _active_exits_to_dict(active_exits: dict[str, list[Any]]) -> list[dict[str, str]]:
+    return [
+        {"symbol": symbol, "kind": exit_order.kind, "trigger_price": str(exit_order.trigger_price)}
+        for symbol, exits in sorted(active_exits.items())
+        for exit_order in exits
+    ]

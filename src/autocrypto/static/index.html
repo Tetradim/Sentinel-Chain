@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Auto-Crypto Operator</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="/ui/static/styles.css" />
+  </head>
+  <body>
+    <aside class="rail" aria-label="Auto-Crypto navigation">
+      <div class="brand">
+        <div class="brand-mark">AC</div>
+        <div>
+          <strong>Auto-Crypto</strong>
+          <span>Operator Console</span>
+        </div>
+      </div>
+
+      <nav class="nav-list" aria-label="Main sections">
+        <button class="nav-item is-active" type="button" data-view="dashboard"><span>01</span> Dashboard</button>
+        <button class="nav-item" type="button" data-view="signals"><span>02</span> Signals</button>
+        <button class="nav-item" type="button" data-view="trading"><span>03</span> Trading Desk</button>
+        <button class="nav-item" type="button" data-view="strategies"><span>04</span> Strategies</button>
+        <button class="nav-item" type="button" data-view="portfolio"><span>05</span> Portfolio</button>
+        <button class="nav-item" type="button" data-view="exchanges"><span>06</span> Exchanges</button>
+        <button class="nav-item" type="button" data-view="audit"><span>07</span> Audit</button>
+      </nav>
+
+      <div class="rail-card">
+        <span>Paper engine</span>
+        <strong id="railMode">Checking</strong>
+      </div>
+      <div class="rail-card">
+        <span>Live trading</span>
+        <strong class="amber">Locked</strong>
+      </div>
+      <div class="rail-card">
+        <span>Last refresh</span>
+        <strong id="lastRefresh">never</strong>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div class="market-strip" id="marketStrip" aria-label="Market summary"></div>
+        <div class="operator-actions">
+          <button type="button" id="refreshButton" title="Refresh dashboard state">Refresh</button>
+          <button type="button" id="haltButton" class="danger">Global Halt</button>
+          <button type="button" id="resumeButton">Resume</button>
+        </div>
+      </header>
+
+      <section class="status-line" id="statusLine" role="status" aria-live="polite">Loading operator state...</section>
+
+      <section class="view is-active" data-view="dashboard">
+        <div class="view-head">
+          <div>
+            <p>Command Center</p>
+            <h1>Unified bot operations</h1>
+          </div>
+          <div class="mode-pills">
+            <span class="pill live" id="webhookPill">Webhook intake</span>
+            <span class="pill" id="approvalPill">Approvals</span>
+            <span class="pill paper">Paper fills only</span>
+          </div>
+        </div>
+
+        <div class="dashboard-grid">
+          <section class="panel span-2">
+            <div class="panel-title">
+              <h2>Signal Inbox</h2>
+              <button type="button" data-action="nav" data-target="signals">Review all</button>
+            </div>
+            <div class="signal-list" id="pendingPreview"></div>
+          </section>
+
+          <section class="panel risk-panel">
+            <div class="panel-title">
+              <h2>Risk State</h2>
+              <span id="riskStateLabel">loading</span>
+            </div>
+            <div class="risk-meter">
+              <canvas id="riskRing" width="230" height="230" aria-label="Open exposure usage"></canvas>
+              <div><strong id="riskPercent">0%</strong><span>open exposure</span></div>
+            </div>
+            <dl class="metric-stack" id="riskMetrics"></dl>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h2>Exchange Fabric</h2>
+              <button type="button" data-action="nav" data-target="exchanges">Inspect</button>
+            </div>
+            <div class="venue-grid" id="exchangeFabric"></div>
+          </section>
+
+          <section class="panel span-2">
+            <div class="panel-title">
+              <h2>Bot Runtime</h2>
+              <div class="segmented" role="group" aria-label="Runtime filter">
+                <button class="is-selected" type="button" data-runtime-filter="all">All</button>
+                <button type="button" data-runtime-filter="buy">Buy</button>
+                <button type="button" data-runtime-filter="sell">Sell</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="dense-table">
+                <thead>
+                  <tr><th>Order</th><th>Pair</th><th>Side</th><th>Notional</th><th>Price</th><th>Action</th></tr>
+                </thead>
+                <tbody id="runtimeRows"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h2>Audit Feed</h2>
+              <button type="button" data-action="nav" data-target="audit">Open</button>
+            </div>
+            <ol class="timeline" id="auditPreview"></ol>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" data-view="signals">
+        <div class="view-head">
+          <div>
+            <p>Signal Forge</p>
+            <h1>Discord and webhook controls</h1>
+          </div>
+          <div class="mode-pills">
+            <span class="pill live">Parser online</span>
+            <span class="pill live">TradingView ready</span>
+            <span class="pill">Operator submit</span>
+          </div>
+        </div>
+
+        <div class="signals-grid">
+          <section class="panel signal-builder">
+            <div class="panel-title">
+              <h2>Alert Builder</h2>
+              <button type="button" id="sampleSignalButton">Sample</button>
+            </div>
+            <label>Channel
+              <select id="signalChannel">
+                <option value="discord">Discord #crypto-alerts</option>
+                <option value="tradingview">TradingView webhook</option>
+                <option value="operator">Operator console</option>
+              </select>
+            </label>
+            <label>Signal text
+              <textarea id="signalText">BUY BTCUSDT $250 @ 66234 SL 2% TP 4.5%</textarea>
+            </label>
+            <div class="builder-actions">
+              <button type="button" id="parseSignalButton">Parse</button>
+              <button type="button" id="submitSignalButton" class="primary">Submit Paper Signal</button>
+            </div>
+            <div class="parsed-grid" id="parsedSignal"></div>
+          </section>
+
+          <section class="panel span-2 texture blue">
+            <div class="pipeline">
+              <div><strong>Discord</strong><span>text alert</span></div>
+              <div><strong>Parser</strong><span>normalized signal</span></div>
+              <div><strong>Risk</strong><span>limits checked</span></div>
+              <div><strong>Approval</strong><span>operator gate</span></div>
+              <div><strong>Paper Fill</strong><span>audit stored</span></div>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h2>Pending Approvals</h2>
+              <span id="approvalCount">0</span>
+            </div>
+            <div class="signal-list compact" id="approvalList"></div>
+          </section>
+
+          <section class="panel span-2">
+            <div class="panel-title">
+              <h2>Payload Preview</h2>
+              <button type="button" id="copyPayloadButton">Copy</button>
+            </div>
+            <pre class="payload-view" id="payloadPreview">{}</pre>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h2>Security Gates</h2>
+              <span>visible</span>
+            </div>
+            <ul class="gate-list">
+              <li><strong>Replay defense</strong><span>webhooks</span></li>
+              <li><strong>HMAC</strong><span>when secret configured</span></li>
+              <li><strong>Live execution</strong><span>locked</span></li>
+              <li><strong>Audit log</strong><span>persistent with DB</span></li>
+            </ul>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" data-view="trading">
+        <div class="view-head">
+          <div>
+            <p>Trading Desk</p>
+            <h1>Paper execution terminal</h1>
+          </div>
+          <div class="pair-selector">
+            <button type="button" data-pair="BTCUSDT">BTC/USDT</button>
+            <button type="button" data-pair="ETHUSDT">ETH/USDT</button>
+            <button type="button" data-pair="SOLUSDT">SOL/USDT</button>
+          </div>
+        </div>
+
+        <div class="desk-grid">
+          <section class="panel order-ticket">
+            <div class="panel-title">
+              <h2>Bot Order</h2>
+              <span id="ticketStatus">draft</span>
+            </div>
+            <label>Strategy
+              <select id="ticketStrategy">
+                <option>Breakout Guard</option>
+                <option>DCA Ladder</option>
+                <option>Mean Grid 18</option>
+              </select>
+            </label>
+            <label>Symbol <input id="ticketSymbol" value="BTCUSDT" /></label>
+            <label>Side
+              <select id="ticketSide">
+                <option value="BUY">Buy</option>
+                <option value="SELL">Sell</option>
+              </select>
+            </label>
+            <label>Quote amount <input id="ticketAmount" value="250" inputmode="decimal" /></label>
+            <label>Price <input id="ticketPrice" value="66234" inputmode="decimal" /></label>
+            <label>Stop loss % <input id="ticketStop" value="2" inputmode="decimal" /></label>
+            <label>Take profit % <input id="ticketTakeProfit" value="4.5" inputmode="decimal" /></label>
+            <div class="ticket-actions">
+              <button type="button" id="buildTicketButton">Build Alert</button>
+              <button class="primary" type="button" id="submitTicketButton">Submit</button>
+            </div>
+          </section>
+
+          <section class="panel chart-panel">
+            <div class="panel-title">
+              <h2 id="chartTitle">BTC/USDT Context</h2>
+              <div class="segmented" aria-label="Chart range">
+                <button class="is-selected" type="button" data-timeframe="15m">15m</button>
+                <button type="button" data-timeframe="1h">1h</button>
+                <button type="button" data-timeframe="4h">4h</button>
+                <button type="button" data-timeframe="1d">1d</button>
+              </div>
+            </div>
+            <canvas id="mainChart" width="920" height="450" aria-label="Generated market chart"></canvas>
+          </section>
+
+          <section class="panel orderbook">
+            <div class="panel-title">
+              <h2>Order Book</h2>
+              <span id="bookTick">0.1 tick</span>
+            </div>
+            <div class="book" id="orderBook"></div>
+            <div class="price-update">
+              <label>Mark price <input id="markPrice" value="66234" inputmode="decimal" /></label>
+              <button type="button" id="updatePriceButton">Update Price</button>
+            </div>
+          </section>
+
+          <section class="panel span-all">
+            <div class="panel-title">
+              <h2>Positions and Orders</h2>
+              <div class="segmented" aria-label="Desk table">
+                <button class="is-selected" type="button" data-desk-table="positions">Positions</button>
+                <button type="button" data-desk-table="orders">Orders</button>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table class="dense-table">
+                <thead id="deskTableHead"></thead>
+                <tbody id="deskTableBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" data-view="strategies">
+        <div class="view-head">
+          <div>
+            <p>Strategy Marketplace</p>
+            <h1>Copy, test, and load strategies</h1>
+          </div>
+          <div class="strategy-filters">
+            <button class="is-selected" type="button" data-strategy-filter="all">All</button>
+            <button type="button" data-strategy-filter="signal">Signals</button>
+            <button type="button" data-strategy-filter="grid">Grid</button>
+            <button type="button" data-strategy-filter="dca">DCA</button>
+          </div>
+        </div>
+
+        <div class="marketplace-grid">
+          <section class="panel span-2 texture gold">
+            <div class="banner-copy">
+              <span>Guarded copy trading</span>
+              <h2>Import strategy defaults, then let Auto-Crypto enforce paper mode, stops, and risk limits.</h2>
+              <p>Copy fills the trading desk and alert builder. Backtest simulates a local equity curve for comparison.</p>
+            </div>
+          </section>
+          <div class="strategy-card-grid" id="strategyCards"></div>
+          <section class="panel span-2">
+            <div class="panel-title">
+              <h2>Import Checklist</h2>
+              <span id="importStatus">waiting</span>
+            </div>
+            <ol class="check-steps" id="strategyChecklist"></ol>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" data-view="portfolio">
+        <div class="view-head">
+          <div>
+            <p>Portfolio Sentinel</p>
+            <h1>Risk, P&L, and brackets</h1>
+          </div>
+          <div class="pair-selector">
+            <button type="button" id="exportStateButton">Export JSON</button>
+            <button type="button" data-action="nav" data-target="trading">Update Price</button>
+          </div>
+        </div>
+
+        <div class="portfolio-grid">
+          <section class="panel asset-ring">
+            <div class="panel-title">
+              <h2>Allocation</h2>
+              <span id="navAmount">$0 paper NAV</span>
+            </div>
+            <canvas id="allocationChart" width="340" height="300" aria-label="Allocation chart"></canvas>
+          </section>
+
+          <section class="panel span-2">
+            <div class="panel-title">
+              <h2>Equity Curve</h2>
+              <div class="segmented" aria-label="Portfolio range">
+                <button class="is-selected" type="button" data-equity-range="1d">1D</button>
+                <button type="button" data-equity-range="1w">1W</button>
+                <button type="button" data-equity-range="1m">1M</button>
+                <button type="button" data-equity-range="ytd">YTD</button>
+              </div>
+            </div>
+            <canvas id="equityChart" width="920" height="300" aria-label="Equity chart"></canvas>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h2>Exposure Limits</h2>
+              <span id="limitState">loading</span>
+            </div>
+            <div class="limit-bars" id="limitBars"></div>
+          </section>
+
+          <section class="panel span-2">
+            <div class="panel-title">
+              <h2>Bracket Ledger</h2>
+              <span id="bracketCount">0 active exits</span>
+            </div>
+            <div class="table-wrap">
+              <table class="dense-table">
+                <thead><tr><th>Symbol</th><th>Kind</th><th>Trigger</th><th>Action</th></tr></thead>
+                <tbody id="bracketRows"></tbody>
+              </table>
+            </div>
+          </section>
+
+          <section class="panel">
+            <div class="panel-title">
+              <h2>Daily P&L</h2>
+              <span>realized</span>
+            </div>
+            <div class="big-number" id="dailyPnl">$0.00</div>
+            <canvas id="pnlBars" width="320" height="160" aria-label="P&L bars"></canvas>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" data-view="exchanges">
+        <div class="view-head">
+          <div>
+            <p>Exchange Fabric</p>
+            <h1>Venue discovery and capabilities</h1>
+          </div>
+          <div class="pair-selector">
+            <input id="exchangeSearch" placeholder="Filter exchanges" />
+            <button type="button" id="refreshExchangesButton">Refresh Venues</button>
+          </div>
+        </div>
+        <div class="exchange-layout">
+          <section class="panel">
+            <div class="panel-title">
+              <h2>Venues</h2>
+              <span id="exchangeCount">0</span>
+            </div>
+            <div class="exchange-list" id="exchangeList"></div>
+          </section>
+          <section class="panel span-2">
+            <div class="panel-title">
+              <h2>Capabilities</h2>
+              <span id="capabilityTitle">select an exchange</span>
+            </div>
+            <pre class="payload-view" id="capabilityView">{}</pre>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" data-view="audit">
+        <div class="view-head">
+          <div>
+            <p>Audit Ledger</p>
+            <h1>Signals, controls, and fills</h1>
+          </div>
+          <div class="pair-selector">
+            <input id="auditSearch" placeholder="Filter audit events" />
+            <button type="button" id="refreshAuditButton">Refresh</button>
+          </div>
+        </div>
+        <section class="panel">
+          <div class="table-wrap">
+            <table class="dense-table">
+              <thead><tr><th>Event</th><th>Data</th><th>Action</th></tr></thead>
+              <tbody id="auditRows"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="/ui/static/app.js"></script>
+  </body>
+</html>

@@ -34,7 +34,7 @@ The launcher:
 - Installs Auto-Crypto dependencies when needed
 - Starts the API from `autocrypto.app:create_app_from_env`
 - Uses persistent SQLite at `data/auto_crypto.sqlite3`
-- Opens the FastAPI docs in your browser
+- Opens the Auto-Crypto operator UI in your browser
 - Stops processes it started when the launcher window closes
 
 Useful switches:
@@ -50,9 +50,21 @@ Useful switches:
 
 The workstation suite reserves frontend port `3004` for Auto-Crypto. This checkout currently exposes API docs from the backend on port `8004`.
 
+The production operator UI is served by the backend at:
+
+```text
+http://127.0.0.1:8004/ui
+```
+
+FastAPI docs remain available at:
+
+```text
+http://127.0.0.1:8004/docs
+```
+
 ## UI Prototype Gallery
 
-Five selectable UI iterations are available in `ui-prototypes/` for reviewing the first Auto-Crypto operator interface direction before production wiring.
+The original five selectable UI iterations remain available in `ui-prototypes/` as design references.
 
 ```powershell
 cd ui-prototypes

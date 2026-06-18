@@ -282,6 +282,7 @@ try {
     }
 
     $healthUrl = "http://127.0.0.1:$Port/health"
+    $uiUrl = "http://127.0.0.1:$Port/ui"
     $docsUrl = "http://127.0.0.1:$Port/docs"
 
     if (Test-PortOpen -PortToCheck $Port) {
@@ -307,12 +308,13 @@ try {
     }
 
     if (-not $NoBrowser) {
-        Write-Status "Opening API docs"
-        Start-Process $docsUrl | Out-Null
+        Write-Status "Opening Auto-Crypto operator UI"
+        Start-Process $uiUrl | Out-Null
     }
 
     Write-Host ""
-    Write-Host "Ready: $docsUrl" -ForegroundColor Green
+    Write-Host "Ready: $uiUrl" -ForegroundColor Green
+    Write-Host "API docs: $docsUrl" -ForegroundColor Gray
     Write-Host "Health: $healthUrl" -ForegroundColor Gray
     Write-Host "Frontend port reserved: $FrontendPort" -ForegroundColor Gray
     Write-Host "Database: $DbPath" -ForegroundColor Gray
