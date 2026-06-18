@@ -51,6 +51,7 @@ const strategies = [
 ];
 
 const STRATEGY_PIN_STORAGE_KEY = "autoCryptoPinnedStrategies";
+const STRATEGY_BACKTEST_STORAGE_KEY = "autoCryptoBacktests";
 
 const appState = {
   data: null,
@@ -68,7 +69,7 @@ const appState = {
   parsedSignal: null,
   riskPreview: null,
   lastPayload: null,
-  backtests: {},
+  backtests: readStoredBacktests(),
   selectedExchange: null,
   markPrices: {},
 };
@@ -132,6 +133,19 @@ function readPinnedStrategies() {
 
 function writePinnedStrategies(pinned) {
   localStorage.setItem(STRATEGY_PIN_STORAGE_KEY, JSON.stringify([...pinned]));
+}
+
+function readStoredBacktests() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STRATEGY_BACKTEST_STORAGE_KEY) || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeStoredBacktests() {
+  localStorage.setItem(STRATEGY_BACKTEST_STORAGE_KEY, JSON.stringify(appState.backtests));
 }
 
 function setStatus(message, type = "") {
@@ -571,6 +585,7 @@ function strategyCard(strategy, isPinned) {
         <button type="button" data-action="toggle-strategy-pin" data-strategy-id="${strategy.id}" aria-pressed="${isPinned}">${isPinned ? "Pinned" : "Pin"}</button>
       </div>
       <canvas data-strategy-spark="${strategy.id}" width="320" height="96" aria-label="${escapeHtml(strategy.name)} backtest curve"></canvas>
+      ${strategyBacktestSummary(strategy)}
       <dl>
         <div><dt>300D ROI</dt><dd class="up">${strategy.roi}</dd></div>
         <div><dt>Win rate</dt><dd>${strategy.win}</dd></div>
@@ -582,6 +597,32 @@ function strategyCard(strategy, isPinned) {
       </div>
     </article>
   `;
+}
+
+function strategyBacktestSummary(strategy) {
+  const backtest = appState.backtests[strategy.id];
+  if (!backtest) {
+    return `
+      <div class="strategy-backtest is-empty">
+        <span>Sim return<strong>-</strong></span>
+        <span>Sim DD<strong>-</strong></span>
+        <span>Last run<strong>not run</strong></span>
+      </div>
+    `;
+  }
+  return `
+    <div class="strategy-backtest">
+      <span>Sim return<strong class="${backtest.return_pct >= 0 ? "up" : "down"}">${percent(backtest.return_pct)}</strong></span>
+      <span>Sim DD<strong>${Math.abs(Number(backtest.max_drawdown_pct || 0)).toFixed(2)}%</strong></span>
+      <span>Last run<strong>${escapeHtml(formatBacktestTime(backtest.updated_at))}</strong></span>
+    </div>
+  `;
+}
+
+function formatBacktestTime(value) {
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "not run";
+  return parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
 function renderPortfolio() {
@@ -950,12 +991,28 @@ async function copyStrategy(strategyId) {
 function runBacktest(strategyId) {
   const strategy = strategies.find((item) => item.id === strategyId);
   if (!strategy) return;
-  appState.backtests[strategyId] = Array.from({ length: 32 }, (_, index) => {
+  const points = Array.from({ length: 32 }, (_, index) => {
     const wave = Math.sin((index + strategy.name.length) * 0.55) * 9;
     return 50 + index * (strategy.type === "grid" ? 1.2 : 1.8) + wave;
   });
-  drawStrategySparks();
-  setStatus(`${strategy.name} backtest simulation refreshed.`, "ok");
+  const first = points[0] || 1;
+  const last = points[points.length - 1] || first;
+  let highWater = first;
+  let maxDrawdown = 0;
+  points.forEach((point) => {
+    highWater = Math.max(highWater, point);
+    const drawdown = highWater > 0 ? ((point - highWater) / highWater) * 100 : 0;
+    maxDrawdown = Math.min(maxDrawdown, drawdown);
+  });
+  appState.backtests[strategyId] = {
+    points,
+    return_pct: ((last - first) / first) * 100,
+    max_drawdown_pct: maxDrawdown,
+    updated_at: new Date().toISOString(),
+  };
+  writeStoredBacktests();
+  renderStrategies();
+  setStatus(`${strategy.name} backtest: ${percent(appState.backtests[strategyId].return_pct)} return, ${Math.abs(maxDrawdown).toFixed(2)}% drawdown.`, "ok");
 }
 
 function toggleStrategyPin(strategyId) {
@@ -1184,7 +1241,8 @@ function drawStrategySparks() {
   $$("[data-strategy-spark]").forEach((canvas) => {
     const id = canvas.dataset.strategySpark;
     const strategy = strategies.find((item) => item.id === id);
-    const points = appState.backtests[id] || Array.from({ length: 28 }, (_, index) => 42 + Math.sin((index + strategy.name.length) * 0.62) * 10 + index * 1.4);
+    const storedBacktest = appState.backtests[id];
+    const points = storedBacktest?.points || storedBacktest || Array.from({ length: 28 }, (_, index) => 42 + Math.sin((index + strategy.name.length) * 0.62) * 10 + index * 1.4);
     const { ctx, width, height } = setupCanvas(canvas);
     ctx.clearRect(0, 0, width, height);
     linePath(ctx, points, width, height, "#27d9ef", "rgba(39, 217, 239, 0.14)");

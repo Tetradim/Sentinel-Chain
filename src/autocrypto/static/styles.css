@@ -1108,6 +1108,32 @@ canvas {
   gap: 3px;
 }
 
+.strategy-backtest {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.strategy-backtest span {
+  border: 1px solid rgba(66, 83, 109, 0.72);
+  border-radius: 7px;
+  background: rgba(10, 15, 22, 0.74);
+  color: var(--muted);
+  padding: 8px;
+  font-size: 0.76rem;
+}
+
+.strategy-backtest strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.strategy-backtest.is-empty span {
+  border-style: dashed;
+}
+
 .strategy-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;

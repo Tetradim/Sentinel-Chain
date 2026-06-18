@@ -44,6 +44,9 @@ def test_operator_ui_is_served_from_backend():
     assert "STRATEGY_PIN_STORAGE_KEY" in script.text
     assert "renderTicketPreview" in script.text
     assert "activateSignals: false" in script.text
+    assert "STRATEGY_BACKTEST_STORAGE_KEY" in script.text
+    assert "strategyBacktestSummary" in script.text
+    assert "writeStoredBacktests" in script.text
 
 
 def test_ui_state_returns_dashboard_contract(tmp_path):
