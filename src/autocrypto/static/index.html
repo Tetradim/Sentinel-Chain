@@ -236,7 +236,13 @@
                 <option value="SELL">Sell</option>
               </select>
             </label>
-            <label>Quote amount <input id="ticketAmount" value="250" inputmode="decimal" /></label>
+            <label>Size mode
+              <select id="ticketSizeMode">
+                <option value="quote">Quote notional</option>
+                <option value="base">Base quantity</option>
+              </select>
+            </label>
+            <label><span id="ticketAmountLabel">Quote amount</span> <input id="ticketAmount" value="250" inputmode="decimal" /></label>
             <label>Price <input id="ticketPrice" value="66234" inputmode="decimal" /></label>
             <label>Stop loss % <input id="ticketStop" value="2" inputmode="decimal" /></label>
             <label>Take profit % <input id="ticketTakeProfit" value="4.5" inputmode="decimal" /></label>

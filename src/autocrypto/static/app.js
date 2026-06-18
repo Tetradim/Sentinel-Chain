@@ -133,13 +133,13 @@ async function api(path, options = {}) {
   return payload;
 }
 
-async function loadState() {
+async function loadState(showStatus = true) {
   try {
     appState.data = await api("/ui/state");
     await loadExchanges(false);
     await loadPlatforms(false);
     renderAll();
-    setStatus("State refreshed from Auto-Crypto API.", "ok");
+    if (showStatus) setStatus("State refreshed from Auto-Crypto API.", "ok");
   } catch (error) {
     setStatus(`Unable to load API state: ${error.message}`, "error");
   }
@@ -397,7 +397,22 @@ function renderDeskTable() {
     positions.length > 0
       ? positions.map((position) => {
         const mark = currentMarkPrice(compactSymbol(position.symbol));
-        return `<tr><td>${escapeHtml(position.symbol)}</td><td>${escapeHtml(position.quantity)}</td><td>${money(position.avg_entry)}</td><td class="${Number(position.realized_pnl) >= 0 ? "up" : "down"}">${money(position.realized_pnl)}</td><td>${money(mark)}</td><td><button type="button" data-action="load-position-price" data-symbol="${escapeHtml(compactSymbol(position.symbol))}" data-price="${mark}">Use Mark</button></td></tr>`;
+        const compact = compactSymbol(position.symbol);
+        return `
+          <tr>
+            <td>${escapeHtml(position.symbol)}</td>
+            <td>${escapeHtml(position.quantity)}</td>
+            <td>${money(position.avg_entry)}</td>
+            <td class="${Number(position.realized_pnl) >= 0 ? "up" : "down"}">${money(position.realized_pnl)}</td>
+            <td>${money(mark)}</td>
+            <td>
+              <div class="row-actions">
+                <button type="button" data-action="load-position-price" data-symbol="${escapeHtml(compact)}" data-price="${mark}">Use Mark</button>
+                <button type="button" data-action="close-position" data-symbol="${escapeHtml(compact)}" data-quantity="${escapeHtml(position.quantity)}" data-price="${mark}">Close</button>
+              </div>
+            </td>
+          </tr>
+        `;
       }).join("")
       : `<tr><td colspan="6">No open positions. Submit a paper buy with a price to create one.</td></tr>`;
 }
@@ -550,25 +565,40 @@ function currentMarkPrice(symbol) {
 function ticketToText() {
   const side = $("#ticketSide").value.toUpperCase();
   const symbol = compactSymbol($("#ticketSymbol").value || appState.selectedPair);
-  const amount = String($("#ticketAmount").value || "0").replace("$", "");
+  const sizeMode = $("#ticketSizeMode").value;
+  const amount = String($("#ticketAmount").value || "0");
+  const size = sizeMode === "base" ? amount.replace("$", "") : `$${amount.replace("$", "")}`;
   const price = $("#ticketPrice").value || currentMarkPrice(symbol);
   const stop = $("#ticketStop").value;
   const takeProfit = $("#ticketTakeProfit").value;
   const stopPart = stop ? ` SL ${stop}%` : "";
   const tpPart = takeProfit ? ` TP ${takeProfit}%` : "";
-  return `${side} ${symbol} $${amount} @ ${price}${stopPart}${tpPart}`;
+  return `${side} ${symbol} ${size} @ ${price}${stopPart}${tpPart}`;
 }
 
 function ticketPayload() {
-  return {
+  const amount = String($("#ticketAmount").value || "0").replace("$", "");
+  const payload = {
     symbol: $("#ticketSymbol").value,
     side: $("#ticketSide").value.toLowerCase(),
-    quote_amount: $("#ticketAmount").value,
     price: $("#ticketPrice").value,
     stop_loss_pct: $("#ticketStop").value || null,
     take_profit_pct: $("#ticketTakeProfit").value || null,
     strategy_id: $("#ticketStrategy").value,
   };
+  if ($("#ticketSizeMode").value === "base") {
+    payload.base_amount = amount;
+  } else {
+    payload.quote_amount = amount;
+  }
+  return payload;
+}
+
+function setTicketSizeMode(mode, amount) {
+  const normalized = mode === "base" ? "base" : "quote";
+  $("#ticketSizeMode").value = normalized;
+  $("#ticketAmountLabel").textContent = normalized === "base" ? "Base quantity" : "Quote amount";
+  if (amount !== undefined) $("#ticketAmount").value = amount;
 }
 
 async function parseSignal() {
@@ -595,7 +625,7 @@ async function submitSignal(message) {
   const payload = await api("/signals/submit-text", { method: "POST", body: { message } });
   appState.lastPayload = payload;
   setStatus(`Signal result: ${payload.status || "submitted"}.`, payload.status === "rejected" ? "warn" : "ok");
-  await loadState();
+  await loadState(false);
 }
 
 async function previewTicket() {
@@ -614,14 +644,28 @@ async function submitTicket() {
   const result = await api("/signals/submit", { method: "POST", body: payload });
   appState.lastPayload = result;
   setStatus(`Ticket submitted as ${payload.strategy_id}: ${result.status || "submitted"}.`, result.status === "rejected" ? "warn" : "ok");
-  await loadState();
+  await loadState(false);
+}
+
+async function closePosition(symbol, quantity, price) {
+  const payload = {
+    symbol,
+    side: "sell",
+    base_amount: quantity,
+    price,
+    strategy_id: "Close Position",
+  };
+  const result = await api("/signals/submit", { method: "POST", body: payload });
+  appState.lastPayload = result;
+  setStatus(`Close ${prettySymbol(symbol)}: ${result.status || "submitted"}.`, result.status === "rejected" ? "warn" : "ok");
+  await loadState(false);
 }
 
 async function approveSignal(signalId) {
   const result = await api(`/approvals/${encodeURIComponent(signalId)}/approve`, { method: "POST" });
   appState.lastPayload = result;
   setStatus(`Approved ${signalId}: ${result.status}.`, "ok");
-  await loadState();
+  await loadState(false);
 }
 
 async function rejectSignal(signalId) {
@@ -631,7 +675,7 @@ async function rejectSignal(signalId) {
   });
   appState.lastPayload = result;
   setStatus(`Rejected ${signalId}.`, "warn");
-  await loadState();
+  await loadState(false);
 }
 
 async function updateMarkPrice(symbol, price) {
@@ -641,7 +685,7 @@ async function updateMarkPrice(symbol, price) {
   });
   appState.lastPayload = result;
   setStatus(`Updated ${result.symbol} to ${result.price}; triggered ${result.triggered.length} exits.`, result.triggered.length ? "warn" : "ok");
-  await loadState();
+  await loadState(false);
 }
 
 async function haltTrading() {
@@ -649,14 +693,14 @@ async function haltTrading() {
   const result = await api("/control/halt", { method: "POST", body: { reason } });
   appState.lastPayload = result;
   setStatus(`Trading halted: ${result.reason}.`, "warn");
-  await loadState();
+  await loadState(false);
 }
 
 async function resumeTrading() {
   const result = await api("/control/resume", { method: "POST" });
   appState.lastPayload = result;
   setStatus("Trading resumed.", "ok");
-  await loadState();
+  await loadState(false);
 }
 
 async function inspectExchange(exchangeId) {
@@ -711,7 +755,7 @@ function copyStrategy(strategyId) {
   $("#ticketStrategy").value = strategy.name;
   $("#ticketSymbol").value = strategy.pair;
   $("#ticketSide").value = "BUY";
-  $("#ticketAmount").value = strategy.amount;
+  setTicketSizeMode("quote", strategy.amount);
   $("#ticketPrice").value = strategy.price;
   $("#ticketStop").value = strategy.stop;
   $("#ticketTakeProfit").value = strategy.takeProfit;
@@ -739,7 +783,7 @@ function inspectOrder(orderId) {
   if (!order) return;
   $("#ticketSymbol").value = compactSymbol(order.symbol);
   $("#ticketSide").value = String(order.side || "buy").toUpperCase();
-  $("#ticketAmount").value = order.notional || "";
+  setTicketSizeMode("quote", order.notional || "");
   $("#ticketPrice").value = order.price || "";
   $("#ticketStop").value = "";
   $("#ticketTakeProfit").value = "";
@@ -992,6 +1036,10 @@ function bindEvents() {
     renderSignals();
     setStatus(`Signal channel set to ${$("#signalChannel").value}.`, "ok");
   });
+  $("#ticketSizeMode").addEventListener("change", () => {
+    setTicketSizeMode($("#ticketSizeMode").value);
+    setStatus(`Ticket size mode set to ${$("#ticketAmountLabel").textContent.toLowerCase()}.`, "ok");
+  });
   $("#ticketStrategy").addEventListener("change", () => {
     setStatus(`Ticket strategy set to ${$("#ticketStrategy").value}.`, "ok");
   });
@@ -1080,6 +1128,10 @@ function bindEvents() {
       $("#ticketSymbol").value = target.dataset.symbol;
       $("#markPrice").value = target.dataset.price;
       activateView("trading");
+    }
+    if (action === "close-position") {
+      closePosition(target.dataset.symbol, target.dataset.quantity, target.dataset.price)
+        .catch((error) => setStatus(error.message, "error"));
     }
     if (action === "exchange-cap") inspectExchange(target.dataset.exchangeId);
     if (action === "platform-integration") inspectPlatform(target.dataset.exchangeId);

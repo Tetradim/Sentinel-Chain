@@ -15,9 +15,11 @@ def test_operator_ui_is_served_from_backend():
     assert "Trading Platforms" in ui.text
     assert "Bitunix Futures" in ui.text
     assert "Risk Preview" in ui.text
+    assert "Base quantity" in ui.text
     assert script.status_code == 200
     assert "submitSignal" in script.text
     assert "previewSignal" in script.text
+    assert "closePosition" in script.text
     assert "loadPlatforms" in script.text
     assert "loadBitunixTickers" in script.text
 
@@ -144,3 +146,42 @@ def test_operator_json_submit_preserves_strategy_metadata(tmp_path):
     state = client.get("/ui/state").json()
     assert state["signals"][0]["strategy_id"] == "DCA Ladder"
     assert state["orders"][0]["symbol"] == "SOL/USDT"
+
+
+def test_operator_json_submit_supports_base_amount_sells(tmp_path):
+    repo = SQLiteRepository(tmp_path / "ui_json_base_submit.sqlite3")
+    client = TestClient(create_app(repository=repo))
+
+    buy = client.post(
+        "/signals/submit",
+        json={
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "50",
+            "stop_loss_pct": "2",
+            "strategy_id": "Open Position",
+        },
+    )
+    sell = client.post(
+        "/signals/submit",
+        json={
+            "symbol": "BTCUSDT",
+            "side": "sell",
+            "base_amount": "1",
+            "price": "60",
+            "strategy_id": "Close Position",
+        },
+    )
+
+    assert buy.status_code == 200
+    assert sell.status_code == 200
+    assert sell.json()["status"] == "accepted"
+    state = client.get("/ui/state").json()
+    assert state["positions"][0] == {
+        "symbol": "BTC/USDT",
+        "quantity": "1.00000000",
+        "avg_entry": "50.00000000",
+        "realized_pnl": "10.00000000",
+    }
+    assert state["signals"][1]["strategy_id"] == "Close Position"
