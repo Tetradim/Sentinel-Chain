@@ -318,6 +318,11 @@ function deskRowMatches(type, row) {
   ].some((value) => String(value || "").toLowerCase().includes(needle));
 }
 
+function deskCountLabel(type, visible, total) {
+  const noun = type === "orders" ? "orders" : "positions";
+  return appState.deskSearch.trim() ? `${visible}/${total} ${noun}` : `${total} ${noun}`;
+}
+
 function renderSignals() {
   const approvals = appState.data?.approvals || [];
   $("#approvalCount").textContent = String(approvals.length);
@@ -506,6 +511,7 @@ function renderDeskTable() {
     $("#deskTableHead").innerHTML = `<tr><th>Time</th><th>Order</th><th>Pair</th><th>Side</th><th>Notional</th><th>Price</th><th>Status</th><th>Action</th></tr>`;
     const allOrders = appState.data?.orders || [];
     const orders = allOrders.filter((order) => deskRowMatches("orders", order));
+    $("#deskResultCount").textContent = deskCountLabel("orders", orders.length, allOrders.length);
     $("#deskTableBody").innerHTML =
       orders.length > 0
         ? orders.slice(-12).reverse().map(orderDeskRow).join("")
@@ -516,6 +522,7 @@ function renderDeskTable() {
   $("#deskTableHead").innerHTML = `<tr><th>Pair</th><th>Quantity</th><th>Average Entry</th><th>Realized P&L</th><th>Unrealized</th><th>Mark</th><th>Action</th></tr>`;
   const allPositions = appState.data?.positions || [];
   const positions = allPositions.filter((position) => deskRowMatches("positions", position));
+  $("#deskResultCount").textContent = deskCountLabel("positions", positions.length, allPositions.length);
   $("#deskTableBody").innerHTML =
     positions.length > 0
       ? positions.map((position) => {

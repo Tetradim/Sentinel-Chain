@@ -32,6 +32,7 @@ def test_operator_ui_is_served_from_backend():
     assert "strategySort" in ui.text
     assert "strategyResultCount" in ui.text
     assert "deskSearch" in ui.text
+    assert "deskResultCount" in ui.text
     assert "Filter positions or orders" in ui.text
     assert "Sim return" in ui.text
     assert "Sim drawdown" in ui.text
@@ -115,6 +116,7 @@ def test_operator_ui_is_served_from_backend():
     assert "compareOptional" in script.text
     assert "deskSearch" in script.text
     assert "deskRowMatches" in script.text
+    assert "deskCountLabel" in script.text
     assert "No orders match the current filter." in script.text
     assert "saveTicketDraft" in script.text
     assert "applyStoredTicketDraft" in script.text
