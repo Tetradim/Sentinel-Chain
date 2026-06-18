@@ -50,6 +50,8 @@ const strategies = [
   },
 ];
 
+const STRATEGY_PIN_STORAGE_KEY = "autoCryptoPinnedStrategies";
+
 const appState = {
   data: null,
   exchanges: [],
@@ -60,6 +62,8 @@ const appState = {
   deskTable: "positions",
   runtimeFilter: "all",
   strategyFilter: "all",
+  strategySearch: "",
+  strategySort: "featured",
   equityRange: "1d",
   parsedSignal: null,
   riskPreview: null,
@@ -89,6 +93,10 @@ function percent(value) {
   return `${parsed >= 0 ? "+" : ""}${parsed.toFixed(2)}%`;
 }
 
+function metricNumber(value) {
+  return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
+}
+
 function compactSymbol(symbol) {
   return String(symbol || "").replace("/", "").toUpperCase();
 }
@@ -111,6 +119,19 @@ function coinClass(symbol) {
   if (compact.startsWith("BTC")) return "btc";
   if (compact.startsWith("ETH")) return "eth";
   return "sol";
+}
+
+function readPinnedStrategies() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STRATEGY_PIN_STORAGE_KEY) || "[]");
+    return new Set(Array.isArray(parsed) ? parsed.filter(Boolean) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writePinnedStrategies(pinned) {
+  localStorage.setItem(STRATEGY_PIN_STORAGE_KEY, JSON.stringify([...pinned]));
 }
 
 function setStatus(message, type = "") {
@@ -467,8 +488,28 @@ function renderDeskTable() {
 }
 
 function renderStrategies() {
-  const visible = strategies.filter((strategy) => appState.strategyFilter === "all" || strategy.type === appState.strategyFilter);
-  $("#strategyCards").innerHTML = visible.map(strategyCard).join("");
+  const pinned = readPinnedStrategies();
+  const needle = appState.strategySearch.trim().toLowerCase();
+  const visible = strategies
+    .filter((strategy) => appState.strategyFilter === "all" || strategy.type === appState.strategyFilter)
+    .filter((strategy) => {
+      if (!needle) return true;
+      return [strategy.name, strategy.type, strategy.pair, prettySymbol(strategy.pair), strategy.roi, strategy.win, strategy.drawdown]
+        .some((value) => String(value).toLowerCase().includes(needle));
+    })
+    .sort((left, right) => {
+      const pinnedDelta = Number(pinned.has(right.id)) - Number(pinned.has(left.id));
+      if (pinnedDelta) return pinnedDelta;
+      if (appState.strategySort === "drawdown") return metricNumber(left.drawdown) - metricNumber(right.drawdown);
+      if (appState.strategySort === "win") return metricNumber(right.win) - metricNumber(left.win);
+      if (appState.strategySort === "name") return left.name.localeCompare(right.name);
+      return metricNumber(right.roi) - metricNumber(left.roi);
+    });
+  $("#strategyCards").innerHTML = visible.length
+    ? visible.map((strategy) => strategyCard(strategy, pinned.has(strategy.id))).join("")
+    : `<div class="empty-state strategy-empty">No strategies match the current search.</div>`;
+  const activePinned = strategies.filter((strategy) => pinned.has(strategy.id)).length;
+  $("#strategyResultCount").textContent = `${visible.length}/${strategies.length} shown | ${activePinned} pinned`;
   const imported = JSON.parse(localStorage.getItem("autoCryptoImportedStrategy") || "null");
   $("#importStatus").textContent = imported ? `loaded: ${imported.name}` : "waiting";
   $("#strategyChecklist").innerHTML = [
@@ -482,13 +523,13 @@ function renderStrategies() {
   requestAnimationFrame(drawStrategySparks);
 }
 
-function strategyCard(strategy) {
+function strategyCard(strategy, isPinned) {
   return `
-    <article class="strategy-card">
+    <article class="strategy-card ${isPinned ? "is-pinned" : ""}">
       <div class="strategy-head">
         <strong>${escapeHtml(strategy.name)}</strong>
         <span>${escapeHtml(strategy.type.toUpperCase())} | ${prettySymbol(strategy.pair)}</span>
-        <button type="button" data-action="copy-strategy" data-strategy-id="${strategy.id}">Copy</button>
+        <button type="button" data-action="toggle-strategy-pin" data-strategy-id="${strategy.id}" aria-pressed="${isPinned}">${isPinned ? "Pinned" : "Pin"}</button>
       </div>
       <canvas data-strategy-spark="${strategy.id}" width="320" height="96" aria-label="${escapeHtml(strategy.name)} backtest curve"></canvas>
       <dl>
@@ -873,6 +914,21 @@ function runBacktest(strategyId) {
   setStatus(`${strategy.name} backtest simulation refreshed.`, "ok");
 }
 
+function toggleStrategyPin(strategyId) {
+  const strategy = strategies.find((item) => item.id === strategyId);
+  if (!strategy) return;
+  const pinned = readPinnedStrategies();
+  const pinnedNow = !pinned.has(strategyId);
+  if (pinnedNow) {
+    pinned.add(strategyId);
+  } else {
+    pinned.delete(strategyId);
+  }
+  writePinnedStrategies(pinned);
+  renderStrategies();
+  setStatus(`${strategy.name} ${pinnedNow ? "pinned" : "unpinned"}.`, "ok");
+}
+
 function inspectOrder(orderId) {
   const order = (appState.data?.orders || []).find((item) => item.order_id === orderId);
   if (!order) return;
@@ -1251,6 +1307,16 @@ function bindEvents() {
     });
   });
 
+  $("#strategySearch").addEventListener("input", (event) => {
+    appState.strategySearch = event.target.value;
+    renderStrategies();
+  });
+
+  $("#strategySort").addEventListener("change", (event) => {
+    appState.strategySort = event.target.value;
+    renderStrategies();
+  });
+
   $$("[data-equity-range]").forEach((button) => {
     button.addEventListener("click", () => {
       appState.equityRange = button.dataset.equityRange;
@@ -1287,6 +1353,7 @@ function bindEvents() {
     if (action === "platform-integration") inspectPlatform(target.dataset.exchangeId);
     if (action === "copy-strategy") copyStrategy(target.dataset.strategyId);
     if (action === "backtest-strategy") runBacktest(target.dataset.strategyId);
+    if (action === "toggle-strategy-pin") toggleStrategyPin(target.dataset.strategyId);
     if (action === "copy-json") copyText(target.dataset.json).catch((error) => setStatus(error.message, "error"));
   });
 

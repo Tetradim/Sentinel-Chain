@@ -321,11 +321,24 @@
             <p>Strategy Marketplace</p>
             <h1>Copy, test, and load strategies</h1>
           </div>
-          <div class="strategy-filters">
-            <button class="is-selected" type="button" data-strategy-filter="all">All</button>
-            <button type="button" data-strategy-filter="signal">Signals</button>
-            <button type="button" data-strategy-filter="grid">Grid</button>
-            <button type="button" data-strategy-filter="dca">DCA</button>
+          <div class="strategy-controls">
+            <div class="strategy-filters">
+              <button class="is-selected" type="button" data-strategy-filter="all">All</button>
+              <button type="button" data-strategy-filter="signal">Signals</button>
+              <button type="button" data-strategy-filter="grid">Grid</button>
+              <button type="button" data-strategy-filter="dca">DCA</button>
+            </div>
+            <div class="strategy-tools">
+              <input id="strategySearch" type="search" placeholder="Search strategy or pair" aria-label="Search strategies">
+              <select id="strategySort" aria-label="Sort strategies">
+                <option value="featured">Pinned + ROI</option>
+                <option value="roi">Highest ROI</option>
+                <option value="win">Highest win rate</option>
+                <option value="drawdown">Lowest drawdown</option>
+                <option value="name">Name</option>
+              </select>
+              <span id="strategyResultCount">3/3 shown | 0 pinned</span>
+            </div>
           </div>
         </div>
 

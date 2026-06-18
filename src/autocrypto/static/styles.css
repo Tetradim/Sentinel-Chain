@@ -315,6 +315,7 @@ pre {
 .pair-selector,
 .segmented,
 .strategy-filters,
+.strategy-tools,
 .builder-actions,
 .ticket-actions {
   display: flex;
@@ -406,6 +407,32 @@ pre {
   border-radius: 7px;
   padding: 3px;
   background: #0c111a;
+}
+
+.strategy-controls {
+  display: grid;
+  justify-items: end;
+  gap: 8px;
+  max-width: 620px;
+}
+
+.strategy-tools {
+  width: min(620px, 100%);
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) minmax(150px, auto) auto;
+}
+
+.strategy-tools input,
+.strategy-tools select {
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
+.strategy-tools span {
+  color: var(--muted);
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.78rem;
+  white-space: nowrap;
 }
 
 .segmented button,
@@ -1018,6 +1045,13 @@ canvas {
   gap: 12px;
 }
 
+.strategy-card.is-pinned {
+  border-color: rgba(255, 190, 61, 0.66);
+  background:
+    linear-gradient(180deg, rgba(255, 190, 61, 0.08), transparent 45%),
+    rgba(18, 24, 35, 0.94);
+}
+
 .strategy-head {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1045,6 +1079,10 @@ canvas {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
+}
+
+.strategy-empty {
+  grid-column: 1 / -1;
 }
 
 .check-steps {
@@ -1150,6 +1188,15 @@ meter::-webkit-meter-optimum-value {
   .view-head {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .strategy-controls {
+    justify-items: stretch;
+    max-width: none;
+  }
+
+  .strategy-tools {
+    grid-template-columns: 1fr;
   }
 
   .operator-actions {
