@@ -104,6 +104,13 @@ function positiveNumber(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+function trimQuantity(value, digits = 8) {
+  const parsed = Number(value || 0);
+  if (!Number.isFinite(parsed)) return String(value || "0");
+  const fixed = parsed.toFixed(digits);
+  return fixed.replace(/\.?0+$/, "") || "0";
+}
+
 function compactSymbol(symbol) {
   return String(symbol || "").replace("/", "").toUpperCase();
 }
@@ -547,6 +554,15 @@ function renderDeskTable() {
         const mark = currentMarkPrice(compactSymbol(position.symbol));
         const unrealized = Number(position.quantity || 0) * (mark - Number(position.avg_entry || 0));
         const compact = compactSymbol(position.symbol);
+        const closeButtons = [
+          ["25%", 0.25, "Close 25%"],
+          ["50%", 0.5, "Close 50%"],
+          ["All", 1, "Close Position"],
+        ].map(([label, fraction, strategy]) => {
+          const quantity = trimQuantity(Number(position.quantity || 0) * fraction);
+          const disabled = Number(quantity) <= 0 ? " disabled" : "";
+          return `<button type="button" data-action="close-position" data-symbol="${escapeHtml(compact)}" data-quantity="${escapeHtml(quantity)}" data-price="${mark}" data-close-label="${escapeHtml(strategy)}"${disabled}>${escapeHtml(label)}</button>`;
+        }).join("");
         return `
           <tr>
             <td>${escapeHtml(position.symbol)}</td>
@@ -558,7 +574,7 @@ function renderDeskTable() {
             <td>
               <div class="row-actions">
                 <button type="button" data-action="load-position-price" data-symbol="${escapeHtml(compact)}" data-price="${mark}">Use Mark</button>
-                <button type="button" data-action="close-position" data-symbol="${escapeHtml(compact)}" data-quantity="${escapeHtml(position.quantity)}" data-price="${mark}">Close</button>
+                ${closeButtons}
               </div>
             </td>
           </tr>
@@ -991,17 +1007,17 @@ async function submitTicket() {
   await loadState(false);
 }
 
-async function closePosition(symbol, quantity, price) {
+async function closePosition(symbol, quantity, price, strategy = "Close Position") {
   const payload = {
     symbol,
     side: "sell",
     base_amount: quantity,
     price,
-    strategy_id: "Close Position",
+    strategy_id: strategy,
   };
   const result = await api("/signals/submit", { method: "POST", body: payload });
   appState.lastPayload = result;
-  setStatus(`Close ${prettySymbol(symbol)}: ${result.status || "submitted"}.`, result.status === "rejected" ? "warn" : "ok");
+  setStatus(`Close ${prettySymbol(symbol)} ${quantity} ${baseAsset(symbol)}: ${result.status || "submitted"}.`, result.status === "rejected" ? "warn" : "ok");
   await loadState(false);
 }
 
@@ -1591,7 +1607,7 @@ function bindEvents() {
         .catch((error) => setStatus(error.message, "error"));
     }
     if (action === "close-position") {
-      closePosition(target.dataset.symbol, target.dataset.quantity, target.dataset.price)
+      closePosition(target.dataset.symbol, target.dataset.quantity, target.dataset.price, target.dataset.closeLabel)
         .catch((error) => setStatus(error.message, "error"));
     }
     if (action === "exchange-cap") inspectExchange(target.dataset.exchangeId);
