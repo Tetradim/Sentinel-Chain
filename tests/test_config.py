@@ -1,4 +1,5 @@
 from decimal import Decimal
+from pathlib import Path
 
 from autocrypto.config import load_settings
 
@@ -38,3 +39,12 @@ def test_load_settings_reads_dotenv_from_current_working_directory(monkeypatch, 
     settings = load_settings()
 
     assert settings.db_path == db_path
+
+
+def test_docker_entrypoint_uses_env_backed_app_factory():
+    dockerfile = Path(__file__).resolve().parents[1] / "Dockerfile"
+
+    text = dockerfile.read_text(encoding="utf-8")
+
+    assert "autocrypto.app:create_app_from_env" in text
+    assert "--factory" in text

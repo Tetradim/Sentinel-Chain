@@ -91,6 +91,39 @@ def test_pending_approval_survives_restart_and_can_be_approved(tmp_path):
     assert SQLiteRepository(db_path).list_orders()[0]["signal_id"] == "restart-approval"
 
 
+def test_approval_attempt_during_halt_keeps_signal_pending_until_resume(tmp_path):
+    db_path = tmp_path / "approval_halt.sqlite3"
+    client = TestClient(create_app(repository=SQLiteRepository(db_path), require_approval=True))
+    response = client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "approve-while-halted",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "40",
+            "price": "50000",
+            "stop_loss_pct": "2",
+        },
+    )
+    signal_id = response.json()["signal_id"]
+    client.post("/control/halt", json={"reason": "review"})
+
+    halted_approval = client.post(f"/approvals/{signal_id}/approve")
+
+    assert halted_approval.status_code == 200
+    assert halted_approval.json()["status"] == "halted"
+    assert client.get("/orders").json()["orders"] == []
+    assert client.get("/approvals").json()["pending"][0]["signal_id"] == signal_id
+
+    client.post("/control/resume")
+    approved = client.post(f"/approvals/{signal_id}/approve")
+
+    assert approved.status_code == 200
+    assert approved.json()["status"] == "accepted"
+    assert client.get("/approvals").json()["pending"] == []
+    assert SQLiteRepository(db_path).list_orders()[0]["signal_id"] == signal_id
+
+
 def test_rejected_pending_approval_is_removed_from_repository(tmp_path):
     db_path = tmp_path / "approval_reject_restart.sqlite3"
     client = TestClient(create_app(repository=SQLiteRepository(db_path), require_approval=True))

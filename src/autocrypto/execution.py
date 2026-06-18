@@ -134,7 +134,6 @@ class PaperExchange:
         quantity: Decimal | None = None
         if signal.price is not None:
             quantity = self._fill_quantity(signal, decision.order_notional)
-            self._apply_fill(signal, quantity)
         order = PaperOrder(
             order_id=f"paper-{signal.signal_id}",
             signal_id=signal.signal_id,
@@ -147,18 +146,8 @@ class PaperExchange:
             exit_orders=exit_orders,
         )
         self.orders.append(order)
-        if signal.side == "buy" and exit_orders and quantity is not None and signal.price is not None:
-            self.lots.append(
-                PaperLot(
-                    signal_id=signal.signal_id,
-                    symbol=signal.symbol,
-                    remaining_quantity=quantity,
-                    entry_price=signal.price,
-                    exit_orders=exit_orders,
-                )
-            )
-        elif signal.side == "sell" and quantity is not None:
-            self._reduce_lots(signal.symbol, quantity)
+        if quantity is not None:
+            self._apply_fill(signal, quantity, exit_orders)
         self._refresh_active_exits(signal.symbol)
         return order
 
@@ -214,14 +203,23 @@ class PaperExchange:
             return Decimal("0")
         return signal.base_amount if signal.base_amount is not None else notional / signal.price
 
-    def _apply_fill(self, signal: CryptoSignal, quantity: Decimal) -> None:
+    def _apply_fill(self, signal: CryptoSignal, quantity: Decimal, exit_orders: list[ExitOrder]) -> None:
         if signal.price is None:
             return
         position = self.positions.setdefault(signal.symbol, PaperPosition(symbol=signal.symbol))
         if signal.side == "buy":
             position.buy(quantity, signal.price)
+            self.lots.append(
+                PaperLot(
+                    signal_id=signal.signal_id,
+                    symbol=signal.symbol,
+                    remaining_quantity=quantity,
+                    entry_price=signal.price,
+                    exit_orders=exit_orders,
+                )
+            )
         elif signal.side == "sell":
-            position.sell(quantity, signal.price)
+            self._sell_quantity(signal.symbol, quantity, signal.price)
 
     def _replay_order(self, order: PaperOrder) -> None:
         self.orders.append(order)
@@ -231,19 +229,17 @@ class PaperExchange:
         position = self.positions.setdefault(order.symbol, PaperPosition(symbol=order.symbol))
         if order.side == "buy":
             position.buy(quantity, order.price)
-            if order.exit_orders:
-                self.lots.append(
-                    PaperLot(
-                        signal_id=order.signal_id,
-                        symbol=order.symbol,
-                        remaining_quantity=quantity,
-                        entry_price=order.price,
-                        exit_orders=order.exit_orders,
-                    )
+            self.lots.append(
+                PaperLot(
+                    signal_id=order.signal_id,
+                    symbol=order.symbol,
+                    remaining_quantity=quantity,
+                    entry_price=order.price,
+                    exit_orders=order.exit_orders,
                 )
+            )
         elif order.side == "sell":
-            position.sell(quantity, order.price)
-            self._reduce_lots(order.symbol, quantity)
+            self._sell_quantity(order.symbol, quantity, order.price)
         self._refresh_active_exits(order.symbol)
 
     def _triggered_exit(self, lot: PaperLot, price: Decimal) -> ExitOrder | None:
@@ -270,15 +266,25 @@ class PaperExchange:
         else:
             self._refresh_position_average(lot.symbol)
 
-    def _reduce_lots(self, symbol: str, quantity: Decimal) -> None:
+    def _sell_quantity(self, symbol: str, quantity: Decimal, price: Decimal) -> None:
+        position = self.positions.setdefault(symbol, PaperPosition(symbol=symbol))
         remaining = quantity
         for lot in self.lots:
             if remaining <= 0 or lot.symbol != symbol or lot.remaining_quantity <= 0:
                 continue
             reduction = min(lot.remaining_quantity, remaining)
+            position.realized_pnl += (price - lot.entry_price) * reduction
+            position.quantity -= reduction
             lot.remaining_quantity -= reduction
             remaining -= reduction
+        if remaining > 0:
+            position.sell(remaining, price)
         self.lots = [lot for lot in self.lots if lot.remaining_quantity > 0]
+        if position.quantity <= 0:
+            position.quantity = Decimal("0")
+            position.avg_entry = Decimal("0")
+        else:
+            self._refresh_position_average(symbol)
 
     def _refresh_position_average(self, symbol: str) -> None:
         position = self.positions.get(symbol)

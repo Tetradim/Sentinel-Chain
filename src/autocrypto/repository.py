@@ -94,6 +94,14 @@ class SQLiteRepository:
             for row in rows
         ]
 
+    def get_pending_approval(self, signal_id: str) -> CryptoSignal | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM pending_approvals WHERE signal_id = ?",
+                (signal_id,),
+            ).fetchone()
+        return _signal_from_dict(json.loads(row["payload"])) if row else None
+
     def pop_pending_approval(self, signal_id: str) -> CryptoSignal | None:
         with self._connect() as conn:
             row = conn.execute(

@@ -14,6 +14,10 @@ class ApprovalQueue:
     def add(self, signal: CryptoSignal) -> None:
         self._pending[signal.signal_id] = (signal, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
 
+    def get(self, signal_id: str) -> CryptoSignal | None:
+        item = self._pending.get(signal_id)
+        return item[0] if item else None
+
     def pop(self, signal_id: str) -> CryptoSignal | None:
         item = self._pending.pop(signal_id, None)
         return item[0] if item else None

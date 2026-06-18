@@ -5,7 +5,7 @@ from autocrypto.execution import PaperExchange
 from autocrypto.signals import normalize_signal
 
 
-def test_paper_exchange_tracks_weighted_average_position_and_realized_pnl():
+def test_paper_exchange_tracks_fifo_position_average_and_realized_pnl():
     exchange = PaperExchange()
     engine = TradingEngine(exchange=exchange)
 
@@ -47,6 +47,5 @@ def test_paper_exchange_tracks_weighted_average_position_and_realized_pnl():
     position = exchange.list_positions()[0]
     assert position["symbol"] == "BTC/USDT"
     assert position["quantity"] == "3.00000000"
-    assert position["avg_entry"] == "62.50000000"
-    assert position["realized_pnl"] == "17.50000000"
-
+    assert position["avg_entry"] == "66.66666667"
+    assert position["realized_pnl"] == "30.00000000"

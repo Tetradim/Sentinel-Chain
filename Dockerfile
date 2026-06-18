@@ -12,5 +12,4 @@ RUN pip install --no-cache-dir .
 
 EXPOSE 8000
 
-CMD ["uvicorn", "autocrypto.app:app", "--host", "0.0.0.0", "--port", "8000"]
-
+CMD ["uvicorn", "autocrypto.app:create_app_from_env", "--factory", "--host", "0.0.0.0", "--port", "8000"]

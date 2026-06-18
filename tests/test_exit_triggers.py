@@ -94,3 +94,56 @@ def test_paper_exits_track_independent_lots_for_same_symbol():
     assert second_trigger == [{"symbol": "BTC/USDT", "kind": "take_profit", "price": "110.00000000"}]
     assert position_after_second["quantity"] == "0.00000000"
     assert position_after_second["realized_pnl"] == "25.00000000"
+
+
+def test_manual_partial_sell_uses_same_lot_accounting_as_bracket_exits():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    first_signal = normalize_signal(
+        {
+            "signal_id": "lot-1",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "2",
+            "take_profit_pct": "50",
+        },
+        source="test",
+    )
+    second_signal = normalize_signal(
+        {
+            "signal_id": "lot-2",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "200",
+            "price": "200",
+            "stop_loss_pct": "2",
+            "take_profit_pct": "10",
+        },
+        source="test",
+    )
+    manual_sell = normalize_signal(
+        {
+            "signal_id": "manual-sell",
+            "symbol": "BTC/USDT",
+            "side": "sell",
+            "base_amount": "1",
+            "price": "150",
+        },
+        source="test",
+    )
+
+    engine.process_signal(first_signal)
+    engine.process_signal(second_signal)
+    engine.process_signal(manual_sell)
+    after_manual = exchange.list_positions()[0]
+    triggered = exchange.update_price("BTC/USDT", Decimal("220"))
+    after_exit = exchange.list_positions()[0]
+
+    assert after_manual["quantity"] == "1.00000000"
+    assert after_manual["avg_entry"] == "200.00000000"
+    assert after_manual["realized_pnl"] == "50.00000000"
+    assert triggered == [{"symbol": "BTC/USDT", "kind": "take_profit", "price": "220.00000000"}]
+    assert after_exit["quantity"] == "0.00000000"
+    assert after_exit["realized_pnl"] == "70.00000000"

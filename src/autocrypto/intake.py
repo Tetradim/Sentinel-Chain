@@ -73,6 +73,18 @@ class SignalIntakeService:
         return self.approvals.list_pending()
 
     def approve(self, signal_id: str) -> dict[str, Any] | None:
+        if self.engine.halted:
+            signal = (
+                self.repository.get_pending_approval(signal_id)
+                if self.repository
+                else self.approvals.get(signal_id)
+            )
+            if signal is None:
+                return None
+            result = self.engine.process_signal(signal)
+            self._record_result(signal, result)
+            return result.to_dict()
+
         signal = (
             self.repository.pop_pending_approval(signal_id)
             if self.repository
