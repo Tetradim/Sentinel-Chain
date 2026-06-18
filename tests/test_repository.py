@@ -41,8 +41,10 @@ def test_sqlite_repository_persists_signals_orders_and_audit_events(tmp_path):
     persisted_signal = reopened.list_signals()[0]
     assert persisted_signal["signal_id"] == signal.signal_id
     assert persisted_signal["created_at"]
-    assert reopened.list_orders()[0]["order_id"] == "paper-1"
-    assert reopened.list_orders()[0]["exit_orders"][0]["kind"] == "stop_loss"
+    persisted_order = reopened.list_orders()[0]
+    assert persisted_order["order_id"] == "paper-1"
+    assert persisted_order["created_at"]
+    assert persisted_order["exit_orders"][0]["kind"] == "stop_loss"
     audit_event = reopened.list_audit()[0]
     assert audit_event.event_type == "order.accepted"
     assert audit_event.data == {"order_id": "paper-1"}
@@ -171,3 +173,4 @@ def test_sqlite_repository_backfills_idempotency_claims_from_existing_orders(tmp
 
     assert repo.claim_signal(signal) is False
     assert repo.list_signals()[0]["created_at"]
+    assert repo.list_orders()[0]["created_at"]

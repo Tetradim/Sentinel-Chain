@@ -26,7 +26,9 @@ def test_app_records_signal_order_and_audit_history(tmp_path):
 
     assert response.status_code == 200
     assert client.get("/signals").json()["signals"][0]["symbol"] == "ETH/USDT"
-    assert client.get("/orders").json()["orders"][0]["symbol"] == "ETH/USDT"
+    order = client.get("/orders").json()["orders"][0]
+    assert order["symbol"] == "ETH/USDT"
+    assert order["created_at"]
     audit_types = [event["event_type"] for event in client.get("/audit").json()["events"]]
     assert audit_types == ["signal.received", "order.accepted"]
 

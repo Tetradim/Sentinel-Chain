@@ -19,6 +19,7 @@ def test_operator_ui_is_served_from_backend():
     assert "Bitunix Futures" in ui.text
     assert "Risk Preview" in ui.text
     assert "Base quantity" in ui.text
+    assert "<tr><th>Time</th><th>Order</th><th>Pair</th><th>Side</th><th>Notional</th><th>Price</th><th>Action</th></tr>" in ui.text
     assert "Signal History" in ui.text
     assert "<thead><tr><th>Time</th><th>Pair</th><th>Side</th><th>Size</th><th>Price</th><th>Strategy</th><th>Action</th></tr></thead>" in ui.text
     assert "Control reason" in ui.text
@@ -72,6 +73,7 @@ def test_operator_ui_is_served_from_backend():
     assert "submitSignal" in script.text
     assert "previewSignal" in script.text
     assert "orderDeskRow" in script.text
+    assert "<th>Time</th><th>Order</th><th>Pair</th><th>Side</th><th>Notional</th><th>Price</th><th>Status</th><th>Action</th>" in script.text
     assert "inspect-order" in script.text
     assert "data-json" in script.text
     assert "approvalActions" in script.text

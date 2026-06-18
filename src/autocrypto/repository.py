@@ -109,16 +109,24 @@ class SQLiteRepository:
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO orders (order_id, signal_id, payload)
-                VALUES (?, ?, ?)
+                INSERT INTO orders (order_id, signal_id, payload, created_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(order_id) DO UPDATE SET
+                    signal_id = excluded.signal_id,
+                    payload = excluded.payload
                 """,
                 (order.order_id, order.signal_id, json.dumps(order.to_dict(), sort_keys=True)),
             )
 
     def list_orders(self) -> list[dict[str, Any]]:
         with self._connect() as conn:
-            rows = conn.execute("SELECT payload FROM orders ORDER BY rowid ASC").fetchall()
-        return [json.loads(row["payload"]) for row in rows]
+            rows = conn.execute("SELECT payload, created_at FROM orders ORDER BY rowid ASC").fetchall()
+        orders = []
+        for row in rows:
+            payload = json.loads(row["payload"])
+            payload["created_at"] = row["created_at"]
+            orders.append(payload)
+        return orders
 
     def record_audit(self, event_type: str, data: dict[str, Any]) -> None:
         with self._connect() as conn:
@@ -157,7 +165,8 @@ class SQLiteRepository:
                 CREATE TABLE IF NOT EXISTS orders (
                     order_id TEXT PRIMARY KEY,
                     signal_id TEXT NOT NULL,
-                    payload TEXT NOT NULL
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
 
                 CREATE TABLE IF NOT EXISTS audit_events (
@@ -184,6 +193,10 @@ class SQLiteRepository:
             if "created_at" not in columns:
                 conn.execute("ALTER TABLE signals ADD COLUMN created_at TEXT")
             conn.execute("UPDATE signals SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL")
+            order_columns = {row["name"] for row in conn.execute("PRAGMA table_info(orders)").fetchall()}
+            if "created_at" not in order_columns:
+                conn.execute("ALTER TABLE orders ADD COLUMN created_at TEXT")
+            conn.execute("UPDATE orders SET created_at = CURRENT_TIMESTAMP WHERE created_at IS NULL")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(self.path)

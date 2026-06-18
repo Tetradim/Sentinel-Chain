@@ -263,7 +263,7 @@ function renderDashboard() {
   $("#runtimeRows").innerHTML =
     filteredOrders.length > 0
       ? filteredOrders.slice(-8).reverse().map(orderRuntimeRow).join("")
-      : `<tr><td colspan="6">No paper orders yet.</td></tr>`;
+      : `<tr><td colspan="7">No paper orders yet.</td></tr>`;
 
   $("#auditPreview").innerHTML =
     audit.length > 0
@@ -302,6 +302,7 @@ function approvalActions(signal) {
 function orderRuntimeRow(order) {
   return `
     <tr>
+      <td>${escapeHtml(formatAuditTime(order.created_at))}</td>
       <td title="${escapeHtml(order.order_id)}">${escapeHtml(order.order_id)}</td>
       <td>${escapeHtml(order.symbol)}</td>
       <td class="${order.side === "buy" ? "up" : "down"}">${escapeHtml(order.side)}</td>
@@ -316,6 +317,7 @@ function orderDeskRow(order) {
   const payload = escapeHtml(JSON.stringify(order));
   return `
     <tr>
+      <td>${escapeHtml(formatAuditTime(order.created_at))}</td>
       <td title="${escapeHtml(order.order_id)}">${escapeHtml(order.order_id)}</td>
       <td>${escapeHtml(order.symbol)}</td>
       <td class="${order.side === "buy" ? "up" : "down"}">${escapeHtml(order.side)}</td>
@@ -517,12 +519,12 @@ function renderOrderBook(mid) {
 
 function renderDeskTable() {
   if (appState.deskTable === "orders") {
-    $("#deskTableHead").innerHTML = `<tr><th>Order</th><th>Pair</th><th>Side</th><th>Notional</th><th>Price</th><th>Status</th><th>Action</th></tr>`;
+    $("#deskTableHead").innerHTML = `<tr><th>Time</th><th>Order</th><th>Pair</th><th>Side</th><th>Notional</th><th>Price</th><th>Status</th><th>Action</th></tr>`;
     const orders = appState.data?.orders || [];
     $("#deskTableBody").innerHTML =
       orders.length > 0
         ? orders.slice(-12).reverse().map(orderDeskRow).join("")
-        : `<tr><td colspan="7">No orders submitted yet.</td></tr>`;
+        : `<tr><td colspan="8">No orders submitted yet.</td></tr>`;
     return;
   }
 
