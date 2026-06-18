@@ -378,6 +378,12 @@ pre {
   font-size: 0.86rem;
 }
 
+.inline-filter {
+  max-width: 230px;
+  min-height: 34px;
+  padding: 7px 10px;
+}
+
 .segmented,
 .strategy-filters {
   border: 1px solid var(--line);

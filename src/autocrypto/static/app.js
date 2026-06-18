@@ -92,6 +92,10 @@ function compactSymbol(symbol) {
   return String(symbol || "").replace("/", "").toUpperCase();
 }
 
+function baseAsset(symbol) {
+  return prettySymbol(symbol).split("/")[0] || "base";
+}
+
 function prettySymbol(symbol) {
   const raw = String(symbol || "").toUpperCase();
   if (raw.includes("/")) return raw;
@@ -310,7 +314,46 @@ function renderSignals() {
       .join("");
   }
   renderRiskPreview();
+  renderSignalHistory();
   $("#payloadPreview").textContent = JSON.stringify(appState.lastPayload || appState.parsedSignal || {}, null, 2);
+}
+
+function renderSignalHistory() {
+  const query = $("#signalSearch").value.trim().toLowerCase();
+  const signals = (appState.data?.signals || []).filter((signal) => {
+    const text = [
+      signal.signal_id,
+      signal.symbol,
+      signal.side,
+      signal.source,
+      signal.strategy_id,
+      signal.quote_amount,
+      signal.base_amount,
+    ].join(" ").toLowerCase();
+    return !query || text.includes(query);
+  });
+  $("#signalHistoryRows").innerHTML =
+    signals.length > 0
+      ? signals.slice().reverse().map(signalHistoryRow).join("")
+      : `<tr><td colspan="6">No submitted signals match.</td></tr>`;
+}
+
+function signalHistoryRow(signal) {
+  const size = signal.quote_amount
+    ? money(signal.quote_amount)
+    : signal.base_amount
+      ? `${signal.base_amount} ${baseAsset(signal.symbol)}`
+      : "-";
+  return `
+    <tr>
+      <td title="${escapeHtml(signal.signal_id)}">${escapeHtml(signal.symbol)}</td>
+      <td class="${signal.side === "buy" ? "up" : "down"}">${escapeHtml(signal.side)}</td>
+      <td>${escapeHtml(size)}</td>
+      <td>${signal.price ? money(signal.price) : "market"}</td>
+      <td>${escapeHtml(signal.strategy_id || "manual")}</td>
+      <td><button type="button" data-action="load-signal-ticket" data-signal-id="${escapeHtml(signal.signal_id)}">Load</button></td>
+    </tr>
+  `;
 }
 
 function renderRiskPreview() {
@@ -601,6 +644,15 @@ function setTicketSizeMode(mode, amount) {
   if (amount !== undefined) $("#ticketAmount").value = amount;
 }
 
+function setTicketStrategy(name) {
+  const value = String(name || "manual");
+  const select = $("#ticketStrategy");
+  if (!Array.from(select.options).some((option) => option.value === value)) {
+    select.add(new Option(value, value));
+  }
+  select.value = value;
+}
+
 async function parseSignal() {
   const message = $("#signalText").value;
   const payload = await api("/signals/parse-text", { method: "POST", body: { message } });
@@ -752,7 +804,7 @@ async function loadBitunixAccount() {
 function copyStrategy(strategyId) {
   const strategy = strategies.find((item) => item.id === strategyId);
   if (!strategy) return;
-  $("#ticketStrategy").value = strategy.name;
+  setTicketStrategy(strategy.name);
   $("#ticketSymbol").value = strategy.pair;
   $("#ticketSide").value = "BUY";
   setTicketSizeMode("quote", strategy.amount);
@@ -789,6 +841,22 @@ function inspectOrder(orderId) {
   $("#ticketTakeProfit").value = "";
   $("#ticketStatus").textContent = `loaded ${orderId}`;
   activateView("trading");
+}
+
+function loadSignalTicket(signalId) {
+  const signal = (appState.data?.signals || []).find((item) => item.signal_id === signalId);
+  if (!signal) return;
+  setTicketStrategy(signal.strategy_id || "manual");
+  $("#ticketSymbol").value = compactSymbol(signal.symbol);
+  $("#ticketSide").value = String(signal.side || "buy").toUpperCase();
+  setTicketSizeMode(signal.base_amount ? "base" : "quote", signal.base_amount || signal.quote_amount || "");
+  $("#ticketPrice").value = signal.price || "";
+  $("#ticketStop").value = signal.stop_loss_pct || "";
+  $("#ticketTakeProfit").value = signal.take_profit_pct || "";
+  $("#ticketStatus").textContent = `loaded ${signal.signal_id}`;
+  appState.selectedPair = compactSymbol(signal.symbol);
+  activateView("trading");
+  setStatus(`Loaded ${prettySymbol(signal.symbol)} signal into the ticket.`, "ok");
 }
 
 function activateView(viewName) {
@@ -1054,6 +1122,7 @@ function bindEvents() {
   $("#refreshAuditButton").addEventListener("click", loadState);
   $("#exchangeSearch").addEventListener("input", renderExchanges);
   $("#auditSearch").addEventListener("input", renderAudit);
+  $("#signalSearch").addEventListener("input", renderSignalHistory);
   $("#bitunixTickerButton").addEventListener("click", () => loadBitunixTickers().catch((error) => {
     $("#bitunixView").textContent = JSON.stringify({ error: error.message }, null, 2);
     setStatus(`Bitunix ticker check failed: ${error.message}`, "error");
@@ -1123,6 +1192,7 @@ function bindEvents() {
     if (action === "approve") approveSignal(target.dataset.signalId).catch((error) => setStatus(error.message, "error"));
     if (action === "reject") rejectSignal(target.dataset.signalId).catch((error) => setStatus(error.message, "error"));
     if (action === "inspect-order") inspectOrder(target.dataset.orderId);
+    if (action === "load-signal-ticket") loadSignalTicket(target.dataset.signalId);
     if (action === "load-position-price") {
       appState.selectedPair = target.dataset.symbol;
       $("#ticketSymbol").value = target.dataset.symbol;
