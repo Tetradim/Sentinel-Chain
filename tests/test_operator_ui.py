@@ -22,6 +22,7 @@ def test_operator_ui_is_served_from_backend():
     assert "previewSignal" in script.text
     assert "closePosition" in script.text
     assert "loadSignalTicket" in script.text
+    assert "trigger-exit-price" in script.text
     assert "loadPlatforms" in script.text
     assert "loadBitunixTickers" in script.text
 

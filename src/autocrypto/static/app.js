@@ -524,7 +524,22 @@ function renderPortfolio() {
   $("#bracketCount").textContent = `${exits.length} active exits`;
   $("#bracketRows").innerHTML =
     exits.length > 0
-      ? exits.map((exit) => `<tr><td>${escapeHtml(exit.symbol)}</td><td>${escapeHtml(exit.kind)}</td><td>${money(exit.trigger_price)}</td><td><button type="button" data-action="load-position-price" data-symbol="${escapeHtml(compactSymbol(exit.symbol))}" data-price="${escapeHtml(exit.trigger_price)}">Test Trigger</button></td></tr>`).join("")
+      ? exits.map((exit) => {
+        const compact = compactSymbol(exit.symbol);
+        return `
+          <tr>
+            <td>${escapeHtml(exit.symbol)}</td>
+            <td>${escapeHtml(exit.kind)}</td>
+            <td>${money(exit.trigger_price)}</td>
+            <td>
+              <div class="row-actions">
+                <button type="button" data-action="load-position-price" data-symbol="${escapeHtml(compact)}" data-price="${escapeHtml(exit.trigger_price)}">Load</button>
+                <button type="button" data-action="trigger-exit-price" data-symbol="${escapeHtml(compact)}" data-price="${escapeHtml(exit.trigger_price)}">Trigger</button>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join("")
       : `<tr><td colspan="4">No active exits. Buy signals with stop/TP create bracket rows.</td></tr>`;
 }
 
@@ -1198,6 +1213,10 @@ function bindEvents() {
       $("#ticketSymbol").value = target.dataset.symbol;
       $("#markPrice").value = target.dataset.price;
       activateView("trading");
+    }
+    if (action === "trigger-exit-price") {
+      updateMarkPrice(target.dataset.symbol, target.dataset.price)
+        .catch((error) => setStatus(error.message, "error"));
     }
     if (action === "close-position") {
       closePosition(target.dataset.symbol, target.dataset.quantity, target.dataset.price)
