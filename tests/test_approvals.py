@@ -57,8 +57,10 @@ def test_operator_can_reject_pending_signal(tmp_path):
     assert rejected.json() == {"status": "rejected", "signal_id": signal_id}
     assert client.get("/orders").json()["orders"] == []
     assert client.get("/approvals").json()["pending"] == []
-    audit_types = [event["event_type"] for event in client.get("/audit").json()["events"]]
+    events = client.get("/audit").json()["events"]
+    audit_types = [event["event_type"] for event in events]
     assert audit_types == ["signal.received", "approval.requested", "approval.rejected"]
+    assert events[-1]["data"] == {"signal_id": signal_id, "reason": "bad setup"}
 
 
 def test_pending_approval_survives_restart_and_can_be_approved(tmp_path):

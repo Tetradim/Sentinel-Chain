@@ -19,6 +19,7 @@ def test_operator_ui_is_served_from_backend():
     assert "Signal History" in ui.text
     assert "Control reason" in ui.text
     assert "Export CSV" in ui.text
+    assert "Reject reason" in ui.text
     assert "copyCapabilityButton" in ui.text
     assert "copyBitunixButton" in ui.text
     assert script.status_code == 200

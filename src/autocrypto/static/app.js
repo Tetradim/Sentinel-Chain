@@ -753,12 +753,13 @@ async function approveSignal(signalId) {
 }
 
 async function rejectSignal(signalId) {
+  const reason = $("#rejectReasonInput").value.trim() || "Rejected from operator UI";
   const result = await api(`/approvals/${encodeURIComponent(signalId)}/reject`, {
     method: "POST",
-    body: { reason: "Rejected from operator UI" },
+    body: { reason },
   });
   appState.lastPayload = result;
-  setStatus(`Rejected ${signalId}.`, "warn");
+  setStatus(`Rejected ${signalId}: ${reason}.`, "warn");
   await loadState(false);
 }
 
