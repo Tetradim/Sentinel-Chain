@@ -11,6 +11,7 @@ def test_operator_ui_is_served_from_backend():
     formatters = client.get("/ui/static/formatters.js")
     storage = client.get("/ui/static/storage.js")
     api = client.get("/ui/static/api.js")
+    catalog = client.get("/ui/static/catalog.js")
     script = client.get("/ui/static/app.js")
 
     assert ui.status_code == 200
@@ -47,9 +48,11 @@ def test_operator_ui_is_served_from_backend():
     assert '<script src="/ui/static/formatters.js"></script>' in ui.text
     assert '<script src="/ui/static/storage.js"></script>' in ui.text
     assert '<script src="/ui/static/api.js"></script>' in ui.text
+    assert '<script src="/ui/static/catalog.js"></script>' in ui.text
     assert ui.text.index("/ui/static/formatters.js") < ui.text.index("/ui/static/app.js")
     assert ui.text.index("/ui/static/storage.js") < ui.text.index("/ui/static/app.js")
     assert ui.text.index("/ui/static/api.js") < ui.text.index("/ui/static/app.js")
+    assert ui.text.index("/ui/static/catalog.js") < ui.text.index("/ui/static/app.js")
     assert formatters.status_code == 200
     assert "window.AutoCryptoFormatters" in formatters.text
     assert "escapeHtml" in formatters.text
@@ -68,10 +71,16 @@ def test_operator_ui_is_served_from_backend():
     assert "window.AutoCryptoApi" in api.text
     assert "async function api" in api.text
     assert "Request failed" in api.text
+    assert catalog.status_code == 200
+    assert "window.AutoCryptoCatalog" in catalog.text
+    assert "defaultMarkets" in catalog.text
+    assert "strategies" in catalog.text
+    assert "Breakout Guard" in catalog.text
     assert script.status_code == 200
     assert "AutoCryptoFormatters" in script.text
     assert "AutoCryptoStorage" in script.text
     assert "AutoCryptoApi" in script.text
+    assert "AutoCryptoCatalog" in script.text
     assert "submitSignal" in script.text
     assert "previewSignal" in script.text
     assert "orderDeskRow" in script.text
