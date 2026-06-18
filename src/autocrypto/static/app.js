@@ -16,6 +16,19 @@ const {
   csvCell,
   formatDraftTime,
 } = window.AutoCryptoFormatters;
+const {
+  readPinnedStrategies,
+  writePinnedStrategies,
+  readStoredBacktests,
+  writeStoredBacktests,
+  readStoredTicketDraft,
+  writeStoredTicketDraft,
+  clearStoredTicketDraft,
+  readAutoRefreshEnabled,
+  writeAutoRefreshEnabled,
+  readImportedStrategy,
+  writeImportedStrategy,
+} = window.AutoCryptoStorage;
 
 const defaultMarkets = [
   { symbol: "BTC/USDT", compact: "BTCUSDT", price: 66234.13, change: 3.15 },
@@ -66,11 +79,6 @@ const strategies = [
   },
 ];
 
-const STRATEGY_PIN_STORAGE_KEY = "autoCryptoPinnedStrategies";
-const STRATEGY_BACKTEST_STORAGE_KEY = "autoCryptoBacktests";
-const TICKET_DRAFT_STORAGE_KEY = "autoCryptoTicketDraft";
-const AUTO_REFRESH_STORAGE_KEY = "autoCryptoAutoRefresh";
-
 const appState = {
   data: null,
   exchanges: [],
@@ -95,32 +103,6 @@ const appState = {
   autoRefreshMs: 10000,
 };
 
-function readPinnedStrategies() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STRATEGY_PIN_STORAGE_KEY) || "[]");
-    return new Set(Array.isArray(parsed) ? parsed.filter(Boolean) : []);
-  } catch {
-    return new Set();
-  }
-}
-
-function writePinnedStrategies(pinned) {
-  localStorage.setItem(STRATEGY_PIN_STORAGE_KEY, JSON.stringify([...pinned]));
-}
-
-function readStoredBacktests() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STRATEGY_BACKTEST_STORAGE_KEY) || "{}");
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeStoredBacktests() {
-  localStorage.setItem(STRATEGY_BACKTEST_STORAGE_KEY, JSON.stringify(appState.backtests));
-}
-
 function backtestSortValue(strategy, key) {
   const value = Number(appState.backtests[strategy.id]?.[key]);
   return Number.isFinite(value) ? value : null;
@@ -131,15 +113,6 @@ function compareOptional(left, right, direction = "desc") {
   if (left === null) return 1;
   if (right === null) return -1;
   return direction === "asc" ? left - right : right - left;
-}
-
-function readStoredTicketDraft() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(TICKET_DRAFT_STORAGE_KEY) || "null");
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
 }
 
 function setStatus(message, type = "") {
@@ -195,12 +168,12 @@ function setAutoRefresh(enabled, { persist = true, announce = true } = {}) {
   button.classList.toggle("is-selected", enabled);
   button.setAttribute("aria-pressed", String(enabled));
   button.textContent = enabled ? "Auto On" : "Auto 10s";
-  if (persist) localStorage.setItem(AUTO_REFRESH_STORAGE_KEY, enabled ? "true" : "false");
+  if (persist) writeAutoRefreshEnabled(enabled);
   if (announce) setStatus(enabled ? "Auto refresh enabled every 10 seconds." : "Auto refresh disabled.", enabled ? "ok" : "");
 }
 
 function restoreAutoRefresh() {
-  setAutoRefresh(localStorage.getItem(AUTO_REFRESH_STORAGE_KEY) === "true", { persist: false, announce: false });
+  setAutoRefresh(readAutoRefreshEnabled(), { persist: false, announce: false });
 }
 
 async function loadExchanges(showStatus = true) {
@@ -624,7 +597,7 @@ function renderStrategies() {
     : `<div class="empty-state strategy-empty">No strategies match the current search.</div>`;
   const activePinned = strategies.filter((strategy) => pinned.has(strategy.id)).length;
   $("#strategyResultCount").textContent = `${visible.length}/${strategies.length} shown | ${activePinned} pinned`;
-  const imported = JSON.parse(localStorage.getItem("autoCryptoImportedStrategy") || "null");
+  const imported = readImportedStrategy();
   $("#importStatus").textContent = imported ? `loaded: ${imported.name}` : "waiting";
   $("#strategyChecklist").innerHTML = [
     ["Backtest window", imported ? "365-day local simulation ready" : "run or copy a strategy", Boolean(imported)],
@@ -910,7 +883,7 @@ function renderTicketDraftStatus(draft = readStoredTicketDraft()) {
 
 function saveTicketDraft() {
   const draft = ticketDraftPayload();
-  localStorage.setItem(TICKET_DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  writeStoredTicketDraft(draft);
   renderTicketDraftStatus(draft);
 }
 
@@ -933,7 +906,7 @@ function applyStoredTicketDraft() {
 }
 
 function clearTicketDraft() {
-  localStorage.removeItem(TICKET_DRAFT_STORAGE_KEY);
+  clearStoredTicketDraft();
   renderTicketDraftStatus(null);
   setStatus("Ticket draft forgotten. Current fields are unchanged.", "ok");
 }
@@ -1117,7 +1090,7 @@ async function copyStrategy(strategyId) {
   $("#ticketStop").value = strategy.stop;
   $("#ticketTakeProfit").value = strategy.takeProfit;
   $("#signalText").value = ticketToText();
-  localStorage.setItem("autoCryptoImportedStrategy", JSON.stringify(strategy));
+  writeImportedStrategy(strategy);
   appState.selectedPair = strategy.pair;
   saveTicketDraft();
   renderStrategies();
@@ -1150,7 +1123,7 @@ function runBacktest(strategyId) {
     max_drawdown_pct: maxDrawdown,
     updated_at: new Date().toISOString(),
   };
-  writeStoredBacktests();
+  writeStoredBacktests(appState.backtests);
   renderStrategies();
   setStatus(`${strategy.name} backtest: ${percent(appState.backtests[strategyId].return_pct)} return, ${Math.abs(maxDrawdown).toFixed(2)}% drawdown.`, "ok");
 }

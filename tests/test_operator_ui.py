@@ -9,6 +9,7 @@ def test_operator_ui_is_served_from_backend():
 
     ui = client.get("/ui")
     formatters = client.get("/ui/static/formatters.js")
+    storage = client.get("/ui/static/storage.js")
     script = client.get("/ui/static/app.js")
 
     assert ui.status_code == 200
@@ -39,14 +40,26 @@ def test_operator_ui_is_served_from_backend():
     assert "copyCapabilityButton" in ui.text
     assert "copyBitunixButton" in ui.text
     assert '<script src="/ui/static/formatters.js"></script>' in ui.text
+    assert '<script src="/ui/static/storage.js"></script>' in ui.text
     assert ui.text.index("/ui/static/formatters.js") < ui.text.index("/ui/static/app.js")
+    assert ui.text.index("/ui/static/storage.js") < ui.text.index("/ui/static/app.js")
     assert formatters.status_code == 200
     assert "window.AutoCryptoFormatters" in formatters.text
     assert "escapeHtml" in formatters.text
     assert "prettySymbol" in formatters.text
     assert "formatAuditTime" in formatters.text
+    assert storage.status_code == 200
+    assert "window.AutoCryptoStorage" in storage.text
+    assert "STRATEGY_PIN_STORAGE_KEY" in storage.text
+    assert "STRATEGY_BACKTEST_STORAGE_KEY" in storage.text
+    assert "TICKET_DRAFT_STORAGE_KEY" in storage.text
+    assert "AUTO_REFRESH_STORAGE_KEY" in storage.text
+    assert "readStoredTicketDraft" in storage.text
+    assert "writeStoredBacktests" in storage.text
+    assert "readAutoRefreshEnabled" in storage.text
     assert script.status_code == 200
     assert "AutoCryptoFormatters" in script.text
+    assert "AutoCryptoStorage" in script.text
     assert "submitSignal" in script.text
     assert "previewSignal" in script.text
     assert "orderDeskRow" in script.text
@@ -65,20 +78,16 @@ def test_operator_ui_is_served_from_backend():
     assert "loadPlatforms" in script.text
     assert "loadBitunixTickers" in script.text
     assert "toggleStrategyPin" in script.text
-    assert "STRATEGY_PIN_STORAGE_KEY" in script.text
     assert "renderTicketPreview" in script.text
     assert "activateSignals: false" in script.text
-    assert "STRATEGY_BACKTEST_STORAGE_KEY" in script.text
     assert "strategyBacktestSummary" in script.text
     assert "writeStoredBacktests" in script.text
     assert "backtestSortValue" in script.text
     assert "compareOptional" in script.text
-    assert "TICKET_DRAFT_STORAGE_KEY" in script.text
     assert "saveTicketDraft" in script.text
     assert "applyStoredTicketDraft" in script.text
     assert "maxTicketNotional" in script.text
     assert "applySizePreset" in script.text
-    assert "AUTO_REFRESH_STORAGE_KEY" in script.text
     assert "setAutoRefresh" in script.text
     assert "refreshInFlight" in script.text
     assert "copyTicketAlert" in script.text
