@@ -355,7 +355,8 @@ function renderSignals() {
 
 function renderSignalHistory() {
   const query = $("#signalSearch").value.trim().toLowerCase();
-  const signals = (appState.data?.signals || []).filter((signal) => {
+  const allSignals = appState.data?.signals || [];
+  const signals = allSignals.filter((signal) => {
     const text = [
       signal.signal_id,
       signal.symbol,
@@ -368,10 +369,15 @@ function renderSignalHistory() {
     ].join(" ").toLowerCase();
     return !query || text.includes(query);
   });
+  $("#signalResultCount").textContent = signalCountLabel(signals.length, allSignals.length);
   $("#signalHistoryRows").innerHTML =
     signals.length > 0
       ? signals.slice().reverse().map(signalHistoryRow).join("")
       : `<tr><td colspan="7">No submitted signals match.</td></tr>`;
+}
+
+function signalCountLabel(visible, total) {
+  return $("#signalSearch").value.trim() ? `${visible}/${total} signals` : `${total} signals`;
 }
 
 function signalHistoryRow(signal) {
