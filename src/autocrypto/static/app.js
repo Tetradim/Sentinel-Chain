@@ -764,8 +764,29 @@ function renderAudit() {
   const events = filteredAuditEvents();
   $("#auditRows").innerHTML =
     events.length > 0
-      ? events.slice().reverse().map((event) => `<tr><td>${escapeHtml(formatAuditTime(event.created_at))}</td><td>${escapeHtml(event.event_type)}</td><td>${escapeHtml(JSON.stringify(event.data))}</td><td><button type="button" data-action="copy-json" data-json="${escapeHtml(JSON.stringify(event))}">Copy</button></td></tr>`).join("")
+      ? events.slice().reverse().map(auditRow).join("")
       : `<tr><td colspan="4">No audit events match.</td></tr>`;
+}
+
+function auditRow(event) {
+  const data = event.data || {};
+  const payload = escapeHtml(JSON.stringify(event));
+  const relatedButton = data.order_id || data.signal_id
+    ? `<button type="button" data-action="load-audit-related" data-order-id="${escapeHtml(data.order_id || "")}" data-signal-id="${escapeHtml(data.signal_id || "")}">Open</button>`
+    : "";
+  return `
+    <tr>
+      <td>${escapeHtml(formatAuditTime(event.created_at))}</td>
+      <td>${escapeHtml(event.event_type)}</td>
+      <td>${escapeHtml(JSON.stringify(data))}</td>
+      <td>
+        <div class="row-actions">
+          ${relatedButton}
+          <button type="button" data-action="copy-json" data-json="${payload}">Copy</button>
+        </div>
+      </td>
+    </tr>
+  `;
 }
 
 function filteredAuditEvents() {
@@ -1206,6 +1227,22 @@ async function previewApprovalTicket(signalId) {
   $("#ticketStatus").textContent = `risk: ${status}`;
 }
 
+function loadAuditRelated(orderId, signalId) {
+  if (orderId) {
+    inspectOrder(orderId);
+    return;
+  }
+  if (signalId && (appState.data?.signals || []).some((item) => item.signal_id === signalId)) {
+    loadSignalTicket(signalId);
+    return;
+  }
+  if (signalId && (appState.data?.approvals || []).some((item) => item.signal_id === signalId)) {
+    loadApprovalTicket(signalId);
+    return;
+  }
+  setStatus("No related order or signal is available in the current UI state.", "warn");
+}
+
 function activateView(viewName) {
   appState.activeView = viewName;
   $$(".view").forEach((view) => view.classList.toggle("is-active", view.dataset.view === viewName));
@@ -1603,6 +1640,7 @@ function bindEvents() {
     if (action === "load-signal-ticket") loadSignalTicket(target.dataset.signalId);
     if (action === "preview-signal-ticket") previewSignalTicket(target.dataset.signalId).catch((error) => setStatus(error.message, "error"));
     if (action === "preview-approval-ticket") previewApprovalTicket(target.dataset.signalId).catch((error) => setStatus(error.message, "error"));
+    if (action === "load-audit-related") loadAuditRelated(target.dataset.orderId, target.dataset.signalId);
     if (action === "load-position-price") {
       appState.selectedPair = target.dataset.symbol;
       $("#ticketSymbol").value = target.dataset.symbol;

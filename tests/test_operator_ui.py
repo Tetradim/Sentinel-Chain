@@ -88,6 +88,8 @@ def test_operator_ui_is_served_from_backend():
     assert "Unrealized" in script.text
     assert "haltReasonInput" in script.text
     assert "exportAuditCsv" in script.text
+    assert "auditRow" in script.text
+    assert "load-audit-related" in script.text
     assert "formatAuditTime" in script.text
     assert "loadPlatforms" in script.text
     assert "loadBitunixTickers" in script.text
