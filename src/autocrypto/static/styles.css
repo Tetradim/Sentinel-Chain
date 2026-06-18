@@ -789,6 +789,18 @@ pre {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+.size-presets {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.size-presets button {
+  min-height: 30px;
+  padding: 5px 7px;
+  font-size: 0.8rem;
+}
+
 .draft-actions {
   min-height: 34px;
   display: grid;
@@ -1328,6 +1340,7 @@ meter::-webkit-meter-optimum-value {
 
   .builder-actions,
   .ticket-actions,
+  .size-presets,
   .bitunix-controls {
     grid-template-columns: 1fr;
   }

@@ -99,6 +99,11 @@ function metricNumber(value) {
   return Number(String(value || "").replace(/[^0-9.-]/g, "")) || 0;
 }
 
+function positiveNumber(value) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+}
+
 function compactSymbol(symbol) {
   return String(symbol || "").replace("/", "").toUpperCase();
 }
@@ -841,6 +846,37 @@ function setTicketSizeMode(mode, amount) {
   if (amount !== undefined) $("#ticketAmount").value = amount;
 }
 
+function maxTicketNotional() {
+  const risk = appState.data?.risk || {};
+  const account = appState.data?.account || {};
+  const maxOrder = positiveNumber(risk.max_order_notional);
+  const maxOpen = positiveNumber(risk.max_open_notional);
+  const openNotional = positiveNumber(account.open_notional);
+  const candidates = [];
+  if (maxOrder > 0) candidates.push(maxOrder);
+  if (maxOpen > 0) candidates.push(Math.max(0, maxOpen - openNotional));
+  return candidates.length ? Math.min(...candidates) : 250;
+}
+
+function sizePresetAmount(preset) {
+  if (preset === "max-order") return positiveNumber(appState.data?.risk?.max_order_notional) || maxTicketNotional();
+  if (preset === "remaining-cap") return maxTicketNotional();
+  return positiveNumber(preset);
+}
+
+function applySizePreset(preset) {
+  const amount = sizePresetAmount(preset);
+  if (amount <= 0) {
+    setStatus("No available notional remains for this preset.", "warn");
+    return;
+  }
+  setTicketSizeMode("quote", String(Number(amount.toFixed(2))));
+  $("#signalText").value = ticketToText();
+  saveTicketDraft();
+  const label = preset === "max-order" ? "max order" : preset === "remaining-cap" ? "remaining capacity" : money(amount);
+  setStatus(`Ticket quote amount set from ${label}.`, "ok");
+}
+
 function setTicketStrategy(name) {
   const value = String(name || "manual");
   const select = $("#ticketStrategy");
@@ -1439,6 +1475,9 @@ function bindEvents() {
   $("#ticketStrategy").addEventListener("change", () => {
     saveTicketDraft();
     setStatus(`Ticket strategy set to ${$("#ticketStrategy").value}.`, "ok");
+  });
+  $$("[data-size-preset]").forEach((button) => {
+    button.addEventListener("click", () => applySizePreset(button.dataset.sizePreset));
   });
   ["ticketSymbol", "ticketSide", "ticketAmount", "ticketPrice", "ticketStop", "ticketTakeProfit"].forEach((id) => {
     $(`#${id}`).addEventListener("input", saveTicketDraft);
