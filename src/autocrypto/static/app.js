@@ -417,10 +417,25 @@ function renderExchanges() {
   $("#exchangeList").innerHTML =
     exchanges.slice(0, 80).map((exchange) => `
       <div class="exchange-row" data-action="exchange-cap" data-exchange-id="${escapeHtml(exchange.exchange_id)}">
-        <div><strong>${escapeHtml(exchange.exchange_id)}</strong><span>${escapeHtml(exchange.driver)}</span></div>
+        <div>
+          <strong>${escapeHtml(exchange.exchange_id)}</strong>
+          <span>${escapeHtml(exchange.driver)} · ${exchange.credentials_configured ? "credentials set" : "no keys"}</span>
+        </div>
         <em class="${exchange.driver_available ? "up" : "down"}">${exchange.live_execution_enabled ? "live" : "locked"}</em>
       </div>
     `).join("") || `<div class="empty-state">No exchanges match the filter.</div>`;
+  renderBitunixStatus();
+}
+
+function renderBitunixStatus() {
+  const bitunix = appState.exchanges.find((exchange) => exchange.exchange_id === "bitunix");
+  if (!bitunix) {
+    $("#bitunixStatus").textContent = "not discovered";
+    return;
+  }
+  const credentialState = bitunix.credentials_configured ? "credentials set" : "credentials missing";
+  const executionState = bitunix.live_execution_enabled ? "live enabled" : "live locked";
+  $("#bitunixStatus").textContent = `${credentialState} · ${executionState}`;
 }
 
 function renderAudit() {
@@ -541,6 +556,25 @@ async function inspectExchange(exchangeId) {
     $("#capabilityView").textContent = JSON.stringify({ error: error.message }, null, 2);
     setStatus(`Capability lookup failed: ${error.message}`, "error");
   }
+}
+
+async function loadBitunixTickers() {
+  const symbols = $("#bitunixSymbols").value.trim();
+  const path = `/exchanges/bitunix/futures/tickers${symbols ? `?symbols=${encodeURIComponent(symbols)}` : ""}`;
+  $("#bitunixView").textContent = "Loading...";
+  const payload = await api(path);
+  $("#bitunixView").textContent = JSON.stringify(payload, null, 2);
+  appState.lastPayload = payload;
+  setStatus("Bitunix futures tickers loaded.", "ok");
+}
+
+async function loadBitunixAccount() {
+  const marginCoin = $("#bitunixMarginCoin").value.trim() || "USDT";
+  $("#bitunixView").textContent = "Loading...";
+  const payload = await api(`/exchanges/bitunix/futures/account?margin_coin=${encodeURIComponent(marginCoin)}`);
+  $("#bitunixView").textContent = JSON.stringify(payload, null, 2);
+  appState.lastPayload = payload;
+  setStatus("Bitunix futures account check completed.", "ok");
 }
 
 function copyStrategy(strategyId) {
@@ -841,6 +875,14 @@ function bindEvents() {
   $("#refreshAuditButton").addEventListener("click", loadState);
   $("#exchangeSearch").addEventListener("input", renderExchanges);
   $("#auditSearch").addEventListener("input", renderAudit);
+  $("#bitunixTickerButton").addEventListener("click", () => loadBitunixTickers().catch((error) => {
+    $("#bitunixView").textContent = JSON.stringify({ error: error.message }, null, 2);
+    setStatus(`Bitunix ticker check failed: ${error.message}`, "error");
+  }));
+  $("#bitunixAccountButton").addEventListener("click", () => loadBitunixAccount().catch((error) => {
+    $("#bitunixView").textContent = JSON.stringify({ error: error.message }, null, 2);
+    setStatus(`Bitunix account check failed: ${error.message}`, "error");
+  }));
 
   $("[data-view='dashboard']").addEventListener("click", (event) => {
     const button = event.target.closest("[data-runtime-filter]");

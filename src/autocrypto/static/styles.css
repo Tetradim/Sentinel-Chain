@@ -619,6 +619,41 @@ pre {
   padding: 4px 8px;
 }
 
+.bitunix-tools {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.compact-title h2 {
+  font-size: 1rem;
+}
+
+.bitunix-controls {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) minmax(100px, 0.45fr) auto auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.bitunix-controls label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.bitunix-controls input {
+  width: 100%;
+}
+
+.compact-payload {
+  min-height: 150px;
+  max-height: 260px;
+}
+
 .timeline {
   list-style: none;
 }
@@ -1010,7 +1045,8 @@ meter::-webkit-meter-optimum-value {
   }
 
   .builder-actions,
-  .ticket-actions {
+  .ticket-actions,
+  .bitunix-controls {
     grid-template-columns: 1fr;
   }
 }

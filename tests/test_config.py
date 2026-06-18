@@ -4,6 +4,7 @@ from autocrypto.config import load_settings
 
 
 def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
     db_path = tmp_path / "configured.sqlite3"
     monkeypatch.setenv("AUTO_CRYPTO_DB_PATH", str(db_path))
     monkeypatch.setenv("AUTO_CRYPTO_MAX_ORDER_NOTIONAL", "250")
@@ -26,3 +27,14 @@ def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(mo
     assert settings.risk.max_leverage == Decimal("2")
     assert settings.risk.require_stop_loss is False
     assert settings.risk.allowed_exchanges == {"paper", "binance", "kraken"}
+
+
+def test_load_settings_reads_dotenv_from_current_working_directory(monkeypatch, tmp_path):
+    db_path = tmp_path / "dotenv.sqlite3"
+    (tmp_path / ".env").write_text(f"AUTO_CRYPTO_DB_PATH={db_path}\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AUTO_CRYPTO_DB_PATH", raising=False)
+
+    settings = load_settings()
+
+    assert settings.db_path == db_path

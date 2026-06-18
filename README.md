@@ -294,6 +294,29 @@ CCXT discovery does not enable live trading. It means the adapter driver can be 
 
 Signals whose `exchange` value is not in `AUTO_CRYPTO_ALLOWED_EXCHANGES` are rejected by risk checks. The default allowed exchange is `paper`.
 
+## Bitunix Integration
+
+Auto-Crypto includes a native Bitunix adapter for futures market data, credential validation, and capability reporting. Live Bitunix execution remains disabled by default.
+
+Configure credentials in a local `.env` file or environment variables. Do not commit real keys.
+
+```powershell
+AUTO_CRYPTO_BITUNIX_API_KEY=replace-with-your-key
+AUTO_CRYPTO_BITUNIX_SECRET_KEY=replace-with-your-secret
+AUTO_CRYPTO_BITUNIX_LIVE_ENABLED=false
+```
+
+Useful checks:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8004/exchanges
+Invoke-RestMethod http://127.0.0.1:8004/exchanges/bitunix/capabilities
+Invoke-RestMethod "http://127.0.0.1:8004/exchanges/bitunix/futures/tickers?symbols=BTCUSDT,ETHUSDT"
+Invoke-RestMethod "http://127.0.0.1:8004/exchanges/bitunix/futures/account?margin_coin=USDT"
+```
+
+The private account check signs the request using Bitunix's required `api-key`, `nonce`, `timestamp`, and `sign` headers. The bot never returns or logs the secret key.
+
 ## Persistence
 
 When SQLite is enabled:

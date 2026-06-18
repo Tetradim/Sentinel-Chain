@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from .risk import RiskConfig
 
 
@@ -18,6 +20,8 @@ class AppSettings:
 
 
 def load_settings() -> AppSettings:
+    load_dotenv(dotenv_path=Path.cwd() / ".env")
+
     db_path_raw = _empty_to_none(os.getenv("AUTO_CRYPTO_DB_PATH"))
     webhook_secret = _empty_to_none(os.getenv("AUTO_CRYPTO_WEBHOOK_SECRET"))
     tolerance_raw = _empty_to_none(os.getenv("AUTO_CRYPTO_WEBHOOK_TOLERANCE_SECONDS"))

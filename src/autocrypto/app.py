@@ -13,6 +13,14 @@ from fastapi.staticfiles import StaticFiles
 from .approvals import ApprovalQueue
 from .config import load_settings
 from .engine import TradingEngine
+from .exchanges.bitunix_adapter import (
+    BitunixConfigurationError,
+    BitunixRequestError,
+    BitunixRestClient,
+    bitunix_credentials_configured,
+    bitunix_live_execution_enabled,
+    load_bitunix_credentials_from_env,
+)
 from .exchanges.ccxt_adapter import (
     CcxtExchangeAdapter,
     CcxtNotInstalledError,
@@ -179,7 +187,7 @@ def create_app(
 
     @app.get("/exchanges")
     def exchanges() -> dict[str, Any]:
-        exchange_rows = [_exchange_row("paper", "paper")]
+        exchange_rows = [_exchange_row("paper", "paper"), _bitunix_exchange_row()]
         try:
             ccxt_exchange_ids = list_ccxt_exchange_ids()
         except CcxtNotInstalledError:
@@ -192,6 +200,9 @@ def create_app(
     def exchange_capabilities(exchange_id: str) -> dict[str, Any]:
         if exchange_id == "paper":
             return {"capabilities": _paper_capabilities().to_dict()}
+        if exchange_id == "bitunix":
+            client = BitunixRestClient(credentials=load_bitunix_credentials_from_env())
+            return {"capabilities": client.capabilities().to_dict()}
         try:
             capabilities = CcxtExchangeAdapter(exchange_id).capabilities()
         except CcxtNotInstalledError as exc:
@@ -199,6 +210,22 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"capabilities": capabilities.to_dict()}
+
+    @app.get("/exchanges/bitunix/futures/tickers")
+    def bitunix_futures_tickers(symbols: str | None = None) -> dict[str, Any]:
+        try:
+            return BitunixRestClient(credentials=load_bitunix_credentials_from_env()).get_futures_tickers(symbols)
+        except BitunixRequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.get("/exchanges/bitunix/futures/account")
+    def bitunix_futures_account(margin_coin: str = "USDT") -> dict[str, Any]:
+        try:
+            return BitunixRestClient(credentials=load_bitunix_credentials_from_env()).get_futures_account(margin_coin)
+        except BitunixConfigurationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except BitunixRequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.post("/market/price")
     async def market_price(request: Request) -> dict[str, Any]:
@@ -345,6 +372,16 @@ def _exchange_row(exchange_id: str, driver: str) -> dict[str, Any]:
         "driver_available": True,
         "credentials_configured": False,
         "live_execution_enabled": False,
+    }
+
+
+def _bitunix_exchange_row() -> dict[str, Any]:
+    return {
+        "exchange_id": "bitunix",
+        "driver": "bitunix-native",
+        "driver_available": True,
+        "credentials_configured": bitunix_credentials_configured(),
+        "live_execution_enabled": bitunix_live_execution_enabled(),
     }
 
 

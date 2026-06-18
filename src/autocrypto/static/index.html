@@ -411,6 +411,25 @@
               <span id="capabilityTitle">select an exchange</span>
             </div>
             <pre class="payload-view" id="capabilityView">{}</pre>
+            <div class="bitunix-tools">
+              <div class="panel-title compact-title">
+                <h2>Bitunix Futures</h2>
+                <span id="bitunixStatus">not loaded</span>
+              </div>
+              <div class="bitunix-controls">
+                <label>
+                  Symbols
+                  <input id="bitunixSymbols" value="BTCUSDT,ETHUSDT" />
+                </label>
+                <label>
+                  Margin
+                  <input id="bitunixMarginCoin" value="USDT" />
+                </label>
+                <button type="button" id="bitunixTickerButton">Load Tickers</button>
+                <button type="button" id="bitunixAccountButton">Check Account</button>
+              </div>
+              <pre class="payload-view compact-payload" id="bitunixView">{}</pre>
+            </div>
           </section>
         </div>
       </section>
