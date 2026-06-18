@@ -27,6 +27,7 @@ from .exchanges.ccxt_adapter import (
     ExchangeCapabilities,
     list_ccxt_exchange_ids,
 )
+from .exchanges.platform_registry import get_platform, platform_rows
 from .execution import PaperExchange
 from .intake import SignalIntakeService
 from .repository import SQLiteRepository
@@ -196,6 +197,14 @@ def create_app(
         exchange_rows.extend(_exchange_row(exchange_id, "ccxt") for exchange_id in ccxt_exchange_ids)
         return {"ccxt_available": True, "exchanges": exchange_rows}
 
+    @app.get("/exchanges/platforms")
+    def exchange_platforms() -> dict[str, Any]:
+        try:
+            ccxt_exchange_ids = set(list_ccxt_exchange_ids())
+        except CcxtNotInstalledError:
+            return {"ccxt_available": False, "platforms": platform_rows(None)}
+        return {"ccxt_available": True, "platforms": platform_rows(ccxt_exchange_ids)}
+
     @app.get("/exchanges/{exchange_id}/capabilities")
     def exchange_capabilities(exchange_id: str) -> dict[str, Any]:
         if exchange_id == "paper":
@@ -203,6 +212,9 @@ def create_app(
         if exchange_id == "bitunix":
             client = BitunixRestClient(credentials=load_bitunix_credentials_from_env())
             return {"capabilities": client.capabilities().to_dict()}
+        platform = get_platform(exchange_id)
+        if platform and platform.ccxt_id:
+            exchange_id = platform.ccxt_id
         try:
             capabilities = CcxtExchangeAdapter(exchange_id).capabilities()
         except CcxtNotInstalledError as exc:
@@ -210,6 +222,28 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return {"capabilities": capabilities.to_dict()}
+
+    @app.get("/exchanges/{exchange_id}/integration")
+    def exchange_integration(exchange_id: str) -> dict[str, Any]:
+        platform = get_platform(exchange_id)
+        if platform is None:
+            raise HTTPException(status_code=404, detail=f"unsupported platform: {exchange_id}")
+
+        try:
+            ccxt_exchange_ids = set(list_ccxt_exchange_ids())
+        except CcxtNotInstalledError:
+            ccxt_exchange_ids = None
+
+        payload: dict[str, Any] = {"platform": platform.to_dict(ccxt_exchange_ids=ccxt_exchange_ids)}
+        if platform.exchange_id == "bitunix":
+            payload["capabilities"] = BitunixRestClient(credentials=load_bitunix_credentials_from_env()).capabilities().to_dict()
+            return payload
+        if platform.ccxt_id and platform.driver_available(ccxt_exchange_ids):
+            try:
+                payload["capabilities"] = CcxtExchangeAdapter(platform.ccxt_id).capabilities().to_dict()
+            except (CcxtNotInstalledError, ValueError) as exc:
+                payload["capability_error"] = str(exc)
+        return payload
 
     @app.get("/exchanges/bitunix/futures/tickers")
     def bitunix_futures_tickers(symbols: str | None = None) -> dict[str, Any]:

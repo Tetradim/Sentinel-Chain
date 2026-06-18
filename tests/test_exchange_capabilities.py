@@ -38,6 +38,19 @@ def install_fake_ccxt(monkeypatch):
     )
 
 
+def install_fake_platform_ccxt(monkeypatch):
+    monkeypatch.setitem(
+        sys.modules,
+        "ccxt",
+        SimpleNamespace(
+            exchanges=["coinbase", "deribit", "bitmex"],
+            coinbase=FakeExchange,
+            deribit=FakeExchange,
+            bitmex=FakeExchange,
+        ),
+    )
+
+
 def test_ccxt_adapter_lists_exchange_ids_and_reports_capabilities(monkeypatch):
     install_fake_ccxt(monkeypatch)
 
@@ -120,6 +133,60 @@ def test_exchange_capabilities_endpoint_reports_specific_exchange(monkeypatch):
         "cancel_order": False,
         "fetch_balance": True,
     }
+
+
+def test_platforms_endpoint_returns_curated_trading_targets(monkeypatch):
+    clear_bitunix_env(monkeypatch)
+    install_fake_platform_ccxt(monkeypatch)
+    client = TestClient(create_app())
+
+    response = client.get("/exchanges/platforms")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ccxt_available"] is True
+    platforms = {row["exchange_id"]: row for row in body["platforms"]}
+    assert {"coinbase", "kraken", "deribit", "bitmex", "bitunix"}.issubset(platforms)
+    assert platforms["coinbase"]["driver_available"] is True
+    assert platforms["kraken"]["integration_status"] == "ccxt_not_found"
+    assert platforms["deribit"]["market_types"] == ["options", "futures", "swap"]
+    assert platforms["bitmex"]["market_types"] == ["swap", "futures"]
+
+
+def test_platforms_endpoint_works_without_ccxt(monkeypatch):
+    clear_bitunix_env(monkeypatch)
+    monkeypatch.setitem(sys.modules, "ccxt", None)
+    client = TestClient(create_app())
+
+    response = client.get("/exchanges/platforms")
+
+    assert response.status_code == 200
+    assert response.json()["ccxt_available"] is False
+    coinbase = next(row for row in response.json()["platforms"] if row["exchange_id"] == "coinbase")
+    assert coinbase["integration_status"] == "install_ccxt"
+
+
+def test_platform_integration_endpoint_reports_registry_and_capabilities(monkeypatch):
+    install_fake_platform_ccxt(monkeypatch)
+    client = TestClient(create_app())
+
+    response = client.get("/exchanges/coinbase/integration")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["platform"]["exchange_id"] == "coinbase"
+    assert body["platform"]["driver_available"] is True
+    assert body["capabilities"]["exchange_id"] == "coinbase"
+
+
+def test_platform_alias_capabilities_route_uses_ccxt_mapping(monkeypatch):
+    install_fake_platform_ccxt(monkeypatch)
+    client = TestClient(create_app())
+
+    response = client.get("/exchanges/coinbase-advanced/capabilities")
+
+    assert response.status_code == 200
+    assert response.json()["capabilities"]["exchange_id"] == "coinbase"
 
 
 def test_exchanges_endpoint_marks_bitunix_credentials(monkeypatch):

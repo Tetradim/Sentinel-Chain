@@ -12,9 +12,11 @@ def test_operator_ui_is_served_from_backend():
 
     assert ui.status_code == 200
     assert "Auto-Crypto Operator" in ui.text
+    assert "Trading Platforms" in ui.text
     assert "Bitunix Futures" in ui.text
     assert script.status_code == 200
     assert "submitSignal" in script.text
+    assert "loadPlatforms" in script.text
     assert "loadBitunixTickers" in script.text
 
 

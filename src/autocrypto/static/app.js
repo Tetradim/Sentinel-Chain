@@ -53,6 +53,7 @@ const strategies = [
 const appState = {
   data: null,
   exchanges: [],
+  platforms: [],
   activeView: "dashboard",
   selectedPair: "BTCUSDT",
   timeframe: "15m",
@@ -135,6 +136,7 @@ async function loadState() {
   try {
     appState.data = await api("/ui/state");
     await loadExchanges(false);
+    await loadPlatforms(false);
     renderAll();
     setStatus("State refreshed from Auto-Crypto API.", "ok");
   } catch (error) {
@@ -150,6 +152,17 @@ async function loadExchanges(showStatus = true) {
   } catch (error) {
     appState.exchanges = [];
     if (showStatus) setStatus(`Exchange discovery failed: ${error.message}`, "error");
+  }
+}
+
+async function loadPlatforms(showStatus = true) {
+  try {
+    const payload = await api("/exchanges/platforms");
+    appState.platforms = payload.platforms || [];
+    if (showStatus) setStatus(`Loaded ${appState.platforms.length} trading platforms.`, "ok");
+  } catch (error) {
+    appState.platforms = [];
+    if (showStatus) setStatus(`Platform registry failed: ${error.message}`, "error");
   }
 }
 
@@ -414,6 +427,7 @@ function renderExchanges() {
   const query = $("#exchangeSearch").value.trim().toLowerCase();
   const exchanges = appState.exchanges.filter((exchange) => !query || exchange.exchange_id.includes(query));
   $("#exchangeCount").textContent = `${exchanges.length} shown`;
+  renderPlatforms(query);
   $("#exchangeList").innerHTML =
     exchanges.slice(0, 80).map((exchange) => `
       <div class="exchange-row" data-action="exchange-cap" data-exchange-id="${escapeHtml(exchange.exchange_id)}">
@@ -425,6 +439,34 @@ function renderExchanges() {
       </div>
     `).join("") || `<div class="empty-state">No exchanges match the filter.</div>`;
   renderBitunixStatus();
+}
+
+function renderPlatforms(query = "") {
+  const platforms = appState.platforms.filter((platform) => {
+    const text = [
+      platform.exchange_id,
+      platform.display_name,
+      platform.tier,
+      platform.region,
+      ...(platform.market_types || []),
+    ].join(" ").toLowerCase();
+    return !query || text.includes(query);
+  });
+  $("#platformCount").textContent = `${platforms.length} tracked`;
+  $("#platformGrid").innerHTML =
+    platforms.map((platform) => {
+      const ready = platform.driver_available ? "ready" : platform.integration_status.replaceAll("_", " ");
+      const markets = (platform.market_types || []).slice(0, 4).join(" · ");
+      const credentialText = platform.credentials_configured ? "credentials set" : "no keys";
+      return `
+        <button class="platform-card" type="button" data-action="platform-integration" data-exchange-id="${escapeHtml(platform.exchange_id)}">
+          <span>${escapeHtml(String(platform.priority).padStart(2, "0"))}</span>
+          <strong>${escapeHtml(platform.display_name)}</strong>
+          <em class="${platform.driver_available ? "up" : "down"}">${escapeHtml(ready)}</em>
+          <small>${escapeHtml(markets || platform.tier)} · ${escapeHtml(credentialText)}</small>
+        </button>
+      `;
+    }).join("") || `<div class="empty-state">No platforms match the filter.</div>`;
 }
 
 function renderBitunixStatus() {
@@ -555,6 +597,20 @@ async function inspectExchange(exchangeId) {
   } catch (error) {
     $("#capabilityView").textContent = JSON.stringify({ error: error.message }, null, 2);
     setStatus(`Capability lookup failed: ${error.message}`, "error");
+  }
+}
+
+async function inspectPlatform(exchangeId) {
+  $("#capabilityTitle").textContent = `${exchangeId} integration`;
+  $("#capabilityView").textContent = "Loading...";
+  try {
+    const payload = await api(`/exchanges/${encodeURIComponent(exchangeId)}/integration`);
+    $("#capabilityView").textContent = JSON.stringify(payload, null, 2);
+    appState.lastPayload = payload;
+    setStatus(`Loaded ${exchangeId} integration details.`, "ok");
+  } catch (error) {
+    $("#capabilityView").textContent = JSON.stringify({ error: error.message }, null, 2);
+    setStatus(`Integration lookup failed: ${error.message}`, "error");
   }
 }
 
@@ -869,6 +925,7 @@ function bindEvents() {
   $("#exportStateButton").addEventListener("click", exportState);
   $("#refreshExchangesButton").addEventListener("click", async () => {
     await loadExchanges(true);
+    await loadPlatforms(true);
     renderExchanges();
     renderDashboard();
   });
@@ -951,6 +1008,7 @@ function bindEvents() {
       activateView("trading");
     }
     if (action === "exchange-cap") inspectExchange(target.dataset.exchangeId);
+    if (action === "platform-integration") inspectPlatform(target.dataset.exchangeId);
     if (action === "copy-strategy") copyStrategy(target.dataset.strategyId);
     if (action === "backtest-strategy") runBacktest(target.dataset.strategyId);
     if (action === "copy-json") copyText(target.dataset.json).catch((error) => setStatus(error.message, "error"));

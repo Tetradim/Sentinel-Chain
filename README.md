@@ -18,6 +18,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Rehydrates paper positions, bracket lots, and exposure risk state from SQLite after restart
 - Triggers paper stop-loss/take-profit exits from `POST /market/price`
 - Exposes CCXT venue discovery and capability inspection without enabling live execution
+- Tracks a curated Bitcoin platform registry for Coinbase, Kraken, Gemini, Bitstamp, Binance.US, Alpaca, Robinhood, Crypto.com, OKX, Bybit, KuCoin, Bitget, Gate.io, MEXC, Phemex, BitMEX, Deribit, and Bitunix
 - Provides a minimal Discord slash-command client for `/health` and `/signal_test`
 
 ## Windows Launcher
@@ -273,8 +274,10 @@ Approval mode:
 Exchange inspection:
 
 - `GET /exchanges`
+- `GET /exchanges/platforms`
 - `GET /exchanges/paper/capabilities`
 - `GET /exchanges/{exchange_id}/capabilities`
+- `GET /exchanges/{exchange_id}/integration`
 
 ## Approval Mode
 
@@ -293,6 +296,44 @@ When `AUTO_CRYPTO_DB_PATH` is enabled, pending approvals survive service restart
 CCXT discovery does not enable live trading. It means the adapter driver can be inspected. Live order placement still needs explicit implementation, credentials, configuration gates, and exchange API keys without withdrawal permissions.
 
 Signals whose `exchange` value is not in `AUTO_CRYPTO_ALLOWED_EXCHANGES` are rejected by risk checks. The default allowed exchange is `paper`.
+
+## Supported Platform Registry
+
+`GET /exchanges/platforms` returns the curated integration backlog and readiness state for all high-priority Bitcoin venues. Each row includes driver type, CCXT mapping when available, market types, API coverage, credential-field status, documentation URL, and live-execution gate state.
+
+Current platforms:
+
+| Platform | Exchange ID | Adapter path | Markets |
+| --- | --- | --- | --- |
+| Coinbase Advanced Trade | `coinbase` | CCXT now, native planned | spot, derivatives |
+| Kraken | `kraken` | CCXT | spot, margin, futures |
+| Gemini | `gemini` | CCXT | spot |
+| Bitstamp | `bitstamp` | CCXT | spot |
+| Binance.US | `binanceus` | CCXT | spot, OTC |
+| Alpaca Crypto | `alpaca` | CCXT, native broker adapter planned | spot |
+| Robinhood Crypto | `robinhood` | native broker adapter planned | spot |
+| Crypto.com Exchange | `cryptocom` | CCXT | spot, margin, derivatives |
+| OKX | `okx` | CCXT | spot, margin, swaps, futures, options |
+| Bybit | `bybit` | CCXT | spot, swaps, futures, options |
+| KuCoin | `kucoin` | CCXT | spot, margin, futures |
+| Bitget | `bitget` | CCXT | spot, margin, swaps, futures |
+| Gate.io | `gateio` | CCXT | spot, margin, swaps, futures, options |
+| MEXC | `mexc` | CCXT | spot, swaps, futures |
+| Phemex | `phemex` | CCXT | spot, contracts |
+| BitMEX | `bitmex` | CCXT | swaps, futures |
+| Deribit | `deribit` | CCXT | options, futures, swaps |
+| Bitunix | `bitunix` | native REST adapter | spot, swaps, futures |
+
+Example checks:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8004/exchanges/platforms
+Invoke-RestMethod http://127.0.0.1:8004/exchanges/deribit/integration
+Invoke-RestMethod http://127.0.0.1:8004/exchanges/bitmex/integration
+Invoke-RestMethod http://127.0.0.1:8004/exchanges/coinbase/integration
+```
+
+Use `.[exchange]` dependencies to let CCXT-backed platforms report `adapter_ready`. A native Robinhood adapter and richer native Alpaca broker flows require separate request-signing implementations before live execution can be considered.
 
 ## Bitunix Integration
 
