@@ -18,6 +18,7 @@ def test_operator_ui_is_served_from_backend():
     assert "Base quantity" in ui.text
     assert "Signal History" in ui.text
     assert "Control reason" in ui.text
+    assert "Export CSV" in ui.text
     assert "copyCapabilityButton" in ui.text
     assert "copyBitunixButton" in ui.text
     assert script.status_code == 200
@@ -28,6 +29,7 @@ def test_operator_ui_is_served_from_backend():
     assert "trigger-exit-price" in script.text
     assert "Unrealized" in script.text
     assert "haltReasonInput" in script.text
+    assert "exportAuditCsv" in script.text
     assert "loadPlatforms" in script.text
     assert "loadBitunixTickers" in script.text
 

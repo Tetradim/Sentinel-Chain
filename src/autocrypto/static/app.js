@@ -607,15 +607,24 @@ function renderBitunixStatus() {
 }
 
 function renderAudit() {
-  const query = $("#auditSearch").value.trim().toLowerCase();
-  const events = (appState.data?.audit || []).filter((event) => {
-    const text = `${event.event_type} ${JSON.stringify(event.data)}`.toLowerCase();
-    return !query || text.includes(query);
-  });
+  const events = filteredAuditEvents();
   $("#auditRows").innerHTML =
     events.length > 0
       ? events.slice().reverse().map((event) => `<tr><td>${escapeHtml(event.event_type)}</td><td>${escapeHtml(JSON.stringify(event.data))}</td><td><button type="button" data-action="copy-json" data-json="${escapeHtml(JSON.stringify(event))}">Copy</button></td></tr>`).join("")
       : `<tr><td colspan="3">No audit events match.</td></tr>`;
+}
+
+function filteredAuditEvents() {
+  const query = $("#auditSearch").value.trim().toLowerCase();
+  return (appState.data?.audit || []).filter((event) => {
+    const text = `${event.event_type} ${JSON.stringify(event.data)}`.toLowerCase();
+    return !query || text.includes(query);
+  });
+}
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  return `"${text.replaceAll('"', '""')}"`;
 }
 
 function currentMarkPrice(symbol) {
@@ -1094,6 +1103,23 @@ function exportState() {
   setStatus("Exported current UI state JSON.", "ok");
 }
 
+function exportAuditCsv() {
+  const events = filteredAuditEvents();
+  const rows = [
+    ["event_type", "data_json"],
+    ...events.map((event) => [event.event_type, JSON.stringify(event.data)]),
+  ];
+  const csv = `${rows.map((row) => row.map(csvCell).join(",")).join("\n")}\n`;
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `auto-crypto-audit-${new Date().toISOString().replaceAll(":", "-")}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+  setStatus(`Exported ${events.length} audit events to CSV.`, "ok");
+}
+
 async function copyText(value) {
   if (navigator.clipboard && window.isSecureContext) {
     await navigator.clipboard.writeText(value);
@@ -1152,6 +1178,7 @@ function bindEvents() {
     updateMarkPrice(appState.selectedPair, $("#markPrice").value).catch((error) => setStatus(error.message, "error"));
   });
   $("#exportStateButton").addEventListener("click", exportState);
+  $("#exportAuditButton").addEventListener("click", exportAuditCsv);
   $("#refreshExchangesButton").addEventListener("click", async () => {
     await loadExchanges(true);
     await loadPlatforms(true);
