@@ -148,6 +148,18 @@ function writeStoredBacktests() {
   localStorage.setItem(STRATEGY_BACKTEST_STORAGE_KEY, JSON.stringify(appState.backtests));
 }
 
+function backtestSortValue(strategy, key) {
+  const value = Number(appState.backtests[strategy.id]?.[key]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function compareOptional(left, right, direction = "desc") {
+  if (left === null && right === null) return 0;
+  if (left === null) return 1;
+  if (right === null) return -1;
+  return direction === "asc" ? left - right : right - left;
+}
+
 function setStatus(message, type = "") {
   const el = $("#statusLine");
   el.textContent = message;
@@ -553,6 +565,20 @@ function renderStrategies() {
     .sort((left, right) => {
       const pinnedDelta = Number(pinned.has(right.id)) - Number(pinned.has(left.id));
       if (pinnedDelta) return pinnedDelta;
+      if (appState.strategySort === "sim-return") {
+        const compared = compareOptional(backtestSortValue(left, "return_pct"), backtestSortValue(right, "return_pct"));
+        if (compared) return compared;
+      }
+      if (appState.strategySort === "sim-drawdown") {
+        const leftDrawdown = backtestSortValue(left, "max_drawdown_pct");
+        const rightDrawdown = backtestSortValue(right, "max_drawdown_pct");
+        const compared = compareOptional(
+          leftDrawdown === null ? null : Math.abs(leftDrawdown),
+          rightDrawdown === null ? null : Math.abs(rightDrawdown),
+          "asc",
+        );
+        if (compared) return compared;
+      }
       if (appState.strategySort === "drawdown") return metricNumber(left.drawdown) - metricNumber(right.drawdown);
       if (appState.strategySort === "win") return metricNumber(right.win) - metricNumber(left.win);
       if (appState.strategySort === "name") return left.name.localeCompare(right.name);

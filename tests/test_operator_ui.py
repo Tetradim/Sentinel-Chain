@@ -25,6 +25,8 @@ def test_operator_ui_is_served_from_backend():
     assert "strategySearch" in ui.text
     assert "strategySort" in ui.text
     assert "strategyResultCount" in ui.text
+    assert "Sim return" in ui.text
+    assert "Sim drawdown" in ui.text
     assert "ticketPreviewSummary" in ui.text
     assert "copyCapabilityButton" in ui.text
     assert "copyBitunixButton" in ui.text
@@ -47,6 +49,8 @@ def test_operator_ui_is_served_from_backend():
     assert "STRATEGY_BACKTEST_STORAGE_KEY" in script.text
     assert "strategyBacktestSummary" in script.text
     assert "writeStoredBacktests" in script.text
+    assert "backtestSortValue" in script.text
+    assert "compareOptional" in script.text
 
 
 def test_ui_state_returns_dashboard_contract(tmp_path):
