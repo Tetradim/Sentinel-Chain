@@ -37,6 +37,29 @@ def test_normalizes_tradingview_crypto_signal_with_stable_id():
     assert signal.signal_id == same_signal.signal_id
 
 
+def test_normalizes_staged_take_profit_targets():
+    signal = normalize_signal(
+        {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "2",
+            "take_profit_targets": [
+                {"pct": "8", "close_pct": "60"},
+                {"pct": "4", "close_pct": "40"},
+            ],
+        },
+        source="test",
+    )
+
+    assert signal.take_profit_pct == Decimal("4")
+    assert [(target.pct, target.close_pct) for target in signal.take_profit_targets] == [
+        (Decimal("4"), Decimal("40")),
+        (Decimal("8"), Decimal("60")),
+    ]
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -44,6 +67,12 @@ def test_normalizes_tradingview_crypto_signal_with_stable_id():
         {"symbol": "BTC/USDT", "side": "buy"},
         {"symbol": "", "side": "buy", "quote_amount": 10},
         {"symbol": "BTC/USDT", "side": "buy", "quote_amount": "-10"},
+        {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "take_profit_targets": [{"pct": "2", "close_pct": "60"}, {"pct": "4", "close_pct": "60"}],
+        },
     ],
 )
 def test_rejects_unsafe_or_ambiguous_signals(payload):

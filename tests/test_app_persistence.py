@@ -85,7 +85,7 @@ def test_app_rehydrates_paper_positions_and_brackets_from_order_history(tmp_path
     triggered = second_client.post("/market/price", json={"symbol": "SOLUSDT", "price": "105"})
 
     assert triggered.json()["triggered"] == [
-        {"symbol": "SOL/USDT", "kind": "take_profit", "price": "105.00000000"}
+        {"symbol": "SOL/USDT", "kind": "take_profit", "price": "105.00000000", "quantity": "1.00000000"}
     ]
     assert SQLiteRepository(db_path).list_orders()[-1]["side"] == "sell"
 

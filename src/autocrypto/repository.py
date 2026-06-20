@@ -225,6 +225,10 @@ def _signal_to_dict(signal: CryptoSignal) -> dict[str, Any]:
         "price": str(signal.price) if signal.price is not None else None,
         "stop_loss_pct": str(signal.stop_loss_pct) if signal.stop_loss_pct is not None else None,
         "take_profit_pct": str(signal.take_profit_pct) if signal.take_profit_pct is not None else None,
+        "take_profit_targets": [
+            {"pct": str(target.pct), "close_pct": str(target.close_pct)}
+            for target in signal.take_profit_targets
+        ],
         "trailing_stop_pct": str(signal.trailing_stop_pct) if signal.trailing_stop_pct is not None else None,
         "trailing_activation_pct": str(signal.trailing_activation_pct)
         if signal.trailing_activation_pct is not None
@@ -254,6 +258,10 @@ def _pending_summary(signal: CryptoSignal, *, created_at: str | None = None) -> 
         "price": str(signal.price) if signal.price is not None else None,
         "stop_loss_pct": str(signal.stop_loss_pct) if signal.stop_loss_pct is not None else None,
         "take_profit_pct": str(signal.take_profit_pct) if signal.take_profit_pct is not None else None,
+        "take_profit_targets": [
+            {"pct": str(target.pct), "close_pct": str(target.close_pct)}
+            for target in signal.take_profit_targets
+        ],
         "trailing_stop_pct": str(signal.trailing_stop_pct) if signal.trailing_stop_pct is not None else None,
         "trailing_activation_pct": str(signal.trailing_activation_pct)
         if signal.trailing_activation_pct is not None

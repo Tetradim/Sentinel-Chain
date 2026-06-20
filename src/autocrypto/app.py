@@ -514,6 +514,10 @@ def _signal_to_dict(signal: CryptoSignal) -> dict[str, Any]:
         "price": str(signal.price) if signal.price is not None else None,
         "stop_loss_pct": str(signal.stop_loss_pct) if signal.stop_loss_pct is not None else None,
         "take_profit_pct": str(signal.take_profit_pct) if signal.take_profit_pct is not None else None,
+        "take_profit_targets": [
+            {"pct": str(target.pct), "close_pct": str(target.close_pct)}
+            for target in signal.take_profit_targets
+        ],
         "trailing_stop_pct": str(signal.trailing_stop_pct) if signal.trailing_stop_pct is not None else None,
         "trailing_activation_pct": str(signal.trailing_activation_pct)
         if signal.trailing_activation_pct is not None
@@ -571,6 +575,7 @@ def _active_exits_to_dict(lots: list[Any]) -> list[dict[str, str]]:
             "symbol": lot.symbol,
             "kind": exit_order.kind,
             "trigger_price": str(exit_order.trigger_price),
+            "close_pct": str(exit_order.close_pct),
             "trailing_stop_pct": str(lot.trailing_stop_pct) if exit_order.kind == "trailing_stop" and lot.trailing_stop_pct else None,
             "trailing_activation_pct": str(lot.trailing_activation_pct)
             if exit_order.kind == "trailing_stop" and lot.trailing_activation_pct

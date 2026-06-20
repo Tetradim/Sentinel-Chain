@@ -27,7 +27,7 @@ def test_market_price_endpoint_triggers_paper_exit_and_audit_event(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["triggered"] == [
-        {"symbol": "SOL/USDT", "kind": "take_profit", "price": "106.00000000"}
+        {"symbol": "SOL/USDT", "kind": "take_profit", "price": "106.00000000", "quantity": "1.00000000"}
     ]
     audit_types = [event["event_type"] for event in client.get("/audit").json()["events"]]
     assert audit_types[-1] == "exit.triggered"

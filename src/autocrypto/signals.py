@@ -12,6 +12,12 @@ class SignalValidationError(ValueError):
 
 
 @dataclass(frozen=True)
+class TakeProfitTarget:
+    pct: Decimal
+    close_pct: Decimal = Decimal("100")
+
+
+@dataclass(frozen=True)
 class CryptoSignal:
     signal_id: str
     source: str
@@ -24,6 +30,7 @@ class CryptoSignal:
     price: Decimal | None = None
     stop_loss_pct: Decimal | None = None
     take_profit_pct: Decimal | None = None
+    take_profit_targets: tuple[TakeProfitTarget, ...] = ()
     trailing_stop_pct: Decimal | None = None
     trailing_activation_pct: Decimal | None = None
     breakeven_trigger_pct: Decimal | None = None
@@ -63,6 +70,9 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
     price = _optional_positive_decimal(payload.get("price") or payload.get("entry_price") or payload.get("limit_price"))
     stop_loss_pct = _optional_positive_decimal(payload.get("stop_loss_pct"))
     take_profit_pct = _optional_positive_decimal(payload.get("take_profit_pct"))
+    take_profit_targets = _take_profit_targets(payload.get("take_profit_targets"), take_profit_pct)
+    if take_profit_pct is None and take_profit_targets:
+        take_profit_pct = take_profit_targets[0].pct
     trailing_stop_pct = _optional_positive_decimal(payload.get("trailing_stop_pct"))
     trailing_activation_pct = _optional_positive_decimal(
         payload.get("trailing_activation_pct") or payload.get("trail_activation_pct")
@@ -85,6 +95,10 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         "price": str(price) if price is not None else None,
         "stop_loss_pct": str(stop_loss_pct) if stop_loss_pct is not None else None,
         "take_profit_pct": str(take_profit_pct) if take_profit_pct is not None else None,
+        "take_profit_targets": [
+            {"pct": str(target.pct), "close_pct": str(target.close_pct)}
+            for target in take_profit_targets
+        ],
         "trailing_stop_pct": str(trailing_stop_pct) if trailing_stop_pct is not None else None,
         "trailing_activation_pct": str(trailing_activation_pct) if trailing_activation_pct is not None else None,
         "breakeven_trigger_pct": str(breakeven_trigger_pct) if breakeven_trigger_pct is not None else None,
@@ -106,6 +120,7 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         price=price,
         stop_loss_pct=stop_loss_pct,
         take_profit_pct=take_profit_pct,
+        take_profit_targets=take_profit_targets,
         trailing_stop_pct=trailing_stop_pct,
         trailing_activation_pct=trailing_activation_pct,
         breakeven_trigger_pct=breakeven_trigger_pct,
@@ -163,6 +178,35 @@ def _non_negative_int(value: Any, *, default: int) -> int:
     if parsed < 0:
         raise SignalValidationError(f"value must be non-negative: {value}")
     return parsed
+
+
+def _take_profit_targets(value: Any, fallback_pct: Decimal | None) -> tuple[TakeProfitTarget, ...]:
+    if value is None or value == "":
+        if fallback_pct is None:
+            return ()
+        return (TakeProfitTarget(pct=fallback_pct),)
+    if not isinstance(value, list):
+        raise SignalValidationError("take_profit_targets must be a list")
+
+    targets: list[TakeProfitTarget] = []
+    total_close_pct = Decimal("0")
+    for item in value:
+        if not isinstance(item, dict):
+            raise SignalValidationError("take_profit_targets entries must be objects")
+        pct = _optional_positive_decimal(item.get("pct") or item.get("take_profit_pct"))
+        close_pct = _optional_positive_decimal(item.get("close_pct") or item.get("size_pct")) or Decimal("100")
+        if pct is None:
+            raise SignalValidationError("take_profit_targets entries require pct")
+        if close_pct > Decimal("100"):
+            raise SignalValidationError("take_profit_targets close_pct cannot exceed 100")
+        targets.append(TakeProfitTarget(pct=pct, close_pct=close_pct))
+        total_close_pct += close_pct
+
+    if not targets:
+        return ()
+    if total_close_pct > Decimal("100"):
+        raise SignalValidationError("take_profit_targets close_pct total cannot exceed 100")
+    return tuple(sorted(targets, key=lambda target: target.pct))
 
 
 def _fingerprint(payload: dict[str, Any]) -> str:

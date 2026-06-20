@@ -16,7 +16,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Supports approval-required mode with persisted pending approvals
 - Records paper orders, paper positions, realized PnL, active bracket lots, and audit events
 - Rehydrates paper positions, bracket lots, and exposure risk state from SQLite after restart
-- Triggers paper stop-loss, take-profit, activation-gated trailing-stop, and break-even exits from `POST /market/price`
+- Triggers paper stop-loss, single or staged take-profit, activation-gated trailing-stop, and break-even exits from `POST /market/price`
 - Previews server-side risk decisions from the operator UI without placing orders
 - Shows persisted signal history with one-click reload into the Trading Desk
 - Supports quote-notional and base-quantity ticket sizing, paper position close controls, bracket lot context and trigger tests, and local unrealized P&L marks in the operator UI
@@ -133,6 +133,10 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/webhooks/tradingview -
   "price": "50000",
   "stop_loss_pct": "2",
   "take_profit_pct": "3",
+  "take_profit_targets": [
+    {"pct": "3", "close_pct": "50"},
+    {"pct": "6", "close_pct": "50"}
+  ],
   "trailing_stop_pct": "2.5",
   "trailing_activation_pct": "1.5",
   "breakeven_trigger_pct": "2",
@@ -156,6 +160,8 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/market/price -ContentT
 ```
 
 For buy brackets, `stop_loss_pct` creates a fixed protective sell below entry, `take_profit_pct` creates a fixed profit-taking sell above entry, and `trailing_stop_pct` creates a sell stop that starts below entry and ratchets upward when `POST /market/price` marks a new high-water price. The trailing stop never moves lower. Add `trailing_activation_pct` to keep the trailing leg dormant until price has moved favorably by that percent, and add `breakeven_trigger_pct` to move protective stop exits up to the entry price after a favorable move.
+
+Use `take_profit_targets` for staged exits. Each target accepts `pct` and `close_pct`, and the total `close_pct` cannot exceed `100`. For example, `[{ "pct": "3", "close_pct": "50" }, { "pct": "6", "close_pct": "50" }]` sells half of the original paper lot at 3% profit and the remaining half at 6% profit. If the first target fills and price later falls to the stop, the remaining paper quantity exits through the stop-loss or trailing-stop leg. If `take_profit_targets` is omitted, `take_profit_pct` still creates one full-size take-profit target.
 
 ## Text Crypto Alerts
 
@@ -199,6 +205,7 @@ Recommended fields:
 - `price`, `entry_price`, or `limit_price`
 - `stop_loss_pct`
 - `take_profit_pct`
+- `take_profit_targets` as a list of `{ "pct": "...", "close_pct": "..." }` objects for staged exits
 - `trailing_stop_pct`
 - `trailing_activation_pct` or `trail_activation_pct`
 - `breakeven_trigger_pct`
@@ -238,7 +245,9 @@ Current bot work is guided by paper-first risk controls and exchange order behav
 
 - Binance documents spot trailing stops as dynamic contingent orders that track favorable price movement and trigger after a configured reversal delta; it also allows an optional stop price before tracking begins, which maps to Auto-Crypto's paper `trailing_activation_pct`: <https://developers.binance.com/docs/binance-spot-api-docs/faqs/trailing-stop-faq>
 - Binance order payloads expose trailing-stop fields such as `trailingDelta` and `trailingTime`, which is useful when mapping paper behavior to future live adapters: <https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints>
+- Coinbase describes bracket and TP/SL orders as linked exits where only the triggered side executes and the other side is turned off, which is the behavior Auto-Crypto mirrors in paper bracket lots: <https://help.coinbase.com/en/coinbase/trading-and-funding/advanced-trade/order-types>
 - CCXT notes that trailing orders and stop/take-profit parameters vary by exchange, so Auto-Crypto keeps exchange-specific live execution disabled and paper-first until adapter capability checks are explicit: <https://docs.ccxt.com/docs/faq>
+- CCXT's order FAQ also recommends checking exchange feature flags for native take-profit and stop-loss support; this is why staged TP/SL simulation is recorded as paper behavior instead of assuming a portable live bracket implementation: <https://github.com/ccxt/ccxt/wiki/FAQ/9e4963a7b3438ba4fee47be1ec6922f4baf6684e>
 - Bot setting guidance consistently emphasizes stop loss, take profit, demo/paper testing, backtesting, and position sizing before live automation: <https://bitsgap.com/blog/how-to-choose-crypto-trading-bot-settings-in-2026-range-investment-stop-loss-and-take-profit>
 
 ## Environment Variables

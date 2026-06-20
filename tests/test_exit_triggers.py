@@ -23,7 +23,9 @@ def test_paper_take_profit_trigger_closes_position_and_records_exit_order():
 
     triggered = exchange.update_price("BTC/USDT", Decimal("105"))
 
-    assert triggered == [{"symbol": "BTC/USDT", "kind": "take_profit", "price": "105.00000000"}]
+    assert triggered == [
+        {"symbol": "BTC/USDT", "kind": "take_profit", "price": "105.00000000", "quantity": "1.00000000"}
+    ]
     assert exchange.list_positions()[0]["quantity"] == "0.00000000"
     assert exchange.list_positions()[0]["realized_pnl"] == "5.00000000"
     assert exchange.orders[-1].side == "sell"
@@ -48,7 +50,9 @@ def test_paper_stop_loss_trigger_closes_position_once():
     first = exchange.update_price("ETH/USDT", Decimal("97"))
     second = exchange.update_price("ETH/USDT", Decimal("96"))
 
-    assert first == [{"symbol": "ETH/USDT", "kind": "stop_loss", "price": "97.00000000"}]
+    assert first == [
+        {"symbol": "ETH/USDT", "kind": "stop_loss", "price": "97.00000000", "quantity": "1.00000000"}
+    ]
     assert second == []
     assert exchange.list_positions()[0]["realized_pnl"] == "-3.00000000"
 
@@ -88,10 +92,14 @@ def test_paper_exits_track_independent_lots_for_same_symbol():
     second_trigger = exchange.update_price("BTC/USDT", Decimal("110"))
     position_after_second = exchange.list_positions()[0]
 
-    assert first_trigger == [{"symbol": "BTC/USDT", "kind": "take_profit", "price": "105.00000000"}]
+    assert first_trigger == [
+        {"symbol": "BTC/USDT", "kind": "take_profit", "price": "105.00000000", "quantity": "1.00000000"}
+    ]
     assert position_after_first["quantity"] == "2.00000000"
     assert position_after_first["realized_pnl"] == "5.00000000"
-    assert second_trigger == [{"symbol": "BTC/USDT", "kind": "take_profit", "price": "110.00000000"}]
+    assert second_trigger == [
+        {"symbol": "BTC/USDT", "kind": "take_profit", "price": "110.00000000", "quantity": "2.00000000"}
+    ]
     assert position_after_second["quantity"] == "0.00000000"
     assert position_after_second["realized_pnl"] == "25.00000000"
 
@@ -144,7 +152,9 @@ def test_manual_partial_sell_uses_same_lot_accounting_as_bracket_exits():
     assert after_manual["quantity"] == "1.00000000"
     assert after_manual["avg_entry"] == "200.00000000"
     assert after_manual["realized_pnl"] == "50.00000000"
-    assert triggered == [{"symbol": "BTC/USDT", "kind": "take_profit", "price": "220.00000000"}]
+    assert triggered == [
+        {"symbol": "BTC/USDT", "kind": "take_profit", "price": "220.00000000", "quantity": "1.00000000"}
+    ]
     assert after_exit["quantity"] == "0.00000000"
     assert after_exit["realized_pnl"] == "70.00000000"
 
@@ -173,7 +183,9 @@ def test_trailing_stop_ratcheted_up_then_triggers_on_pullback():
 
     assert first == []
     assert trailing_exit.trigger_price == Decimal("104.50")
-    assert second == [{"symbol": "BTC/USDT", "kind": "trailing_stop", "price": "104.50000000"}]
+    assert second == [
+        {"symbol": "BTC/USDT", "kind": "trailing_stop", "price": "104.50000000", "quantity": "1.00000000"}
+    ]
     assert exchange.list_positions()[0]["quantity"] == "0.00000000"
     assert exchange.list_positions()[0]["realized_pnl"] == "4.50000000"
 
@@ -206,7 +218,9 @@ def test_trailing_stop_activation_waits_for_favorable_move_before_arming():
     assert before_activation == []
     assert activation_mark == []
     assert trailing_exit.trigger_price == Decimal("98.80")
-    assert pullback == [{"symbol": "BTC/USDT", "kind": "trailing_stop", "price": "98.80000000"}]
+    assert pullback == [
+        {"symbol": "BTC/USDT", "kind": "trailing_stop", "price": "98.80000000", "quantity": "1.00000000"}
+    ]
 
 
 def test_breakeven_trigger_raises_protective_stops_to_entry():
@@ -236,7 +250,75 @@ def test_breakeven_trigger_raises_protective_stops_to_entry():
     assert first == []
     assert stop_exit.trigger_price == Decimal("100.00")
     assert trailing_exit.trigger_price == Decimal("100.00")
-    assert second == [{"symbol": "BTC/USDT", "kind": "stop_loss", "price": "100.00000000"}]
+    assert second == [
+        {"symbol": "BTC/USDT", "kind": "stop_loss", "price": "100.00000000", "quantity": "1.00000000"}
+    ]
     assert exchange.list_positions() == []
     assert exchange.orders[-1].side == "sell"
     assert exchange.orders[-1].price == Decimal("100")
+
+
+def test_staged_take_profit_closes_partial_lot_and_keeps_protective_stop():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "scaled-entry",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_targets": [
+                {"pct": "5", "close_pct": "40"},
+                {"pct": "10", "close_pct": "60"},
+            ],
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    first = exchange.update_price("BTC/USDT", Decimal("105"))
+    after_first = exchange.list_positions()[0]
+    remaining_exits = list(exchange.lots[0].exit_orders)
+    second = exchange.update_price("BTC/USDT", Decimal("95"))
+
+    assert first == [
+        {"symbol": "BTC/USDT", "kind": "take_profit", "price": "105.00000000", "quantity": "0.40000000"}
+    ]
+    assert after_first["quantity"] == "0.60000000"
+    assert after_first["realized_pnl"] == "2.00000000"
+    assert any(exit_order.kind == "stop_loss" for exit_order in remaining_exits)
+    assert second == [
+        {"symbol": "BTC/USDT", "kind": "stop_loss", "price": "95.00000000", "quantity": "0.60000000"}
+    ]
+
+
+def test_staged_take_profit_fills_all_crossed_targets_on_one_price_mark():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "gap-through-stages",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_targets": [
+                {"pct": "5", "close_pct": "40"},
+                {"pct": "10", "close_pct": "60"},
+            ],
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    triggered = exchange.update_price("BTC/USDT", Decimal("110"))
+
+    assert triggered == [
+        {"symbol": "BTC/USDT", "kind": "take_profit", "price": "110.00000000", "quantity": "0.40000000"},
+        {"symbol": "BTC/USDT", "kind": "take_profit", "price": "110.00000000", "quantity": "0.60000000"},
+    ]
+    assert exchange.list_positions()[0]["quantity"] == "0.00000000"
+    assert exchange.list_positions()[0]["realized_pnl"] == "10.00000000"

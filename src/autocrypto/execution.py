@@ -14,12 +14,14 @@ MONEY = Decimal("0.01")
 class ExitOrder:
     kind: str
     trigger_price: Decimal
+    close_pct: Decimal = Decimal("100")
 
 
 @dataclass
 class PaperLot:
     signal_id: str
     symbol: str
+    original_quantity: Decimal
     remaining_quantity: Decimal
     entry_price: Decimal
     exit_orders: list[ExitOrder] = field(default_factory=list)
@@ -92,7 +94,11 @@ class PaperOrder:
             "price": str(self.price) if self.price is not None else None,
             "status": self.status,
             "exit_orders": [
-                {"kind": exit_order.kind, "trigger_price": str(exit_order.trigger_price)}
+                {
+                    "kind": exit_order.kind,
+                    "trigger_price": str(exit_order.trigger_price),
+                    "close_pct": str(exit_order.close_pct),
+                }
                 for exit_order in self.exit_orders
             ],
             "trailing_stop_pct": str(self.trailing_stop_pct) if self.trailing_stop_pct is not None else None,
@@ -194,26 +200,38 @@ class PaperExchange:
                 continue
             self._apply_breakeven(lot, price)
             self._update_trailing_stop(lot, price)
-            exit_order = self._triggered_exit(lot, price)
-            if exit_order is None:
-                continue
+            while lot.remaining_quantity > 0:
+                exit_order = self._triggered_exit(lot, price)
+                if exit_order is None:
+                    break
 
-            exit_quantity = lot.remaining_quantity
-            notional = exit_quantity * price
-            self._close_lot(lot, price)
-            order_number = len(self.orders) + 1
-            order = PaperOrder(
-                order_id=f"paper-exit-{_order_fragment(lot.signal_id)}-{order_number}",
-                signal_id=f"exit-{_order_fragment(lot.signal_id)}-{order_number}",
-                mode="paper",
-                exchange="paper",
-                symbol=symbol,
-                side="sell",
-                notional=notional,
-                price=price,
-            )
-            self.orders.append(order)
-            triggered.append({"symbol": symbol, "kind": exit_order.kind, "price": _fixed8(price)})
+                exit_quantity = self._exit_quantity(lot, exit_order)
+                notional = exit_quantity * price
+                self._close_lot(lot, price, exit_quantity)
+                if exit_order.kind == "take_profit" and lot.remaining_quantity > 0:
+                    lot.exit_orders = [order for order in lot.exit_orders if order is not exit_order]
+                order_number = len(self.orders) + 1
+                order = PaperOrder(
+                    order_id=f"paper-exit-{_order_fragment(lot.signal_id)}-{order_number}",
+                    signal_id=f"exit-{_order_fragment(lot.signal_id)}-{order_number}",
+                    mode="paper",
+                    exchange="paper",
+                    symbol=symbol,
+                    side="sell",
+                    notional=notional,
+                    price=price,
+                )
+                self.orders.append(order)
+                triggered.append(
+                    {
+                        "symbol": symbol,
+                        "kind": exit_order.kind,
+                        "price": _fixed8(price),
+                        "quantity": _fixed8(exit_quantity),
+                    }
+                )
+                if exit_order.kind != "take_profit":
+                    break
 
         self.lots = [lot for lot in self.lots if lot.remaining_quantity > 0]
         self._refresh_active_exits(symbol)
@@ -234,6 +252,7 @@ class PaperExchange:
                 PaperLot(
                     signal_id=signal.signal_id,
                     symbol=signal.symbol,
+                    original_quantity=quantity,
                     remaining_quantity=quantity,
                     entry_price=signal.price,
                     exit_orders=exit_orders,
@@ -261,6 +280,7 @@ class PaperExchange:
                 PaperLot(
                     signal_id=order.signal_id,
                     symbol=order.symbol,
+                    original_quantity=quantity,
                     remaining_quantity=quantity,
                     entry_price=order.price,
                     exit_orders=order.exit_orders,
@@ -327,12 +347,18 @@ class PaperExchange:
         ]
         lot.breakeven_applied = True
 
-    def _close_lot(self, lot: PaperLot, price: Decimal) -> None:
+    def _exit_quantity(self, lot: PaperLot, exit_order: ExitOrder) -> Decimal:
+        if exit_order.kind != "take_profit":
+            return lot.remaining_quantity
+        target_quantity = lot.original_quantity * exit_order.close_pct / Decimal("100")
+        return min(target_quantity, lot.remaining_quantity)
+
+    def _close_lot(self, lot: PaperLot, price: Decimal, quantity: Decimal | None = None) -> None:
         position = self.positions.get(lot.symbol)
         if position is None:
             lot.remaining_quantity = Decimal("0")
             return
-        exit_quantity = min(lot.remaining_quantity, position.quantity)
+        exit_quantity = min(quantity or lot.remaining_quantity, lot.remaining_quantity, position.quantity)
         position.realized_pnl += (price - lot.entry_price) * exit_quantity
         position.quantity -= exit_quantity
         lot.remaining_quantity -= exit_quantity
@@ -395,9 +421,16 @@ def build_exit_orders(signal: CryptoSignal) -> list[ExitOrder]:
     if signal.stop_loss_pct is not None:
         trigger = signal.price * (Decimal("1") - signal.stop_loss_pct / Decimal("100"))
         exits.append(ExitOrder(kind="stop_loss", trigger_price=_money(trigger)))
-    if signal.take_profit_pct is not None:
-        trigger = signal.price * (Decimal("1") + signal.take_profit_pct / Decimal("100"))
-        exits.append(ExitOrder(kind="take_profit", trigger_price=_money(trigger)))
+    if signal.take_profit_targets:
+        for target in signal.take_profit_targets:
+            trigger = signal.price * (Decimal("1") + target.pct / Decimal("100"))
+            exits.append(
+                ExitOrder(
+                    kind="take_profit",
+                    trigger_price=_money(trigger),
+                    close_pct=target.close_pct,
+                )
+            )
     if signal.trailing_stop_pct is not None:
         trigger = signal.price * (Decimal("1") - signal.trailing_stop_pct / Decimal("100"))
         exits.append(ExitOrder(kind="trailing_stop", trigger_price=_money(trigger)))
@@ -428,6 +461,12 @@ def _paper_order_from_dict(payload: dict) -> PaperOrder:
         price=Decimal(str(payload["price"])) if payload.get("price") is not None else None,
         exit_orders=[
             ExitOrder(kind=str(exit_order["kind"]), trigger_price=Decimal(str(exit_order["trigger_price"])))
+            if exit_order.get("close_pct") is None
+            else ExitOrder(
+                kind=str(exit_order["kind"]),
+                trigger_price=Decimal(str(exit_order["trigger_price"])),
+                close_pct=Decimal(str(exit_order["close_pct"])),
+            )
             for exit_order in payload.get("exit_orders", [])
         ],
         trailing_stop_pct=Decimal(str(payload["trailing_stop_pct"]))
