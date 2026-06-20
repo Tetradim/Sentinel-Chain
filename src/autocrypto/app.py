@@ -773,6 +773,7 @@ def _signal_to_dict(signal: CryptoSignal) -> dict[str, Any]:
             for target in signal.take_profit_targets
         ],
         "trailing_stop_pct": str(signal.trailing_stop_pct) if signal.trailing_stop_pct is not None else None,
+        "trailing_stop_price": str(signal.trailing_stop_price) if signal.trailing_stop_price is not None else None,
         "trailing_activation_pct": str(signal.trailing_activation_pct)
         if signal.trailing_activation_pct is not None
         else None,
@@ -934,6 +935,9 @@ def _active_exit_to_dict(lot: Any, exit_order: Any, *, mark_price: Decimal | Non
         "oca_group": exit_order.oca_group,
         "status": exit_order.status,
         "trailing_stop_pct": str(lot.trailing_stop_pct) if exit_order.kind == "trailing_stop" and lot.trailing_stop_pct else None,
+        "initial_trailing_stop_price": str(lot.trailing_stop_price)
+        if exit_order.kind == "trailing_stop" and lot.trailing_stop_price
+        else None,
         "trailing_activation_pct": str(lot.trailing_activation_pct)
         if exit_order.kind == "trailing_stop" and lot.trailing_activation_pct
         else None,

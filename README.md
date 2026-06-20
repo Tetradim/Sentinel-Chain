@@ -153,6 +153,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/webhooks/tradingview -
     {"trigger_price": "53000", "close_pct": "50"}
   ],
   "trailing_stop_pct": "2.5",
+  "trailing_stop_price": "48750",
   "trailing_activation_pct": "1.5",
   "breakeven_trigger_pct": "2",
   "strategy_id": "breakout"
@@ -174,7 +175,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/market/price -ContentT
 }'
 ```
 
-For buy brackets, `stop_loss_pct` creates a fixed protective sell below entry, `take_profit_pct` creates a fixed profit-taking sell above entry, and `trailing_stop_pct` creates a sell stop that starts below entry and ratchets upward when `POST /market/price` marks a new high-water price. Use `stop_loss_price` and `take_profit_price` when the alert source already calculated exact trigger prices. The trailing stop never moves lower. Add `trailing_activation_pct` to keep the trailing leg dormant until price has moved favorably by that percent, and add `breakeven_trigger_pct` to move protective stop exits up to the entry price after a favorable move.
+For buy brackets, `stop_loss_pct` creates a fixed protective sell below entry, `take_profit_pct` creates a fixed profit-taking sell above entry, and `trailing_stop_pct` creates a sell stop that starts below entry and ratchets upward when `POST /market/price` marks a new high-water price. Use `stop_loss_price`, `take_profit_price`, and `trailing_stop_price` when the alert source already calculated exact initial trigger prices. `trailing_stop_price` sets only the starting paper trigger; `trailing_stop_pct` is still required and controls the ratchet distance after favorable marks. The trailing stop never moves lower. Add `trailing_activation_pct` to keep the trailing leg dormant until price has moved favorably by that percent, and add `breakeven_trigger_pct` to move protective stop exits up to the entry price after a favorable move.
 
 For short brackets, send `side: "sell"` or `side: "short"` with at least one exit field such as `stop_loss_pct`, `stop_loss_price`, `take_profit_pct`, `take_profit_price`, or `trailing_stop_pct`. Paper stop-loss and trailing-stop triggers sit above entry, paper take-profit triggers sit below entry, and exit orders buy back paper quantity. Short trailing stops track a low-water price and ratchet downward only after favorable price movement; `trailing_activation_pct` delays arming until price falls by that percent. A plain `SELL` without bracket fields remains a manual long close. Send `side: "close_short"` or `reduce_only: true` with `side: "buy"` to buy back paper short quantity without opening a new paper long.
 
@@ -295,6 +296,7 @@ Recommended fields:
 - `take_profit_price` or `target_price`
 - `take_profit_targets` as a list of `{ "pct": "...", "close_pct": "..." }` or `{ "trigger_price": "...", "close_pct": "..." }` objects for staged exits
 - `trailing_stop_pct`
+- `trailing_stop_price` or `trail_price` to set the exact initial paper trailing trigger while `trailing_stop_pct` controls later ratchets
 - `trailing_activation_pct` or `trail_activation_pct`
 - `breakeven_trigger_pct`
 - `bracket`, `bracket_order`, or `exit_plan` object containing the same stop-loss, take-profit, trailing-stop, and break-even fields
@@ -321,6 +323,9 @@ Risk checks run before paper execution:
 - `max_stop_loss_pct_exceeded`
 - `max_trailing_stop_pct_exceeded`
 - `trailing_stop_required_for_activation`
+- `trailing_stop_pct_required_for_price`
+- `invalid_trailing_stop_price`
+- `price_required_for_trailing_stop_price`
 - `breakeven_requires_protective_exit`
 - `min_reward_risk_ratio_not_met`
 - `invalid_stop_loss_price`
@@ -355,6 +360,8 @@ Current bot work is guided by paper-first risk controls and exchange order behav
 - Coinbase describes derivatives TP/SL bracket exits as reduce-only orders, so Auto-Crypto marks synthetic paper bracket exits `reduce_only` even though no live exchange order is sent: <https://help.coinbase.com/coinbase/derivatives/bracket-orders>
 - CCXT's trailing-order FAQ calls out `reduceOnly` as an exchange-dependent way to close rather than open exposure; Auto-Crypto supports paper `reduce_only` and `close_short` intents while keeping live execution disabled: <https://docs.ccxt.com/docs/faq>
 - CCXT's order FAQ also recommends checking exchange feature flags for native take-profit and stop-loss support; this is why staged TP/SL simulation is recorded as paper behavior instead of assuming a portable live bracket implementation: <https://github.com/ccxt/ccxt/wiki/FAQ/9e4963a7b3438ba4fee47be1ec6922f4baf6684e>
+- CCXT describes trailing orders as exchange-dependent, sometimes usable with `reduceOnly`, and able to trail by percentage or quote amount, so Auto-Crypto accepts exact paper trail starts but keeps live execution gated until adapter support is explicit: <https://docs.ccxt.com/docs/faq>
+- Coinbase documents bracket and TP/SL behavior as paired exits where the triggered side executes and the other side cancels; exact `trailing_stop_price` remains paper-only because this venue behavior differs from portable trailing-order semantics: <https://help.coinbase.com/en/coinbase/trading-and-funding/advanced-trade/order-types>
 - Bot setting guidance consistently emphasizes stop loss, take profit, demo/paper testing, backtesting, and position sizing before live automation: <https://bitsgap.com/blog/how-to-choose-crypto-trading-bot-settings-in-2026-range-investment-stop-loss-and-take-profit>
 - Recent crypto-bot risk guidance highlights fixed-fraction sizing, commonly around 1-2% per trade, plus stop-loss and drawdown limits before live automation; Auto-Crypto's `risk_pct` sizing stays paper-only and can be capped with `AUTO_CRYPTO_MAX_RISK_PER_TRADE_PCT`: <https://cryptorobot.ai/blog/essential-tips-managing-risks-crypto-trading-bots>
 - Current crypto backtesting guidance emphasizes testing strategies on historical or simulated price paths before launch; Auto-Crypto's `/backtest/signal` endpoint applies that idea to bracket and trailing-stop paper logic without mutating active state: <https://bitsgap.com/blog/crypto-backtesting-guide-2025-tools-tips-and-how-bitsgap-helps>

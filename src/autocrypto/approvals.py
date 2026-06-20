@@ -49,6 +49,7 @@ def _summary(signal: CryptoSignal, *, created_at: str) -> dict:
             for target in signal.take_profit_targets
         ],
         "trailing_stop_pct": str(signal.trailing_stop_pct) if signal.trailing_stop_pct is not None else None,
+        "trailing_stop_price": str(signal.trailing_stop_price) if signal.trailing_stop_price is not None else None,
         "breakeven_trigger_pct": str(signal.breakeven_trigger_pct)
         if signal.breakeven_trigger_pct is not None
         else None,

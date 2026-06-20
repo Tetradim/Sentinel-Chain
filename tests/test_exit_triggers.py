@@ -225,6 +225,38 @@ def test_trailing_stop_ratcheted_up_then_triggers_on_pullback():
     assert exchange.list_positions()[0]["realized_pnl"] == "4.50000000"
 
 
+def test_exact_initial_trailing_stop_price_is_used_before_ratcheting():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "exact-trailing-entry",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "8",
+            "take_profit_pct": "20",
+            "trailing_stop_pct": "5",
+            "trailing_stop_price": "98.25",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    trailing_exit = next(exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "trailing_stop")
+    first = exchange.update_price("BTC/USDT", Decimal("101"))
+    ratcheted_exit = next(exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "trailing_stop")
+    second = exchange.update_price("BTC/USDT", Decimal("98.24"))
+
+    assert trailing_exit.trigger_price == Decimal("98.25")
+    assert first == []
+    assert ratcheted_exit.trigger_price == Decimal("98.25")
+    assert second == [
+        {"symbol": "BTC/USDT", "kind": "trailing_stop", "price": "98.24000000", "quantity": "1.00000000"}
+    ]
+
+
 def test_trailing_stop_activation_waits_for_favorable_move_before_arming():
     exchange = PaperExchange()
     engine = TradingEngine(exchange=exchange)

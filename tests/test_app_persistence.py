@@ -227,6 +227,33 @@ def test_app_replays_trailing_stop_amendment_after_restart(tmp_path):
     assert any(event.event_type == "bracket.trailing_stop_amended" for event in repo.list_audit())
 
 
+def test_app_replays_exact_initial_trailing_stop_price_after_restart(tmp_path):
+    db_path = tmp_path / "auto_crypto.sqlite3"
+    repo = SQLiteRepository(db_path)
+    app = create_app(repository=repo)
+    client = TestClient(app)
+    payload = {
+        "signal_id": "exact-trail-replay",
+        "symbol": "SOL/USDT",
+        "side": "buy",
+        "quote_amount": "100",
+        "price": "100",
+        "stop_loss_pct": "8",
+        "take_profit_pct": "20",
+        "trailing_stop_pct": "5",
+        "trailing_stop_price": "98.25",
+    }
+
+    accepted = client.post("/webhooks/tradingview", json=payload)
+    restarted = TestClient(create_app(repository=SQLiteRepository(db_path)))
+    bracket = restarted.get("/brackets/exact-trail-replay").json()
+    trailing_exit = next(exit_order for exit_order in bracket["active_exits"] if exit_order["kind"] == "trailing_stop")
+
+    assert accepted.json()["status"] == "accepted"
+    assert trailing_exit["trigger_price"] == "98.25"
+    assert trailing_exit["initial_trailing_stop_price"] == "98.25"
+
+
 def test_app_replays_breakeven_amendment_after_restart(tmp_path):
     db_path = tmp_path / "breakeven_amend_replay.sqlite3"
     first_client = TestClient(create_app(repository=SQLiteRepository(db_path)))

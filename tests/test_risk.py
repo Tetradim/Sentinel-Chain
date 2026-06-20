@@ -425,6 +425,40 @@ def test_risk_rejects_breakeven_without_protective_exit_to_move():
     assert "breakeven_requires_protective_exit" in decision.reason_codes
 
 
+def test_risk_rejects_invalid_or_incomplete_trailing_stop_price():
+    inverted = normalize_signal(
+        {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "trailing_stop_pct": "3",
+            "trailing_stop_price": "101",
+        },
+        source="test",
+    )
+    missing_pct = normalize_signal(
+        {
+            "symbol": "BTC/USDT",
+            "side": "sell",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "trailing_stop_price": "103",
+        },
+        source="test",
+    )
+
+    inverted_decision = evaluate_signal(inverted, RiskConfig(), AccountState())
+    missing_pct_decision = evaluate_signal(missing_pct, RiskConfig(), AccountState())
+
+    assert inverted_decision.approved is False
+    assert "invalid_trailing_stop_price" in inverted_decision.reason_codes
+    assert missing_pct_decision.approved is False
+    assert "trailing_stop_pct_required_for_price" in missing_pct_decision.reason_codes
+
+
 def test_risk_rejects_when_consecutive_loss_limit_is_reached():
     signal = normalize_signal(
         {

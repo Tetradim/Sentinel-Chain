@@ -57,9 +57,11 @@ def evaluate_signal(
     if signal.reduce_only:
         stop_loss_pct = None
         take_profit_pct = None
+        trailing_stop_pct = None
     else:
         stop_loss_pct = _stop_loss_pct(signal, reasons)
         take_profit_pct = _take_profit_pct(signal, reasons)
+        trailing_stop_pct = _trailing_stop_pct(signal, reasons)
         _validate_take_profit_targets(signal, reasons)
     order_notional = _order_notional(signal, reasons, account_state, stop_loss_pct)
     if config.require_stop_loss and opens_position and stop_loss_pct is None:
@@ -95,17 +97,19 @@ def evaluate_signal(
     if stop_loss_pct is not None and config.max_stop_loss_pct > 0 and stop_loss_pct > config.max_stop_loss_pct:
         reasons.append("max_stop_loss_pct_exceeded")
     if (
-        signal.trailing_stop_pct is not None
+        trailing_stop_pct is not None
         and config.max_trailing_stop_pct > 0
-        and signal.trailing_stop_pct > config.max_trailing_stop_pct
+        and trailing_stop_pct > config.max_trailing_stop_pct
     ):
         reasons.append("max_trailing_stop_pct_exceeded")
     if signal.trailing_activation_pct is not None and signal.trailing_stop_pct is None:
         reasons.append("trailing_stop_required_for_activation")
+    if signal.trailing_stop_price is not None and signal.trailing_stop_pct is None:
+        reasons.append("trailing_stop_pct_required_for_price")
     if (
         signal.breakeven_trigger_pct is not None
         and stop_loss_pct is None
-        and signal.trailing_stop_pct is None
+        and trailing_stop_pct is None
     ):
         reasons.append("breakeven_requires_protective_exit")
     if (
@@ -160,6 +164,7 @@ def _opens_position(signal: CryptoSignal) -> bool:
         or bool(signal.take_profit_targets)
         or signal.take_profit_price is not None
         or signal.trailing_stop_pct is not None
+        or signal.trailing_stop_price is not None
         or signal.breakeven_trigger_pct is not None
     )
 
@@ -203,6 +208,23 @@ def _take_profit_pct(signal: CryptoSignal, reasons: list[str]) -> Decimal | None
         reasons.append("invalid_take_profit_price")
         return None
     return (signal.price - target_price) / signal.price * Decimal("100")
+
+
+def _trailing_stop_pct(signal: CryptoSignal, reasons: list[str]) -> Decimal | None:
+    if signal.trailing_stop_price is None:
+        return signal.trailing_stop_pct
+    if signal.price is None:
+        reasons.append("price_required_for_trailing_stop_price")
+        return signal.trailing_stop_pct
+    if signal.side == "buy":
+        if signal.trailing_stop_price >= signal.price:
+            reasons.append("invalid_trailing_stop_price")
+            return signal.trailing_stop_pct
+        return (signal.price - signal.trailing_stop_price) / signal.price * Decimal("100")
+    if signal.trailing_stop_price <= signal.price:
+        reasons.append("invalid_trailing_stop_price")
+        return signal.trailing_stop_pct
+    return (signal.trailing_stop_price - signal.price) / signal.price * Decimal("100")
 
 
 def _validate_take_profit_targets(signal: CryptoSignal, reasons: list[str]) -> None:

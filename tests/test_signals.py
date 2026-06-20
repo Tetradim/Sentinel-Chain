@@ -112,8 +112,30 @@ def test_normalizes_nested_bracket_order_payload():
         (Decimal("10"), Decimal("60")),
     ]
     assert signal.trailing_stop_pct == Decimal("4")
+    assert signal.trailing_stop_price is None
     assert signal.trailing_activation_pct == Decimal("2")
     assert signal.breakeven_trigger_pct == Decimal("1.5")
+
+
+def test_normalizes_exact_initial_trailing_stop_price_from_nested_bracket():
+    signal = normalize_signal(
+        {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "bracket": {
+                "stop_loss_pct": "5",
+                "take_profit_pct": "10",
+                "trailing_stop_pct": "3",
+                "trailing_stop_price": "98.25",
+            },
+        },
+        source="test",
+    )
+
+    assert signal.trailing_stop_pct == Decimal("3")
+    assert signal.trailing_stop_price == Decimal("98.25")
 
 
 @pytest.mark.parametrize(
