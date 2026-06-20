@@ -44,6 +44,10 @@ def test_order_planner_keeps_paper_bracket_synthetic_and_not_live_safe():
     assert plan.live_order_safe is False
     assert [exit_leg.role for exit_leg in plan.exits] == ["stop_loss", "take_profit", "trailing_stop"]
     assert [exit_leg.side for exit_leg in plan.exits] == ["sell", "sell", "sell"]
+    assert [exit_leg.intent for exit_leg in plan.exits] == ["protective_exit", "profit_exit", "protective_exit"]
+    assert plan.summary["protective_exit_count"] == 2
+    assert plan.summary["take_profit_close_pct"] == "100"
+    assert plan.summary["trailing_stop_close_pct"] == "100"
 
 
 def test_order_planner_uses_attached_strategy_when_venue_advertises_brackets_and_trailing():
@@ -83,6 +87,8 @@ def test_order_planner_uses_attached_strategy_when_venue_advertises_brackets_and
     assert plan.exits[0].side == "buy"
     assert plan.exits[0].reduce_only is True
     assert plan.exits[0].params["reduceOnly"] is True
+    assert plan.exits[2].params["trailing"]["callbackAmount"] == "3"
+    assert plan.exits[2].activation_status == "open"
 
 
 def test_order_planner_requires_paper_when_native_trailing_is_not_advertised():
@@ -123,6 +129,51 @@ def test_order_planner_requires_paper_when_native_trailing_is_not_advertised():
     assert "native_bracket_not_advertised" in plan.warnings
 
 
+def test_order_planner_marks_pending_and_partial_trailing_stop_metadata():
+    signal = normalize_signal(
+        {
+            "signal_id": "pending-partial-plan",
+            "symbol": "SOL/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+            "trailing_stop_pct": "3",
+            "trailing_stop_close_pct": "40",
+            "trailing_activation_pct": "2",
+            "trailing_step_pct": "0.5",
+        },
+        source="test",
+    )
+    capabilities = ExchangeCapabilities(
+        exchange_id="paper",
+        spot=True,
+        margin=False,
+        swap=False,
+        future=False,
+        option=False,
+        create_order=True,
+        cancel_order=False,
+        fetch_balance=False,
+        attached_stop_loss_take_profit=True,
+        oco_order=True,
+        trailing_order=True,
+        reduce_only=True,
+    )
+
+    plan = plan_bracket_execution(signal, capabilities)
+    trailing = plan.exits[2]
+
+    assert trailing.activation_status == "pending_activation"
+    assert trailing.partial_close is True
+    assert trailing.params["trailing"]["activationPct"] == "2"
+    assert trailing.params["trailing"]["stepPct"] == "0.5"
+    assert "trailing_stop_starts_pending_activation" in plan.warnings
+    assert plan.summary["pending_trailing_stop_count"] == 1
+    assert plan.summary["has_partial_trailing_exit"] is True
+
+
 def test_signal_exchange_plan_endpoint_returns_non_executing_paper_plan():
     client = TestClient(create_app())
 
@@ -146,3 +197,5 @@ def test_signal_exchange_plan_endpoint_returns_non_executing_paper_plan():
     assert body["plan"]["strategy"] == "paper_synthetic_bracket"
     assert body["plan"]["live_order_safe"] is False
     assert body["plan"]["exits"][0]["trigger_price"] == str(Decimal("49000.00"))
+    assert body["plan"]["exits"][0]["intent"] == "protective_exit"
+    assert body["plan"]["summary"]["protective_exit_count"] == 2
