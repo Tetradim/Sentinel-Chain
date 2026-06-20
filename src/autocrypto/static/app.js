@@ -704,6 +704,9 @@ function renderPortfolio() {
     exits.length > 0
       ? exits.map((exit) => {
         const compact = compactSymbol(exit.symbol);
+        const trailingAction = exit.kind === "trailing_stop"
+          ? `<button type="button" data-action="amend-bracket-trailing-stop" data-signal-id="${escapeHtml(exit.signal_id)}" data-price="${escapeHtml(exit.trigger_price)}">Tighten Trail</button>`
+          : "";
         return `
           <tr>
             <td>${escapeHtml(exit.symbol)}</td>
@@ -718,6 +721,7 @@ function renderPortfolio() {
                 <button type="button" data-action="preview-bracket" data-signal-id="${escapeHtml(exit.signal_id)}" data-price="${escapeHtml(exit.trigger_price)}">Preview</button>
                 <button type="button" data-action="trigger-exit-price" data-symbol="${escapeHtml(compact)}" data-price="${escapeHtml(exit.trigger_price)}">Trigger</button>
                 <button type="button" data-action="amend-bracket-stop" data-signal-id="${escapeHtml(exit.signal_id)}" data-price="${escapeHtml(exit.trigger_price)}">Tighten Stop</button>
+                ${trailingAction}
                 <button type="button" data-action="cancel-bracket" data-signal-id="${escapeHtml(exit.signal_id)}">Cancel Bracket</button>
               </div>
             </td>
@@ -1112,6 +1116,21 @@ async function amendBracketStop(signalId, currentPrice) {
   });
   appState.lastPayload = result;
   setStatus(`Tightened ${signalId} stop to ${triggerPrice}.`, "ok");
+  await loadState(false);
+}
+
+async function amendBracketTrailingStop(signalId, currentPrice) {
+  const triggerPrice = window.prompt("New trailing stop trigger price", currentPrice || "");
+  if (!triggerPrice) {
+    setStatus("Trailing stop amendment canceled.", "warn");
+    return;
+  }
+  const result = await api(`/brackets/${encodeURIComponent(signalId)}/trailing-stop`, {
+    method: "POST",
+    body: { trigger_price: triggerPrice, reason: "operator UI trailing stop tighten" },
+  });
+  appState.lastPayload = result;
+  setStatus(`Tightened ${signalId} trailing stop to ${triggerPrice}.`, "ok");
   await loadState(false);
 }
 
@@ -1757,6 +1776,10 @@ function bindEvents() {
     }
     if (action === "amend-bracket-stop") {
       amendBracketStop(target.dataset.signalId, target.dataset.price)
+        .catch((error) => setStatus(error.message, "error"));
+    }
+    if (action === "amend-bracket-trailing-stop") {
+      amendBracketTrailingStop(target.dataset.signalId, target.dataset.price)
         .catch((error) => setStatus(error.message, "error"));
     }
     if (action === "cancel-bracket") {

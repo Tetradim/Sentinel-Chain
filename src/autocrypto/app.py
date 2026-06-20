@@ -422,6 +422,47 @@ def create_app(
             "account": _account_state_to_dict(engine.account_state),
         }
 
+    @app.post("/brackets/{signal_id}/trailing-stop")
+    async def amend_bracket_trailing_stop(signal_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        try:
+            trigger_price = _positive_decimal(payload.get("trigger_price") or payload.get("trailing_stop_price"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        reason = str(payload.get("reason") or "manual trailing stop amend")
+        order = engine.exchange.amend_bracket_trailing_stop(signal_id, trigger_price, reason=reason)
+        if order is None:
+            raise HTTPException(status_code=409, detail="active trailing stop not found or amendment would loosen risk")
+        engine.account_state.open_notional = engine.exchange.open_notional()
+        if repository:
+            repository.save_order(order)
+            repository.record_audit(
+                "bracket.trailing_stop_amended",
+                {
+                    "signal_id": signal_id,
+                    "reason": reason,
+                    "trigger_price": str(trigger_price),
+                    "exit_orders": [
+                        {
+                            "kind": exit_order.kind,
+                            "trigger_price": str(exit_order.trigger_price),
+                            "close_pct": str(exit_order.close_pct),
+                            "oca_group": exit_order.oca_group,
+                            "status": exit_order.status,
+                        }
+                        for exit_order in order.exit_orders
+                    ],
+                },
+            )
+        return {
+            "status": "amended",
+            "signal_id": signal_id,
+            "order": order.to_dict(),
+            "active_exits": _active_exits_to_dict(engine.exchange.lots, signal_id=signal_id),
+            "positions": engine.exchange.list_positions(),
+            "account": _account_state_to_dict(engine.account_state),
+        }
+
     @app.post("/brackets/{signal_id}/cancel")
     async def cancel_bracket(signal_id: str, request: Request) -> dict[str, Any]:
         payload = await request.json()

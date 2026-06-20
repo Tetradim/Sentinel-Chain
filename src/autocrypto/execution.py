@@ -381,6 +381,49 @@ class PaperExchange:
         self._refresh_active_exits(first_lot.symbol)
         return order
 
+    def amend_bracket_trailing_stop(
+        self,
+        signal_id: str,
+        trigger_price: Decimal,
+        *,
+        reason: str = "",
+    ) -> PaperOrder | None:
+        """Move a paper trailing stop trigger in the protective direction only."""
+        target_lots = [
+            lot
+            for lot in self.lots
+            if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
+        ]
+        if not target_lots:
+            return None
+
+        amended_trails: list[ExitOrder] = []
+        for lot in target_lots:
+            amended_trail = _protective_trailing_amendment(lot, _money(trigger_price))
+            if amended_trail is None:
+                return None
+            lot.exit_orders = _replace_or_append_trailing_stop(lot.exit_orders, amended_trail)
+            _sync_trailing_water_mark(lot, amended_trail.trigger_price)
+            amended_trails.append(amended_trail)
+
+        first_lot = target_lots[0]
+        order = PaperOrder(
+            order_id=f"paper-amend-trail-{_order_fragment(signal_id)}-{len(self.orders) + 1}",
+            signal_id=signal_id,
+            mode="paper",
+            exchange="paper",
+            symbol=first_lot.symbol,
+            side="amend",
+            notional=Decimal("0"),
+            price=_money(trigger_price),
+            exit_orders=amended_trails,
+            exit_kind="bracket_trailing_stop_amend",
+            status="amended",
+        )
+        self.orders.append(order)
+        self._refresh_active_exits(first_lot.symbol)
+        return order
+
     def _fill_quantity(self, signal: CryptoSignal, notional: Decimal) -> Decimal:
         if signal.price is None:
             return Decimal("0")
@@ -444,6 +487,9 @@ class PaperExchange:
             return
         if order.exit_kind == "bracket_stop_amend":
             self._replay_bracket_stop_amend(order)
+            return
+        if order.exit_kind == "bracket_trailing_stop_amend":
+            self._replay_bracket_trailing_stop_amend(order)
             return
         if order.price is None:
             return
@@ -511,6 +557,17 @@ class PaperExchange:
                 amended_stop = _protective_stop_amendment(lot, order.exit_orders[0].trigger_price)
                 if amended_stop is not None:
                     lot.exit_orders = _replace_or_append_stop(lot.exit_orders, amended_stop)
+        self._refresh_active_exits(order.symbol)
+
+    def _replay_bracket_trailing_stop_amend(self, order: PaperOrder) -> None:
+        if not order.exit_orders:
+            return
+        for lot in self.lots:
+            if lot.signal_id == order.signal_id and lot.remaining_quantity > 0:
+                amended_trail = _protective_trailing_amendment(lot, order.exit_orders[0].trigger_price)
+                if amended_trail is not None:
+                    lot.exit_orders = _replace_or_append_trailing_stop(lot.exit_orders, amended_trail)
+                    _sync_trailing_water_mark(lot, amended_trail.trigger_price)
         self._refresh_active_exits(order.symbol)
 
     def _triggered_exit(self, lot: PaperLot, price: Decimal) -> ExitOrder | None:
@@ -814,6 +871,49 @@ def _replace_or_append_stop(exit_orders: list[ExitOrder], amended_stop: ExitOrde
     if not replaced:
         updated.insert(0, amended_stop)
     return updated
+
+
+def _protective_trailing_amendment(lot: PaperLot, trigger_price: Decimal) -> ExitOrder | None:
+    existing_trail = next((exit_order for exit_order in lot.exit_orders if exit_order.kind == "trailing_stop"), None)
+    if existing_trail is None:
+        return None
+    if lot.direction == "long" and trigger_price <= existing_trail.trigger_price:
+        return None
+    if lot.direction == "short" and trigger_price >= existing_trail.trigger_price:
+        return None
+    return ExitOrder(
+        kind="trailing_stop",
+        trigger_price=trigger_price,
+        close_pct=existing_trail.close_pct,
+        oca_group=existing_trail.oca_group,
+        status="open",
+    )
+
+
+def _replace_or_append_trailing_stop(exit_orders: list[ExitOrder], amended_trail: ExitOrder) -> list[ExitOrder]:
+    replaced = False
+    updated: list[ExitOrder] = []
+    for exit_order in exit_orders:
+        if exit_order.kind == "trailing_stop":
+            updated.append(amended_trail)
+            replaced = True
+        else:
+            updated.append(exit_order)
+    if not replaced:
+        updated.append(amended_trail)
+    return updated
+
+
+def _sync_trailing_water_mark(lot: PaperLot, trigger_price: Decimal) -> None:
+    lot.trailing_activated = True
+    if lot.trailing_stop_pct is None:
+        return
+    if lot.direction == "long":
+        implied_high = trigger_price / (Decimal("1") - lot.trailing_stop_pct / Decimal("100"))
+        lot.high_water_mark = max(lot.high_water_mark or lot.entry_price, implied_high)
+        return
+    implied_low = trigger_price / (Decimal("1") + lot.trailing_stop_pct / Decimal("100"))
+    lot.low_water_mark = min(lot.low_water_mark or lot.entry_price, implied_low)
 
 
 def _filled_exit(exit_order: ExitOrder) -> ExitOrder:

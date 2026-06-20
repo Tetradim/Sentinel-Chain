@@ -629,6 +629,74 @@ def test_short_trailing_stop_ratcheted_down_then_triggers_on_bounce():
     assert exchange.orders[-1].reduce_only is True
 
 
+def test_amend_long_trailing_stop_tightens_and_arms_pending_trail():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "tighten-long-trail",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "10",
+            "take_profit_pct": "30",
+            "trailing_stop_pct": "5",
+            "trailing_activation_pct": "4",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    loosened = exchange.amend_bracket_trailing_stop("tighten-long-trail", Decimal("94"))
+    amended = exchange.amend_bracket_trailing_stop("tighten-long-trail", Decimal("98"))
+    trailing_exit = next(exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "trailing_stop")
+    trailing_activated = exchange.lots[0].trailing_activated
+    triggered = exchange.update_price("BTC/USDT", Decimal("98"))
+
+    assert loosened is None
+    assert amended is not None
+    assert amended.exit_kind == "bracket_trailing_stop_amend"
+    assert amended.status == "amended"
+    assert trailing_exit.status == "open"
+    assert trailing_exit.trigger_price == Decimal("98.00")
+    assert trailing_activated is True
+    assert triggered == [
+        {"symbol": "BTC/USDT", "kind": "trailing_stop", "price": "98.00000000", "quantity": "1.00000000"}
+    ]
+
+
+def test_amend_short_trailing_stop_tightens_downward():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "tighten-short-trail",
+            "symbol": "ETH/USDT",
+            "side": "sell",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "10",
+            "take_profit_pct": "30",
+            "trailing_stop_pct": "5",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    loosened = exchange.amend_bracket_trailing_stop("tighten-short-trail", Decimal("106"))
+    amended = exchange.amend_bracket_trailing_stop("tighten-short-trail", Decimal("102"))
+    trailing_exit = next(exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "trailing_stop")
+    triggered = exchange.update_price("ETH/USDT", Decimal("102"))
+
+    assert loosened is None
+    assert amended is not None
+    assert trailing_exit.trigger_price == Decimal("102.00")
+    assert triggered == [
+        {"symbol": "ETH/USDT", "kind": "trailing_stop", "price": "102.00000000", "quantity": "1.00000000"}
+    ]
+
+
 def test_short_open_notional_counts_against_exposure_cap():
     exchange = PaperExchange()
     engine = TradingEngine(exchange=exchange)

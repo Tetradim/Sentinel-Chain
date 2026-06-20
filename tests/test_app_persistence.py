@@ -183,3 +183,45 @@ def test_app_replays_bracket_stop_amendment_after_restart(tmp_path):
     assert triggered.json()["triggered"] == [
         {"symbol": "SOL/USDT", "kind": "stop_loss", "price": "99.00000000", "quantity": "1.00000000"}
     ]
+
+
+def test_app_replays_trailing_stop_amendment_after_restart(tmp_path):
+    db_path = tmp_path / "trailing_amend_replay.sqlite3"
+    first_client = TestClient(create_app(repository=SQLiteRepository(db_path)))
+    first_client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "replay-trail-amend",
+            "symbol": "SOLUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+            "trailing_stop_pct": "4",
+            "trailing_activation_pct": "3",
+        },
+    )
+    amended = first_client.post(
+        "/brackets/replay-trail-amend/trailing-stop",
+        json={"trigger_price": "99", "reason": "operator tightened trail"},
+    )
+    loosened = first_client.post("/brackets/replay-trail-amend/trailing-stop", json={"trigger_price": "98"})
+
+    second_client = TestClient(create_app(repository=SQLiteRepository(db_path)))
+    bracket = second_client.get("/brackets/replay-trail-amend").json()
+    trailing_exit = next(exit_order for exit_order in bracket["active_exits"] if exit_order["kind"] == "trailing_stop")
+    triggered = second_client.post("/market/price", json={"symbol": "SOLUSDT", "price": "99"})
+    repo = SQLiteRepository(db_path)
+
+    assert amended.status_code == 200
+    assert amended.json()["order"]["exit_kind"] == "bracket_trailing_stop_amend"
+    assert loosened.status_code == 409
+    assert trailing_exit["trigger_price"] == "99.00"
+    assert trailing_exit["status"] == "open"
+    assert trailing_exit["trailing_activated"] == "true"
+    assert triggered.json()["triggered"] == [
+        {"symbol": "SOL/USDT", "kind": "trailing_stop", "price": "99.00000000", "quantity": "1.00000000"}
+    ]
+    assert repo.list_orders()[-1]["exit_kind"] == "trailing_stop"
+    assert any(event.event_type == "bracket.trailing_stop_amended" for event in repo.list_audit())
