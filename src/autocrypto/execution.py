@@ -325,6 +325,42 @@ class PaperExchange:
         self._refresh_active_exits(first_lot.symbol)
         return order
 
+    def amend_bracket_stop(self, signal_id: str, trigger_price: Decimal, *, reason: str = "") -> PaperOrder | None:
+        """Move a paper bracket stop in the protective direction only."""
+        target_lots = [
+            lot
+            for lot in self.lots
+            if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
+        ]
+        if not target_lots:
+            return None
+
+        amended_stops: list[ExitOrder] = []
+        for lot in target_lots:
+            amended_stop = _protective_stop_amendment(lot, _money(trigger_price))
+            if amended_stop is None:
+                return None
+            lot.exit_orders = _replace_or_append_stop(lot.exit_orders, amended_stop)
+            amended_stops.append(amended_stop)
+
+        first_lot = target_lots[0]
+        order = PaperOrder(
+            order_id=f"paper-amend-{_order_fragment(signal_id)}-{len(self.orders) + 1}",
+            signal_id=signal_id,
+            mode="paper",
+            exchange="paper",
+            symbol=first_lot.symbol,
+            side="amend",
+            notional=Decimal("0"),
+            price=_money(trigger_price),
+            exit_orders=amended_stops,
+            exit_kind="bracket_stop_amend",
+            status="amended",
+        )
+        self.orders.append(order)
+        self._refresh_active_exits(first_lot.symbol)
+        return order
+
     def _fill_quantity(self, signal: CryptoSignal, notional: Decimal) -> Decimal:
         if signal.price is None:
             return Decimal("0")
@@ -386,6 +422,9 @@ class PaperExchange:
         if order.exit_kind == "bracket_cancel":
             self._replay_bracket_cancel(order)
             return
+        if order.exit_kind == "bracket_stop_amend":
+            self._replay_bracket_stop_amend(order)
+            return
         if order.price is None:
             return
         quantity = order.notional / order.price
@@ -442,6 +481,16 @@ class PaperExchange:
         for lot in self.lots:
             if lot.signal_id == order.signal_id and lot.remaining_quantity > 0:
                 lot.exit_orders = []
+        self._refresh_active_exits(order.symbol)
+
+    def _replay_bracket_stop_amend(self, order: PaperOrder) -> None:
+        if not order.exit_orders:
+            return
+        for lot in self.lots:
+            if lot.signal_id == order.signal_id and lot.remaining_quantity > 0:
+                amended_stop = _protective_stop_amendment(lot, order.exit_orders[0].trigger_price)
+                if amended_stop is not None:
+                    lot.exit_orders = _replace_or_append_stop(lot.exit_orders, amended_stop)
         self._refresh_active_exits(order.symbol)
 
     def _triggered_exit(self, lot: PaperLot, price: Decimal) -> ExitOrder | None:
@@ -716,6 +765,34 @@ def _has_exit_plan(signal: CryptoSignal) -> bool:
         or signal.trailing_stop_pct is not None
         or signal.breakeven_trigger_pct is not None
     )
+
+
+def _protective_stop_amendment(lot: PaperLot, trigger_price: Decimal) -> ExitOrder | None:
+    existing_stop = next((exit_order for exit_order in lot.exit_orders if exit_order.kind == "stop_loss"), None)
+    if existing_stop is not None:
+        if lot.direction == "long" and trigger_price <= existing_stop.trigger_price:
+            return None
+        if lot.direction == "short" and trigger_price >= existing_stop.trigger_price:
+            return None
+        oca_group = existing_stop.oca_group
+    else:
+        first_exit = lot.exit_orders[0] if lot.exit_orders else None
+        oca_group = first_exit.oca_group if first_exit else f"oca-{_order_fragment(lot.signal_id)}"
+    return ExitOrder(kind="stop_loss", trigger_price=trigger_price, oca_group=oca_group)
+
+
+def _replace_or_append_stop(exit_orders: list[ExitOrder], amended_stop: ExitOrder) -> list[ExitOrder]:
+    replaced = False
+    updated: list[ExitOrder] = []
+    for exit_order in exit_orders:
+        if exit_order.kind == "stop_loss":
+            updated.append(amended_stop)
+            replaced = True
+        else:
+            updated.append(exit_order)
+    if not replaced:
+        updated.insert(0, amended_stop)
+    return updated
 
 
 def _money(value: Decimal) -> Decimal:

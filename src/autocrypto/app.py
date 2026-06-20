@@ -344,12 +344,57 @@ def create_app(
             "positions": engine.exchange.list_positions(),
         }
 
+    @app.get("/brackets")
+    def list_brackets() -> dict[str, Any]:
+        return {"brackets": _active_brackets_to_dict(engine.exchange.lots)}
+
     @app.get("/brackets/{signal_id}")
     def bracket_status(signal_id: str) -> dict[str, Any]:
         exits = _active_exits_to_dict(engine.exchange.lots, signal_id=signal_id)
         if not exits:
             raise HTTPException(status_code=404, detail="active bracket not found")
         return {"signal_id": signal_id, "active_exits": exits}
+
+    @app.post("/brackets/{signal_id}/stop")
+    async def amend_bracket_stop(signal_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        try:
+            trigger_price = _positive_decimal(payload.get("trigger_price") or payload.get("stop_loss_price"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        reason = str(payload.get("reason") or "manual protective stop amend")
+        order = engine.exchange.amend_bracket_stop(signal_id, trigger_price, reason=reason)
+        if order is None:
+            raise HTTPException(status_code=409, detail="active bracket not found or stop would loosen risk")
+        engine.account_state.open_notional = engine.exchange.open_notional()
+        if repository:
+            repository.save_order(order)
+            repository.record_audit(
+                "bracket.stop_amended",
+                {
+                    "signal_id": signal_id,
+                    "reason": reason,
+                    "trigger_price": str(trigger_price),
+                    "exit_orders": [
+                        {
+                            "kind": exit_order.kind,
+                            "trigger_price": str(exit_order.trigger_price),
+                            "close_pct": str(exit_order.close_pct),
+                            "oca_group": exit_order.oca_group,
+                            "status": exit_order.status,
+                        }
+                        for exit_order in order.exit_orders
+                    ],
+                },
+            )
+        return {
+            "status": "amended",
+            "signal_id": signal_id,
+            "order": order.to_dict(),
+            "active_exits": _active_exits_to_dict(engine.exchange.lots, signal_id=signal_id),
+            "positions": engine.exchange.list_positions(),
+            "account": _account_state_to_dict(engine.account_state),
+        }
 
     @app.post("/brackets/{signal_id}/cancel")
     async def cancel_bracket(signal_id: str, request: Request) -> dict[str, Any]:
@@ -677,3 +722,21 @@ def _active_exits_to_dict(lots: list[Any], *, signal_id: str | None = None) -> l
         if lot.remaining_quantity > 0 and (signal_id is None or lot.signal_id == signal_id)
         for exit_order in lot.exit_orders
     ]
+
+
+def _active_brackets_to_dict(lots: list[Any]) -> list[dict[str, Any]]:
+    brackets: list[dict[str, Any]] = []
+    for lot in sorted(lots, key=lambda item: (item.symbol, item.signal_id)):
+        if lot.remaining_quantity <= 0 or not lot.exit_orders:
+            continue
+        brackets.append(
+            {
+                "signal_id": lot.signal_id,
+                "symbol": lot.symbol,
+                "direction": lot.direction,
+                "remaining_quantity": str(lot.remaining_quantity),
+                "entry_price": str(lot.entry_price),
+                "exits": _active_exits_to_dict([lot], signal_id=lot.signal_id),
+            }
+        )
+    return brackets

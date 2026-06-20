@@ -121,3 +121,62 @@ def test_app_rehydrates_open_notional_for_risk_after_restart(tmp_path):
 
     assert response.json()["status"] == "rejected"
     assert "max_open_notional_exceeded" in response.json()["risk"]["reason_codes"]
+
+
+def test_app_lists_and_amends_bracket_stop_with_audit(tmp_path):
+    repo = SQLiteRepository(tmp_path / "bracket_amend.sqlite3")
+    client = TestClient(create_app(repository=repo))
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "api-stop-amend",
+            "symbol": "SOLUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+        },
+    )
+
+    listed = client.get("/brackets").json()["brackets"]
+    amended = client.post(
+        "/brackets/api-stop-amend/stop",
+        json={"trigger_price": "99", "reason": "trail manual support"},
+    )
+    loosened = client.post("/brackets/api-stop-amend/stop", json={"trigger_price": "94"})
+
+    assert listed[0]["signal_id"] == "api-stop-amend"
+    assert amended.status_code == 200
+    assert amended.json()["status"] == "amended"
+    assert amended.json()["active_exits"][0]["trigger_price"] == "99.00"
+    assert loosened.status_code == 409
+    assert repo.list_orders()[-1]["exit_kind"] == "bracket_stop_amend"
+    assert repo.list_audit()[-1].event_type == "bracket.stop_amended"
+
+
+def test_app_replays_bracket_stop_amendment_after_restart(tmp_path):
+    db_path = tmp_path / "bracket_amend_replay.sqlite3"
+    first_client = TestClient(create_app(repository=SQLiteRepository(db_path)))
+    first_client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "replay-stop-amend",
+            "symbol": "SOLUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+        },
+    )
+    first_client.post("/brackets/replay-stop-amend/stop", json={"trigger_price": "99"})
+
+    second_client = TestClient(create_app(repository=SQLiteRepository(db_path)))
+    bracket = second_client.get("/brackets/replay-stop-amend").json()
+    triggered = second_client.post("/market/price", json={"symbol": "SOLUSDT", "price": "99"})
+
+    assert bracket["active_exits"][0]["trigger_price"] == "99.00"
+    assert triggered.json()["triggered"] == [
+        {"symbol": "SOL/USDT", "kind": "stop_loss", "price": "99.00000000", "quantity": "1.00000000"}
+    ]
