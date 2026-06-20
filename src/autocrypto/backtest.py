@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from .engine import TradingEngine
+from .execution import ExecutionCostConfig, PaperExchange
 from .risk import AccountState
 from .signals import CryptoSignal
 
@@ -30,6 +31,8 @@ class BacktestSummary:
     final_open_notional: Decimal
     final_positions: list[dict]
     total_triggers: int
+    fee_bps: Decimal = Decimal("0")
+    slippage_bps: Decimal = Decimal("0")
 
     def to_dict(self) -> dict:
         return {
@@ -53,18 +56,30 @@ class BacktestSummary:
             "final_open_notional": str(self.final_open_notional),
             "final_positions": self.final_positions,
             "total_triggers": self.total_triggers,
+            "costs": {
+                "fee_bps": str(self.fee_bps),
+                "slippage_bps": str(self.slippage_bps),
+            },
         }
 
 
-def run_signal_backtest(engine: TradingEngine, signal: CryptoSignal, prices: list[Decimal]) -> BacktestSummary:
+def run_signal_backtest(
+    engine: TradingEngine,
+    signal: CryptoSignal,
+    prices: list[Decimal],
+    *,
+    costs: ExecutionCostConfig | None = None,
+) -> BacktestSummary:
     """Replay one normalized signal and a mark-price path against an isolated paper engine."""
-    return _run_backtest_path(engine, signal, [(None, [price]) for price in prices])
+    return _run_backtest_path(engine, signal, [(None, [price]) for price in prices], costs=costs)
 
 
 def run_signal_candle_backtest(
     engine: TradingEngine,
     signal: CryptoSignal,
     candles: list[dict[str, Decimal]],
+    *,
+    costs: ExecutionCostConfig | None = None,
 ) -> BacktestSummary:
     """Replay OHLC ranges with adverse-first intrabar sequencing.
 
@@ -79,15 +94,19 @@ def run_signal_candle_backtest(
         else:
             prices = [candle["high"], candle["low"], candle["close"]]
         path.append((label, prices))
-    return _run_backtest_path(engine, signal, path)
+    return _run_backtest_path(engine, signal, path, costs=costs)
 
 
 def _run_backtest_path(
     engine: TradingEngine,
     signal: CryptoSignal,
     path: list[tuple[str | None, list[Decimal]]],
+    *,
+    costs: ExecutionCostConfig | None,
 ) -> BacktestSummary:
+    costs = costs or ExecutionCostConfig()
     sandbox = TradingEngine(
+        exchange=PaperExchange(costs=costs),
         risk_config=engine.risk_config,
         account_state=AccountState(
             equity=engine.account_state.equity,
@@ -133,6 +152,8 @@ def _run_backtest_path(
         final_open_notional=sandbox.account_state.open_notional,
         final_positions=sandbox.exchange.list_positions(),
         total_triggers=sum(len(mark.triggered) for mark in marks),
+        fee_bps=costs.fee_bps,
+        slippage_bps=costs.slippage_bps,
     )
 
 

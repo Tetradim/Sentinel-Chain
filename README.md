@@ -31,6 +31,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Previews server-side risk decisions from the operator UI without placing orders
 - Backtests one signal against a supplied paper mark-price path and returns active exit snapshots after each mark without mutating the live in-memory engine
 - Backtests one signal against OHLC candles with conservative adverse-first intrabar sequencing, plus MFE/MAE excursion metrics, without mutating active state
+- Backtests can opt into paper fee and slippage assumptions so bracket/trailing-stop results are not limited to clean mark-price fills
 - Shows persisted signal history with one-click reload into the Trading Desk
 - Supports quote-notional and base-quantity ticket sizing, paper position close controls, bracket lot context, bracket previews, stop tightening, breakeven locks, bracket cancellation, trigger tests, and local unrealized P&L marks in the operator UI
 - Captures inline halt and approval rejection reasons in operator workflows
@@ -365,6 +366,7 @@ Current bot work is guided by paper-first risk controls and exchange order behav
 - Bot setting guidance consistently emphasizes stop loss, take profit, demo/paper testing, backtesting, and position sizing before live automation: <https://bitsgap.com/blog/how-to-choose-crypto-trading-bot-settings-in-2026-range-investment-stop-loss-and-take-profit>
 - Recent crypto-bot risk guidance highlights fixed-fraction sizing, commonly around 1-2% per trade, plus stop-loss and drawdown limits before live automation; Auto-Crypto's `risk_pct` sizing stays paper-only and can be capped with `AUTO_CRYPTO_MAX_RISK_PER_TRADE_PCT`: <https://cryptorobot.ai/blog/essential-tips-managing-risks-crypto-trading-bots>
 - Current crypto backtesting guidance emphasizes testing strategies on historical or simulated price paths before launch; Auto-Crypto's `/backtest/signal` endpoint applies that idea to bracket and trailing-stop paper logic without mutating active state: <https://bitsgap.com/blog/crypto-backtesting-guide-2025-tools-tips-and-how-bitsgap-helps>
+- Current crypto-bot backtesting guidance warns that clean historical fills can hide slippage, fees, latency, and stressed-market liquidity; Auto-Crypto's backtest-only `fee_bps` and `slippage_bps` inputs make those assumptions explicit while keeping live execution disabled: <https://bitsgap.com/blog/crypto-bot-backtesting-in-2026-what-it-shows-and-what-it-cannot-predict>
 - Interactive Brokers' current walk-forward analysis guidance describes rolling in-sample/out-of-sample testing as a closer simulation of real trading conditions than one fixed historical backtest, which is why Auto-Crypto now supports labeled candle batches suitable for chunked walk-forward checks: <https://www.interactivebrokers.com/campus/ibkr-quant-news/the-future-of-backtesting-a-deep-dive-into-walk-forward-analysis/>
 - Recent crypto backtesting guidance warns that out-of-sample and walk-forward checks help expose curve fitting; Auto-Crypto's conservative candle mode keeps same-bar stop/target ambiguity from overstating bracket performance: <https://stoic.ai/blog/backtesting-trading-strategies/>
 - Current bot-launch guidance recommends out-of-sample validation, walk-forward testing, demo exchange testing, and gradual rollout before live exchange API use; Auto-Crypto keeps these additions in isolated paper backtests and active bracket snapshots only: <https://skyrexio.com/blog/no-code-crypto-trading-bot-how-to-build-an-algorithmic-strategy-backtest-it-and-launch-via-exchange-api/>
@@ -455,7 +457,7 @@ Paper market updates:
 
 `POST /signals/preview` and `POST /signals/preview-text` return a `bracket_plan` object with the synthetic entry side, exit side, OCA group, trailing arming state, trailing activation price, stop/take-profit/trailing triggers, estimated notional and quantity, worst-case stop loss, equity risk percent, and first-target reward/risk estimate that would apply if the signal were submitted.
 
-`POST /backtest/signal` accepts a `signal` object plus a `prices` list, runs the signal through an isolated paper engine, marks each supplied price, and returns triggered exits, active exit snapshots after each mark, final paper P&L, final open notional, and final positions. It does not save orders, write audit events, or mutate the active engine.
+`POST /backtest/signal` accepts a `signal` object plus a `prices` list, runs the signal through an isolated paper engine, marks each supplied price, and returns triggered exits, active exit snapshots after each mark, final paper P&L, final open notional, final positions, and the applied cost assumptions. It does not save orders, write audit events, or mutate the active engine.
 
 `POST /backtest/signal` also accepts a `candles` list instead of `prices`. Each candle requires `high`, `low`, and `close`, plus an optional `label`, `time`, or `timestamp`. Candle backtests use a conservative adverse-first path: long signals mark low, high, then close; short signals mark high, low, then close. If a candle could have hit both a stop and a target, this favors the protective stop outcome rather than assuming the profitable target filled first. Each returned mark includes cumulative `mfe` and `mae` percentages from entry.
 
@@ -474,6 +476,26 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/backtest/signal -Conte
   "candles": [
     {"label": "bar-1", "high": "112", "low": "94", "close": "108"}
   ]
+}'
+```
+
+Backtests may include `costs`, or top-level `fee_bps` and `slippage_bps`, to model paper fill friction. Fees are charged on entry and exit fills, and slippage moves buys above the mark and sells below the mark. These knobs are isolated to the backtest sandbox unless a caller explicitly creates a separate paper exchange with costs in code:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/backtest/signal -ContentType "application/json" -Body '{
+  "signal": {
+    "symbol": "BTCUSDT",
+    "side": "buy",
+    "quote_amount": "100",
+    "price": "100",
+    "stop_loss_pct": "5",
+    "take_profit_pct": "10"
+  },
+  "prices": ["104", "110"],
+  "costs": {
+    "fee_bps": "10",
+    "slippage_bps": "20"
+  }
 }'
 ```
 

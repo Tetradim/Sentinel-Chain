@@ -20,6 +20,18 @@ class ExitOrder:
     status: str = "open"
 
 
+@dataclass(frozen=True)
+class ExecutionCostConfig:
+    fee_bps: Decimal = Decimal("0")
+    slippage_bps: Decimal = Decimal("0")
+
+    def __post_init__(self) -> None:
+        if self.fee_bps < 0:
+            raise ValueError("fee_bps must be non-negative")
+        if self.slippage_bps < 0:
+            raise ValueError("slippage_bps must be non-negative")
+
+
 @dataclass
 class PaperLot:
     signal_id: str
@@ -37,6 +49,7 @@ class PaperLot:
     low_water_mark: Decimal | None = None
     breakeven_trigger_pct: Decimal | None = None
     breakeven_applied: bool = False
+    entry_fee_remaining: Decimal = Decimal("0")
 
 
 @dataclass
@@ -45,6 +58,7 @@ class PaperPosition:
     quantity: Decimal = Decimal("0")
     avg_entry: Decimal = Decimal("0")
     realized_pnl: Decimal = Decimal("0")
+    fees_paid: Decimal = Decimal("0")
 
     def buy(self, quantity: Decimal, price: Decimal) -> None:
         total_quantity = self.quantity + quantity
@@ -76,12 +90,15 @@ class PaperPosition:
         self.quantity = -total_quantity
 
     def to_dict(self) -> dict:
-        return {
+        payload = {
             "symbol": self.symbol,
             "quantity": _fixed8(self.quantity),
             "avg_entry": _fixed8(self.avg_entry),
             "realized_pnl": _fixed8(self.realized_pnl),
         }
+        if self.fees_paid != 0:
+            payload["fees_paid"] = _fixed8(self.fees_paid)
+        return payload
 
 
 @dataclass(frozen=True)
@@ -102,6 +119,9 @@ class PaperOrder:
     exit_kind: str | None = None
     canceled_exit_orders: list[ExitOrder] = field(default_factory=list)
     reduce_only: bool = False
+    fee: Decimal = Decimal("0")
+    fee_bps: Decimal = Decimal("0")
+    slippage_bps: Decimal = Decimal("0")
     status: str = "accepted"
 
     def to_dict(self) -> dict:
@@ -145,6 +165,9 @@ class PaperOrder:
                 for exit_order in self.canceled_exit_orders
             ],
             "reduce_only": self.reduce_only,
+            "fee": str(self.fee),
+            "fee_bps": str(self.fee_bps),
+            "slippage_bps": str(self.slippage_bps),
         }
 
 
@@ -173,11 +196,12 @@ class ExecutionResult:
 class PaperExchange:
     """Paper exchange that records accepted orders without touching live venues."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, costs: ExecutionCostConfig | None = None) -> None:
         self.orders: list[PaperOrder] = []
         self.positions: dict[str, PaperPosition] = {}
         self.lots: list[PaperLot] = []
         self.active_exits: dict[str, list[ExitOrder]] = {}
+        self.costs = costs or ExecutionCostConfig()
 
     @classmethod
     def from_order_history(cls, orders: list[dict]) -> PaperExchange:
@@ -191,8 +215,10 @@ class PaperExchange:
             raise ValueError("approved order requires notional")
         exit_orders = build_exit_orders(signal)
         quantity: Decimal | None = None
-        if signal.price is not None:
-            quantity = self._fill_quantity(signal, decision.order_notional)
+        fill_price = self._fill_price(signal.side, signal.price) if signal.price is not None else None
+        if fill_price is not None:
+            quantity = self._fill_quantity(signal, decision.order_notional, fill_price)
+        fee = self._fill_fee(quantity or Decimal("0"), fill_price)
         order = PaperOrder(
             order_id=f"paper-{signal.signal_id}",
             signal_id=signal.signal_id,
@@ -201,17 +227,20 @@ class PaperExchange:
             symbol=signal.symbol,
             side=signal.side,
             notional=decision.order_notional,
-            price=signal.price,
+            price=fill_price,
             exit_orders=exit_orders,
             trailing_stop_pct=signal.trailing_stop_pct,
             trailing_stop_price=signal.trailing_stop_price,
             trailing_activation_pct=signal.trailing_activation_pct,
             breakeven_trigger_pct=signal.breakeven_trigger_pct,
             reduce_only=signal.reduce_only,
+            fee=fee,
+            fee_bps=self.costs.fee_bps,
+            slippage_bps=self.costs.slippage_bps,
         )
         self.orders.append(order)
-        if quantity is not None:
-            self._apply_fill(signal, quantity, exit_orders)
+        if quantity is not None and fill_price is not None:
+            self._apply_fill(signal, quantity, fill_price, fee, exit_orders)
         self._refresh_active_exits(signal.symbol)
         return order
 
@@ -245,15 +274,17 @@ class PaperExchange:
                     break
 
                 exit_quantity = self._exit_quantity(lot, exit_order)
-                notional = exit_quantity * price
-                self._close_lot(lot, price, exit_quantity)
+                exit_side = "sell" if lot.direction == "long" else "buy"
+                fill_price = self._fill_price(exit_side, price)
+                exit_fee = self._fill_fee(exit_quantity, fill_price)
+                notional = exit_quantity * fill_price
+                self._close_lot(lot, fill_price, exit_quantity, exit_fee)
                 if exit_order.kind == "take_profit" and lot.remaining_quantity > 0:
                     lot.exit_orders = [order for order in lot.exit_orders if order is not exit_order]
                 canceled_exit_orders = self._canceled_sibling_exits(lot, exit_order)
                 if lot.remaining_quantity <= 0:
                     lot.exit_orders = []
                 order_number = len(self.orders) + 1
-                exit_side = "sell" if lot.direction == "long" else "buy"
                 order = PaperOrder(
                     order_id=f"paper-exit-{_order_fragment(lot.signal_id)}-{order_number}",
                     signal_id=f"exit-{_order_fragment(lot.signal_id)}-{order_number}",
@@ -262,21 +293,26 @@ class PaperExchange:
                     symbol=symbol,
                     side=exit_side,
                     notional=notional,
-                    price=price,
+                    price=fill_price,
                     exit_orders=[_filled_exit(exit_order)],
                     exit_kind=exit_order.kind,
                     canceled_exit_orders=canceled_exit_orders,
                     reduce_only=True,
+                    fee=exit_fee,
+                    fee_bps=self.costs.fee_bps,
+                    slippage_bps=self.costs.slippage_bps,
                 )
                 self.orders.append(order)
-                triggered.append(
-                    {
-                        "symbol": symbol,
-                        "kind": exit_order.kind,
-                        "price": _fixed8(price),
-                        "quantity": _fixed8(exit_quantity),
-                    }
-                )
+                trigger_payload = {
+                    "symbol": symbol,
+                    "kind": exit_order.kind,
+                    "price": _fixed8(fill_price),
+                    "quantity": _fixed8(exit_quantity),
+                }
+                if self.costs.fee_bps > 0 or self.costs.slippage_bps > 0:
+                    trigger_payload["mark_price"] = _fixed8(price)
+                    trigger_payload["fee"] = _fixed8(exit_fee)
+                triggered.append(trigger_payload)
                 if exit_order.kind != "take_profit":
                     break
 
@@ -471,19 +507,36 @@ class PaperExchange:
         self._refresh_active_exits(first_lot.symbol)
         return order
 
-    def _fill_quantity(self, signal: CryptoSignal, notional: Decimal) -> Decimal:
-        if signal.price is None:
-            return Decimal("0")
-        return signal.base_amount if signal.base_amount is not None else notional / signal.price
+    def _fill_quantity(self, signal: CryptoSignal, notional: Decimal, fill_price: Decimal) -> Decimal:
+        return signal.base_amount if signal.base_amount is not None else notional / fill_price
 
-    def _apply_fill(self, signal: CryptoSignal, quantity: Decimal, exit_orders: list[ExitOrder]) -> None:
-        if signal.price is None:
-            return
+    def _fill_price(self, side: str, mark_price: Decimal | None) -> Decimal | None:
+        if mark_price is None:
+            return None
+        if self.costs.slippage_bps == 0:
+            return mark_price
+        direction = Decimal("1") if side == "buy" else Decimal("-1")
+        return _money(mark_price * (Decimal("1") + direction * self.costs.slippage_bps / Decimal("10000")))
+
+    def _fill_fee(self, quantity: Decimal, fill_price: Decimal | None) -> Decimal:
+        if fill_price is None or self.costs.fee_bps == 0:
+            return Decimal("0")
+        return _money(abs(quantity * fill_price) * self.costs.fee_bps / Decimal("10000"))
+
+    def _apply_fill(
+        self,
+        signal: CryptoSignal,
+        quantity: Decimal,
+        fill_price: Decimal,
+        fee: Decimal,
+        exit_orders: list[ExitOrder],
+    ) -> None:
         position = self.positions.setdefault(signal.symbol, PaperPosition(symbol=signal.symbol))
         if signal.side == "buy" and signal.reduce_only:
-            self._buy_quantity(signal.symbol, quantity, signal.price)
+            self._buy_quantity(signal.symbol, quantity, fill_price, fee)
         elif signal.side == "buy":
-            position.buy(quantity, signal.price)
+            position.fees_paid += fee
+            position.buy(quantity, fill_price)
             self.lots.append(
                 PaperLot(
                     signal_id=signal.signal_id,
@@ -491,7 +544,7 @@ class PaperExchange:
                     direction="long",
                     original_quantity=quantity,
                     remaining_quantity=quantity,
-                    entry_price=signal.price,
+                    entry_price=fill_price,
                     exit_orders=exit_orders,
                     trailing_stop_pct=signal.trailing_stop_pct,
                     trailing_stop_price=signal.trailing_stop_price,
@@ -501,12 +554,14 @@ class PaperExchange:
                     if signal.trailing_stop_pct is not None and signal.trailing_activation_pct is None
                     else None,
                     breakeven_trigger_pct=signal.breakeven_trigger_pct,
+                    entry_fee_remaining=fee,
                 )
             )
         elif signal.side == "sell" and signal.reduce_only:
-            self._sell_quantity(signal.symbol, quantity, signal.price)
+            self._sell_quantity(signal.symbol, quantity, fill_price, fee)
         elif signal.side == "sell" and exit_orders:
-            position.sell_short(quantity, signal.price)
+            position.fees_paid += fee
+            position.sell_short(quantity, fill_price)
             self.lots.append(
                 PaperLot(
                     signal_id=signal.signal_id,
@@ -514,7 +569,7 @@ class PaperExchange:
                     direction="short",
                     original_quantity=quantity,
                     remaining_quantity=quantity,
-                    entry_price=signal.price,
+                    entry_price=fill_price,
                     exit_orders=exit_orders,
                     trailing_stop_pct=signal.trailing_stop_pct,
                     trailing_stop_price=signal.trailing_stop_price,
@@ -524,10 +579,11 @@ class PaperExchange:
                     if signal.trailing_stop_pct is not None and signal.trailing_activation_pct is None
                     else None,
                     breakeven_trigger_pct=signal.breakeven_trigger_pct,
+                    entry_fee_remaining=fee,
                 )
             )
         elif signal.side == "sell":
-            self._sell_quantity(signal.symbol, quantity, signal.price)
+            self._sell_quantity(signal.symbol, quantity, fill_price, fee)
 
     def _replay_order(self, order: PaperOrder) -> None:
         self.orders.append(order)
@@ -548,8 +604,9 @@ class PaperExchange:
         quantity = order.notional / order.price
         position = self.positions.setdefault(order.symbol, PaperPosition(symbol=order.symbol))
         if order.side == "buy" and order.reduce_only:
-            self._buy_quantity(order.symbol, quantity, order.price)
+            self._buy_quantity(order.symbol, quantity, order.price, order.fee)
         elif order.side == "buy":
+            position.fees_paid += order.fee
             position.buy(quantity, order.price)
             self.lots.append(
                 PaperLot(
@@ -568,11 +625,13 @@ class PaperExchange:
                     if order.trailing_stop_pct is not None and order.trailing_activation_pct is None
                     else None,
                     breakeven_trigger_pct=order.breakeven_trigger_pct,
+                    entry_fee_remaining=order.fee,
                 )
             )
         elif order.side == "sell" and order.reduce_only:
-            self._sell_quantity(order.symbol, quantity, order.price)
+            self._sell_quantity(order.symbol, quantity, order.price, order.fee)
         elif order.side == "sell" and order.exit_orders:
+            position.fees_paid += order.fee
             position.sell_short(quantity, order.price)
             self.lots.append(
                 PaperLot(
@@ -591,10 +650,11 @@ class PaperExchange:
                     if order.trailing_stop_pct is not None and order.trailing_activation_pct is None
                     else None,
                     breakeven_trigger_pct=order.breakeven_trigger_pct,
+                    entry_fee_remaining=order.fee,
                 )
             )
         elif order.side == "sell":
-            self._sell_quantity(order.symbol, quantity, order.price)
+            self._sell_quantity(order.symbol, quantity, order.price, order.fee)
         self._refresh_active_exits(order.symbol)
 
     def _replay_bracket_cancel(self, order: PaperOrder) -> None:
@@ -758,19 +818,28 @@ class PaperExchange:
         target_quantity = lot.original_quantity * exit_order.close_pct / Decimal("100")
         return min(target_quantity, lot.remaining_quantity)
 
-    def _close_lot(self, lot: PaperLot, price: Decimal, quantity: Decimal | None = None) -> None:
+    def _close_lot(
+        self,
+        lot: PaperLot,
+        price: Decimal,
+        quantity: Decimal | None = None,
+        exit_fee: Decimal = Decimal("0"),
+    ) -> None:
         position = self.positions.get(lot.symbol)
         if position is None:
             lot.remaining_quantity = Decimal("0")
             return
         open_quantity = position.quantity if lot.direction == "long" else abs(position.quantity)
         exit_quantity = min(quantity or lot.remaining_quantity, lot.remaining_quantity, open_quantity)
+        entry_fee = _allocated_entry_fee(lot, exit_quantity)
+        position.fees_paid += exit_fee
         if lot.direction == "long":
-            position.realized_pnl += (price - lot.entry_price) * exit_quantity
+            position.realized_pnl += (price - lot.entry_price) * exit_quantity - entry_fee - exit_fee
             position.quantity -= exit_quantity
         else:
-            position.realized_pnl += (lot.entry_price - price) * exit_quantity
+            position.realized_pnl += (lot.entry_price - price) * exit_quantity - entry_fee - exit_fee
             position.quantity += exit_quantity
+        lot.entry_fee_remaining -= entry_fee
         lot.remaining_quantity -= exit_quantity
         if position.quantity == 0:
             position.quantity = Decimal("0")
@@ -793,19 +862,32 @@ class PaperExchange:
             if exit_order is not triggered_exit and exit_order.status == "open"
         ]
 
-    def _sell_quantity(self, symbol: str, quantity: Decimal, price: Decimal) -> None:
+    def _sell_quantity(
+        self,
+        symbol: str,
+        quantity: Decimal,
+        price: Decimal,
+        exit_fee: Decimal = Decimal("0"),
+    ) -> None:
         position = self.positions.setdefault(symbol, PaperPosition(symbol=symbol))
+        position.fees_paid += exit_fee
         remaining = quantity
+        remaining_fee = exit_fee
         for lot in self.lots:
             if remaining <= 0 or lot.symbol != symbol or lot.direction != "long" or lot.remaining_quantity <= 0:
                 continue
             reduction = min(lot.remaining_quantity, remaining)
-            position.realized_pnl += (price - lot.entry_price) * reduction
+            fee_share = _proportional_fee(exit_fee, reduction, quantity)
+            entry_fee = _allocated_entry_fee(lot, reduction)
+            position.realized_pnl += (price - lot.entry_price) * reduction - entry_fee - fee_share
             position.quantity -= reduction
+            lot.entry_fee_remaining -= entry_fee
             lot.remaining_quantity -= reduction
             remaining -= reduction
+            remaining_fee -= fee_share
         if remaining > 0:
             position.sell(remaining, price)
+            position.realized_pnl -= remaining_fee
         self.lots = [lot for lot in self.lots if lot.remaining_quantity > 0]
         if position.quantity == 0:
             position.quantity = Decimal("0")
@@ -813,17 +895,31 @@ class PaperExchange:
         else:
             self._refresh_position_average(symbol)
 
-    def _buy_quantity(self, symbol: str, quantity: Decimal, price: Decimal) -> None:
+    def _buy_quantity(
+        self,
+        symbol: str,
+        quantity: Decimal,
+        price: Decimal,
+        exit_fee: Decimal = Decimal("0"),
+    ) -> None:
         position = self.positions.setdefault(symbol, PaperPosition(symbol=symbol))
+        position.fees_paid += exit_fee
         remaining = quantity
+        remaining_fee = exit_fee
         for lot in self.lots:
             if remaining <= 0 or lot.symbol != symbol or lot.direction != "short" or lot.remaining_quantity <= 0:
                 continue
             reduction = min(lot.remaining_quantity, remaining)
-            position.realized_pnl += (lot.entry_price - price) * reduction
+            fee_share = _proportional_fee(exit_fee, reduction, quantity)
+            entry_fee = _allocated_entry_fee(lot, reduction)
+            position.realized_pnl += (lot.entry_price - price) * reduction - entry_fee - fee_share
             position.quantity += reduction
+            lot.entry_fee_remaining -= entry_fee
             lot.remaining_quantity -= reduction
             remaining -= reduction
+            remaining_fee -= fee_share
+        if remaining > 0:
+            position.realized_pnl -= remaining_fee
         self.lots = [lot for lot in self.lots if lot.remaining_quantity > 0]
         if position.quantity == 0:
             position.quantity = Decimal("0")
@@ -1022,6 +1118,18 @@ def _filled_exit(exit_order: ExitOrder) -> ExitOrder:
     )
 
 
+def _allocated_entry_fee(lot: PaperLot, exit_quantity: Decimal) -> Decimal:
+    if lot.entry_fee_remaining <= 0 or lot.remaining_quantity <= 0:
+        return Decimal("0")
+    return min(lot.entry_fee_remaining, lot.entry_fee_remaining * exit_quantity / lot.remaining_quantity)
+
+
+def _proportional_fee(total_fee: Decimal, quantity: Decimal, total_quantity: Decimal) -> Decimal:
+    if total_fee <= 0 or total_quantity <= 0:
+        return Decimal("0")
+    return total_fee * quantity / total_quantity
+
+
 def _money(value: Decimal) -> Decimal:
     return value.quantize(MONEY, rounding=ROUND_HALF_UP)
 
@@ -1063,6 +1171,9 @@ def _paper_order_from_dict(payload: dict) -> PaperOrder:
             for exit_order in payload.get("canceled_exit_orders", [])
         ],
         reduce_only=bool(payload.get("reduce_only", False)),
+        fee=Decimal(str(payload.get("fee") or "0")),
+        fee_bps=Decimal(str(payload.get("fee_bps") or "0")),
+        slippage_bps=Decimal(str(payload.get("slippage_bps") or "0")),
         status=str(payload.get("status") or "accepted"),
     )
 

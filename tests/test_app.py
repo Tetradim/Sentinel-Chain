@@ -148,6 +148,46 @@ def test_backtest_signal_replays_price_path_without_mutating_live_engine():
     assert positions_after.json()["positions"] == []
 
 
+def test_backtest_signal_can_include_fee_costs_in_paper_pnl():
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/backtest/signal",
+        json={
+            "signal": {
+                "symbol": "BTCUSDT",
+                "side": "buy",
+                "quote_amount": "100",
+                "price": "100",
+                "stop_loss_pct": "5",
+                "take_profit_pct": "10",
+            },
+            "prices": ["110"],
+            "costs": {"fee_bps": "100", "slippage_bps": "0"},
+        },
+    )
+    positions_after = client.get("/positions")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["costs"] == {"fee_bps": "100", "slippage_bps": "0"}
+    assert body["marks"][0]["triggered"] == [
+        {
+            "symbol": "BTC/USDT",
+            "kind": "take_profit",
+            "price": "110.00000000",
+            "quantity": "1.00000000",
+            "mark_price": "110.00000000",
+            "fee": "1.10000000",
+        }
+    ]
+    assert body["final_daily_pnl"] == "7.90"
+    assert body["final_positions"][0]["realized_pnl"] == "7.90000000"
+    assert body["final_positions"][0]["fees_paid"] == "2.10000000"
+    assert positions_after.json()["positions"] == []
+
+
 def test_backtest_candles_use_conservative_adverse_first_path_and_report_excursion():
     app = create_app()
     client = TestClient(app)

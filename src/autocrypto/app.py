@@ -31,7 +31,7 @@ from .exchanges.ccxt_adapter import (
     list_ccxt_exchange_ids,
 )
 from .exchanges.platform_registry import get_platform, platform_rows
-from .execution import PaperExchange, build_exit_orders
+from .execution import ExecutionCostConfig, PaperExchange, build_exit_orders
 from .intake import SignalIntakeService
 from .repository import SQLiteRepository
 from .risk import AccountState, RiskConfig, RiskDecision, evaluate_signal
@@ -627,13 +627,14 @@ def create_app(
             raise HTTPException(status_code=400, detail="prices or candles must be a non-empty list")
         try:
             signal = normalize_signal(signal_payload, source="operator-backtest")
+            costs = _execution_cost_payload(payload)
             if candles_payload:
                 candles = [_candle_payload(candle) for candle in candles_payload]
-                return run_signal_candle_backtest(engine, signal, candles).to_dict()
+                return run_signal_candle_backtest(engine, signal, candles, costs=costs).to_dict()
             prices = [_positive_decimal(price) for price in marks_payload]
         except (SignalValidationError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return run_signal_backtest(engine, signal, prices).to_dict()
+        return run_signal_backtest(engine, signal, prices, costs=costs).to_dict()
 
     @app.get("/audit")
     def audit() -> dict[str, Any]:
@@ -682,6 +683,28 @@ def _candle_payload(value: Any) -> dict[str, Decimal]:
         "low": low,
         "close": _positive_decimal(value.get("close")),
     }
+
+
+def _execution_cost_payload(payload: dict[str, Any]) -> ExecutionCostConfig:
+    costs = payload.get("costs") if isinstance(payload.get("costs"), dict) else {}
+    fee_bps = costs.get("fee_bps") if costs else payload.get("fee_bps")
+    slippage_bps = costs.get("slippage_bps") if costs else payload.get("slippage_bps")
+    return ExecutionCostConfig(
+        fee_bps=_non_negative_decimal(fee_bps, default=Decimal("0")),
+        slippage_bps=_non_negative_decimal(slippage_bps, default=Decimal("0")),
+    )
+
+
+def _non_negative_decimal(value: Any, *, default: Decimal) -> Decimal:
+    if value is None or value == "":
+        return default
+    try:
+        parsed = Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"invalid decimal: {value}") from exc
+    if parsed < 0:
+        raise ValueError("value must be non-negative")
+    return parsed
 
 
 def _paper_capabilities() -> ExchangeCapabilities:
