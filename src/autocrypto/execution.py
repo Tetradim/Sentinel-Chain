@@ -24,6 +24,8 @@ class PaperLot:
     entry_price: Decimal
     exit_orders: list[ExitOrder] = field(default_factory=list)
     trailing_stop_pct: Decimal | None = None
+    trailing_activation_pct: Decimal | None = None
+    trailing_activated: bool = True
     high_water_mark: Decimal | None = None
     breakeven_trigger_pct: Decimal | None = None
     breakeven_applied: bool = False
@@ -74,6 +76,7 @@ class PaperOrder:
     price: Decimal | None
     exit_orders: list[ExitOrder] = field(default_factory=list)
     trailing_stop_pct: Decimal | None = None
+    trailing_activation_pct: Decimal | None = None
     breakeven_trigger_pct: Decimal | None = None
     status: str = "accepted"
 
@@ -93,6 +96,9 @@ class PaperOrder:
                 for exit_order in self.exit_orders
             ],
             "trailing_stop_pct": str(self.trailing_stop_pct) if self.trailing_stop_pct is not None else None,
+            "trailing_activation_pct": str(self.trailing_activation_pct)
+            if self.trailing_activation_pct is not None
+            else None,
             "breakeven_trigger_pct": str(self.breakeven_trigger_pct)
             if self.breakeven_trigger_pct is not None
             else None,
@@ -155,6 +161,7 @@ class PaperExchange:
             price=signal.price,
             exit_orders=exit_orders,
             trailing_stop_pct=signal.trailing_stop_pct,
+            trailing_activation_pct=signal.trailing_activation_pct,
             breakeven_trigger_pct=signal.breakeven_trigger_pct,
         )
         self.orders.append(order)
@@ -231,7 +238,11 @@ class PaperExchange:
                     entry_price=signal.price,
                     exit_orders=exit_orders,
                     trailing_stop_pct=signal.trailing_stop_pct,
-                    high_water_mark=signal.price if signal.trailing_stop_pct is not None else None,
+                    trailing_activation_pct=signal.trailing_activation_pct,
+                    trailing_activated=signal.trailing_activation_pct is None,
+                    high_water_mark=signal.price
+                    if signal.trailing_stop_pct is not None and signal.trailing_activation_pct is None
+                    else None,
                     breakeven_trigger_pct=signal.breakeven_trigger_pct,
                 )
             )
@@ -254,7 +265,11 @@ class PaperExchange:
                     entry_price=order.price,
                     exit_orders=order.exit_orders,
                     trailing_stop_pct=order.trailing_stop_pct,
-                    high_water_mark=order.price if order.trailing_stop_pct is not None else None,
+                    trailing_activation_pct=order.trailing_activation_pct,
+                    trailing_activated=order.trailing_activation_pct is None,
+                    high_water_mark=order.price
+                    if order.trailing_stop_pct is not None and order.trailing_activation_pct is None
+                    else None,
                     breakeven_trigger_pct=order.breakeven_trigger_pct,
                 )
             )
@@ -264,7 +279,9 @@ class PaperExchange:
 
     def _triggered_exit(self, lot: PaperLot, price: Decimal) -> ExitOrder | None:
         for exit_order in lot.exit_orders:
-            if exit_order.kind in {"stop_loss", "trailing_stop"} and price <= exit_order.trigger_price:
+            if exit_order.kind == "stop_loss" and price <= exit_order.trigger_price:
+                return exit_order
+            if exit_order.kind == "trailing_stop" and lot.trailing_activated and price <= exit_order.trigger_price:
                 return exit_order
         for exit_order in lot.exit_orders:
             if exit_order.kind == "take_profit" and price >= exit_order.trigger_price:
@@ -274,9 +291,17 @@ class PaperExchange:
     def _update_trailing_stop(self, lot: PaperLot, price: Decimal) -> None:
         if lot.trailing_stop_pct is None:
             return
-        if lot.high_water_mark is None:
+        activated_now = False
+        if not lot.trailing_activated:
+            activation_price = lot.entry_price * (Decimal("1") + (lot.trailing_activation_pct or Decimal("0")) / Decimal("100"))
+            if price < activation_price:
+                return
+            lot.trailing_activated = True
+            activated_now = True
+            lot.high_water_mark = price
+        elif lot.high_water_mark is None:
             lot.high_water_mark = lot.entry_price
-        if price <= lot.high_water_mark:
+        if price <= lot.high_water_mark and not activated_now:
             return
         lot.high_water_mark = price
         trigger = _money(price * (Decimal("1") - lot.trailing_stop_pct / Decimal("100")))
@@ -407,6 +432,9 @@ def _paper_order_from_dict(payload: dict) -> PaperOrder:
         ],
         trailing_stop_pct=Decimal(str(payload["trailing_stop_pct"]))
         if payload.get("trailing_stop_pct") is not None
+        else None,
+        trailing_activation_pct=Decimal(str(payload["trailing_activation_pct"]))
+        if payload.get("trailing_activation_pct") is not None
         else None,
         breakeven_trigger_pct=Decimal(str(payload["breakeven_trigger_pct"]))
         if payload.get("breakeven_trigger_pct") is not None

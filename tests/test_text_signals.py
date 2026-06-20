@@ -7,7 +7,7 @@ from autocrypto.text_signals import parse_text_signal
 
 
 def test_parse_text_signal_accepts_common_crypto_alert_format():
-    signal = parse_text_signal("BUY BTCUSDT $125 @ 50000 SL 2.5% TP 5% TRAIL 3% BE 2%", source="discord")
+    signal = parse_text_signal("BUY BTCUSDT $125 @ 50000 SL 2.5% TP 5% TRAIL 3% ACT 2% BE 2%", source="discord")
 
     assert signal.symbol == "BTC/USDT"
     assert signal.side == "buy"
@@ -16,6 +16,7 @@ def test_parse_text_signal_accepts_common_crypto_alert_format():
     assert signal.stop_loss_pct == Decimal("2.5")
     assert signal.take_profit_pct == Decimal("5")
     assert signal.trailing_stop_pct == Decimal("3")
+    assert signal.trailing_activation_pct == Decimal("2")
     assert signal.breakeven_trigger_pct == Decimal("2")
 
 

@@ -216,6 +216,7 @@ function renderDashboard() {
     ["Max order", money(data.risk?.max_order_notional || 0)],
     ["Max equity %", `${data.risk?.max_position_equity_pct || "0"}%`],
     ["Max SL", `${data.risk?.max_stop_loss_pct || "0"}%`],
+    ["Max trail", `${data.risk?.max_trailing_stop_pct || "0"}%`],
     ["Min R/R", data.risk?.min_reward_risk_ratio || "0"],
     ["Daily loss cap", money(data.risk?.max_daily_loss || 0)],
     ["Allowed venues", (data.risk?.allowed_exchanges || []).join(", ") || "none"],
@@ -360,6 +361,7 @@ function renderSignals() {
       ["price", signal.price || "-"],
       ["stop", signal.stop_loss_pct || "-"],
       ["take profit", signal.take_profit_pct || "-"],
+      ["trail activation", signal.trailing_activation_pct || "-"],
       ["signal id", signal.signal_id],
     ]
       .map(([label, value]) => `<span>${escapeHtml(label)}<strong>${escapeHtml(value)}</strong></span>`)
@@ -840,12 +842,14 @@ function ticketToText() {
   const stop = $("#ticketStop").value;
   const takeProfit = $("#ticketTakeProfit").value;
   const trailingStop = $("#ticketTrailingStop").value;
+  const trailActivation = $("#ticketTrailActivation").value;
   const breakeven = $("#ticketBreakeven").value;
   const stopPart = stop ? ` SL ${stop}%` : "";
   const tpPart = takeProfit ? ` TP ${takeProfit}%` : "";
   const trailingPart = trailingStop ? ` TRAIL ${trailingStop}%` : "";
+  const activationPart = trailActivation ? ` ACT ${trailActivation}%` : "";
   const breakevenPart = breakeven ? ` BE ${breakeven}%` : "";
-  return `${side} ${symbol} ${size} @ ${price}${stopPart}${tpPart}${trailingPart}${breakevenPart}`;
+  return `${side} ${symbol} ${size} @ ${price}${stopPart}${tpPart}${trailingPart}${activationPart}${breakevenPart}`;
 }
 
 function ticketPayload() {
@@ -857,6 +861,7 @@ function ticketPayload() {
     stop_loss_pct: $("#ticketStop").value || null,
     take_profit_pct: $("#ticketTakeProfit").value || null,
     trailing_stop_pct: $("#ticketTrailingStop").value || null,
+    trailing_activation_pct: $("#ticketTrailActivation").value || null,
     breakeven_trigger_pct: $("#ticketBreakeven").value || null,
     strategy_id: $("#ticketStrategy").value,
   };
@@ -926,6 +931,7 @@ function ticketDraftPayload() {
     stop_loss_pct: $("#ticketStop").value,
     take_profit_pct: $("#ticketTakeProfit").value,
     trailing_stop_pct: $("#ticketTrailingStop").value,
+    trailing_activation_pct: $("#ticketTrailActivation").value,
     breakeven_trigger_pct: $("#ticketBreakeven").value,
     saved_at: new Date().toISOString(),
   };
@@ -957,6 +963,7 @@ function applyStoredTicketDraft() {
   $("#ticketStop").value = draft.stop_loss_pct || "";
   $("#ticketTakeProfit").value = draft.take_profit_pct || "";
   $("#ticketTrailingStop").value = draft.trailing_stop_pct || "";
+  $("#ticketTrailActivation").value = draft.trailing_activation_pct || "";
   $("#ticketBreakeven").value = draft.breakeven_trigger_pct || "";
   appState.selectedPair = compactSymbol(draft.symbol || appState.selectedPair);
   $("#signalText").value = ticketToText();
@@ -1148,6 +1155,7 @@ async function copyStrategy(strategyId) {
   $("#ticketStop").value = strategy.stop;
   $("#ticketTakeProfit").value = strategy.takeProfit;
   $("#ticketTrailingStop").value = strategy.trailingStop || "";
+  $("#ticketTrailActivation").value = strategy.trailingActivation || "";
   $("#ticketBreakeven").value = strategy.breakeven || "";
   $("#signalText").value = ticketToText();
   writeImportedStrategy(strategy);
@@ -1213,6 +1221,7 @@ function inspectOrder(orderId) {
   $("#ticketStop").value = "";
   $("#ticketTakeProfit").value = "";
   $("#ticketTrailingStop").value = "";
+  $("#ticketTrailActivation").value = "";
   $("#ticketBreakeven").value = "";
   $("#ticketStatus").textContent = `loaded ${orderId}`;
   saveTicketDraft();
@@ -1242,6 +1251,7 @@ function loadSignalIntoTicket(signal, status) {
   $("#ticketStop").value = signal.stop_loss_pct || "";
   $("#ticketTakeProfit").value = signal.take_profit_pct || "";
   $("#ticketTrailingStop").value = signal.trailing_stop_pct || "";
+  $("#ticketTrailActivation").value = signal.trailing_activation_pct || "";
   $("#ticketBreakeven").value = signal.breakeven_trigger_pct || "";
   $("#ticketStatus").textContent = status;
   appState.selectedPair = compactSymbol(signal.symbol);
@@ -1577,7 +1587,7 @@ function bindEvents() {
   $$("[data-size-preset]").forEach((button) => {
     button.addEventListener("click", () => applySizePreset(button.dataset.sizePreset));
   });
-  ["ticketSymbol", "ticketSide", "ticketAmount", "ticketPrice", "ticketStop", "ticketTakeProfit", "ticketTrailingStop", "ticketBreakeven"].forEach((id) => {
+  ["ticketSymbol", "ticketSide", "ticketAmount", "ticketPrice", "ticketStop", "ticketTakeProfit", "ticketTrailingStop", "ticketTrailActivation", "ticketBreakeven"].forEach((id) => {
     $(`#${id}`).addEventListener("input", saveTicketDraft);
     $(`#${id}`).addEventListener("change", saveTicketDraft);
   });

@@ -167,6 +167,40 @@ def test_risk_rejects_wide_stop_or_weak_reward_risk():
     assert "min_reward_risk_ratio_not_met" in decision.reason_codes
 
 
+def test_risk_rejects_wide_trailing_stop_or_activation_without_trailing_stop():
+    wide_trailing_signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "3000",
+            "stop_loss_pct": "3",
+            "trailing_stop_pct": "8",
+        },
+        source="test",
+    )
+    activation_only_signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "3000",
+            "stop_loss_pct": "3",
+            "trailing_activation_pct": "4",
+        },
+        source="test",
+    )
+    config = RiskConfig(max_trailing_stop_pct=Decimal("5"))
+
+    wide_decision = evaluate_signal(wide_trailing_signal, config, AccountState())
+    activation_decision = evaluate_signal(activation_only_signal, config, AccountState())
+
+    assert wide_decision.approved is False
+    assert "max_trailing_stop_pct_exceeded" in wide_decision.reason_codes
+    assert activation_decision.approved is False
+    assert "trailing_stop_required_for_activation" in activation_decision.reason_codes
+
+
 def test_risk_rejects_when_consecutive_loss_limit_is_reached():
     signal = normalize_signal(
         {

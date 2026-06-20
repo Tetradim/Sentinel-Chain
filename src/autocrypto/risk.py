@@ -16,6 +16,7 @@ class RiskConfig:
     max_consecutive_losses: int = 0
     require_stop_loss: bool = True
     max_stop_loss_pct: Decimal = Decimal("0")
+    max_trailing_stop_pct: Decimal = Decimal("0")
     min_reward_risk_ratio: Decimal = Decimal("0")
     max_slippage_bps: int = 100
     allowed_exchanges: set[str] = field(default_factory=lambda: {"paper"})
@@ -78,6 +79,14 @@ def evaluate_signal(
         reasons.append("consecutive_loss_limit_exceeded")
     if signal.stop_loss_pct is not None and config.max_stop_loss_pct > 0 and signal.stop_loss_pct > config.max_stop_loss_pct:
         reasons.append("max_stop_loss_pct_exceeded")
+    if (
+        signal.trailing_stop_pct is not None
+        and config.max_trailing_stop_pct > 0
+        and signal.trailing_stop_pct > config.max_trailing_stop_pct
+    ):
+        reasons.append("max_trailing_stop_pct_exceeded")
+    if signal.trailing_activation_pct is not None and signal.trailing_stop_pct is None:
+        reasons.append("trailing_stop_required_for_activation")
     if (
         signal.stop_loss_pct is not None
         and signal.take_profit_pct is not None

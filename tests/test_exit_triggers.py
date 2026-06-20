@@ -178,6 +178,37 @@ def test_trailing_stop_ratcheted_up_then_triggers_on_pullback():
     assert exchange.list_positions()[0]["realized_pnl"] == "4.50000000"
 
 
+def test_trailing_stop_activation_waits_for_favorable_move_before_arming():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "activated-trail-entry",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "10",
+            "take_profit_pct": "30",
+            "trailing_stop_pct": "5",
+            "trailing_activation_pct": "4",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    before_activation = exchange.update_price("BTC/USDT", Decimal("96"))
+    activation_mark = exchange.update_price("BTC/USDT", Decimal("104"))
+    assert exchange.lots[0].trailing_activated is True
+    trailing_exit = next(exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "trailing_stop")
+    pullback = exchange.update_price("BTC/USDT", Decimal("98.80"))
+
+    assert before_activation == []
+    assert activation_mark == []
+    assert trailing_exit.trigger_price == Decimal("98.80")
+    assert pullback == [{"symbol": "BTC/USDT", "kind": "trailing_stop", "price": "98.80000000"}]
+
+
 def test_breakeven_trigger_raises_protective_stops_to_entry():
     exchange = PaperExchange()
     engine = TradingEngine(exchange=exchange)

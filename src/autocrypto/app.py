@@ -483,6 +483,7 @@ def _risk_config_to_dict(config: RiskConfig) -> dict[str, Any]:
         "max_consecutive_losses": config.max_consecutive_losses,
         "require_stop_loss": config.require_stop_loss,
         "max_stop_loss_pct": str(config.max_stop_loss_pct),
+        "max_trailing_stop_pct": str(config.max_trailing_stop_pct),
         "min_reward_risk_ratio": str(config.min_reward_risk_ratio),
         "max_slippage_bps": config.max_slippage_bps,
         "allowed_exchanges": sorted(config.allowed_exchanges),
@@ -514,6 +515,9 @@ def _signal_to_dict(signal: CryptoSignal) -> dict[str, Any]:
         "stop_loss_pct": str(signal.stop_loss_pct) if signal.stop_loss_pct is not None else None,
         "take_profit_pct": str(signal.take_profit_pct) if signal.take_profit_pct is not None else None,
         "trailing_stop_pct": str(signal.trailing_stop_pct) if signal.trailing_stop_pct is not None else None,
+        "trailing_activation_pct": str(signal.trailing_activation_pct)
+        if signal.trailing_activation_pct is not None
+        else None,
         "breakeven_trigger_pct": str(signal.breakeven_trigger_pct)
         if signal.breakeven_trigger_pct is not None
         else None,
@@ -568,6 +572,10 @@ def _active_exits_to_dict(lots: list[Any]) -> list[dict[str, str]]:
             "kind": exit_order.kind,
             "trigger_price": str(exit_order.trigger_price),
             "trailing_stop_pct": str(lot.trailing_stop_pct) if exit_order.kind == "trailing_stop" and lot.trailing_stop_pct else None,
+            "trailing_activation_pct": str(lot.trailing_activation_pct)
+            if exit_order.kind == "trailing_stop" and lot.trailing_activation_pct
+            else None,
+            "trailing_activated": str(lot.trailing_activated).lower() if exit_order.kind == "trailing_stop" else None,
             "high_water_mark": str(lot.high_water_mark) if exit_order.kind == "trailing_stop" and lot.high_water_mark else None,
             "breakeven_trigger_pct": str(lot.breakeven_trigger_pct) if lot.breakeven_trigger_pct else None,
             "breakeven_applied": str(lot.breakeven_applied).lower(),
