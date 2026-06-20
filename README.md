@@ -134,6 +134,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/webhooks/tradingview -
   "stop_loss_pct": "2",
   "take_profit_pct": "3",
   "trailing_stop_pct": "2.5",
+  "breakeven_trigger_pct": "2",
   "strategy_id": "breakout"
 }'
 ```
@@ -153,7 +154,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/market/price -ContentT
 }'
 ```
 
-For buy brackets, `stop_loss_pct` creates a fixed protective sell below entry, `take_profit_pct` creates a fixed profit-taking sell above entry, and `trailing_stop_pct` creates a sell stop that starts below entry and ratchets upward when `POST /market/price` marks a new high-water price. The trailing stop never moves lower.
+For buy brackets, `stop_loss_pct` creates a fixed protective sell below entry, `take_profit_pct` creates a fixed profit-taking sell above entry, and `trailing_stop_pct` creates a sell stop that starts below entry and ratchets upward when `POST /market/price` marks a new high-water price. The trailing stop never moves lower. Add `breakeven_trigger_pct` to move protective stop exits up to the entry price after a favorable move.
 
 ## Text Crypto Alerts
 
@@ -162,8 +163,8 @@ The text parser is intentionally strict so Discord-style alerts are explicit and
 Supported examples:
 
 ```text
-BUY BTCUSDT $125 @ 50000 SL 2.5% TP 5% TRAIL 3%
-BUY SOLUSDT $50 @ 150 SL 3% TP 8% TS 4%
+BUY BTCUSDT $125 @ 50000 SL 2.5% TP 5% TRAIL 3% BE 2%
+BUY SOLUSDT $50 @ 150 SL 3% TP 8% TS 4% BE 3%
 SELL ETH/USDT 0.25 @ 3000
 ```
 
@@ -171,7 +172,7 @@ Validate text without placing an order:
 
 ```powershell
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/signals/parse-text -ContentType "application/json" -Body '{
-  "message": "BUY SOLUSDT $50 @ 150 SL 3% TP 8% TRAIL 4%"
+  "message": "BUY SOLUSDT $50 @ 150 SL 3% TP 8% TRAIL 4% BE 3%"
 }'
 ```
 
@@ -179,7 +180,7 @@ Run parsed text through the normal duplicate, risk, approval, and paper executio
 
 ```powershell
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/webhooks/text-alert -ContentType "application/json" -Body '{
-  "message": "BUY SOLUSDT $50 @ 150 SL 3% TP 8% TRAIL 4%"
+  "message": "BUY SOLUSDT $50 @ 150 SL 3% TP 8% TRAIL 4% BE 3%"
 }'
 ```
 
@@ -198,6 +199,7 @@ Recommended fields:
 - `stop_loss_pct`
 - `take_profit_pct`
 - `trailing_stop_pct`
+- `breakeven_trigger_pct`
 - `max_slippage_bps`
 - `strategy_id` or `strategy`
 - `exchange` or `venue`
@@ -225,6 +227,15 @@ Risk checks run before paper execution:
 - `price_required_for_base_amount`
 
 Set `AUTO_CRYPTO_MAX_OPEN_NOTIONAL` above `0` to cap cumulative open buy exposure. Set `AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT` above `0` to limit a single ticket to a percentage of account equity. Set `AUTO_CRYPTO_MAX_STOP_LOSS_PCT` and `AUTO_CRYPTO_MIN_REWARD_RISK_RATIO` above `0` to reject alerts whose stop is too wide or whose take-profit does not justify the stop risk. Set `AUTO_CRYPTO_MAX_CONSECUTIVE_LOSSES` above `0` to pause new entries after repeated losing bracket exits. SQLite-backed paper state restores open exposure after restart, and triggered paper exits release exposure for later risk checks.
+
+## Research Notes
+
+Current bot work is guided by paper-first risk controls and exchange order behavior:
+
+- Binance documents spot trailing stops as dynamic contingent orders that track favorable price movement and trigger after a configured reversal delta: <https://developers.binance.com/docs/binance-spot-api-docs/faqs/trailing-stop-faq>
+- Binance order payloads expose trailing-stop fields such as `trailingDelta` and `trailingTime`, which is useful when mapping paper behavior to future live adapters: <https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints>
+- CCXT notes that trailing orders and stop/take-profit parameters vary by exchange, so Auto-Crypto keeps exchange-specific live execution disabled and paper-first until adapter capability checks are explicit: <https://docs.ccxt.com/docs/faq>
+- Bot setting guidance consistently emphasizes stop loss, take profit, demo/paper testing, backtesting, and position sizing before live automation: <https://bitsgap.com/blog/how-to-choose-crypto-trading-bot-settings-in-2026-range-investment-stop-loss-and-take-profit>
 
 ## Environment Variables
 

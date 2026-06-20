@@ -25,6 +25,8 @@ class PaperLot:
     exit_orders: list[ExitOrder] = field(default_factory=list)
     trailing_stop_pct: Decimal | None = None
     high_water_mark: Decimal | None = None
+    breakeven_trigger_pct: Decimal | None = None
+    breakeven_applied: bool = False
 
 
 @dataclass
@@ -72,6 +74,7 @@ class PaperOrder:
     price: Decimal | None
     exit_orders: list[ExitOrder] = field(default_factory=list)
     trailing_stop_pct: Decimal | None = None
+    breakeven_trigger_pct: Decimal | None = None
     status: str = "accepted"
 
     def to_dict(self) -> dict:
@@ -90,6 +93,9 @@ class PaperOrder:
                 for exit_order in self.exit_orders
             ],
             "trailing_stop_pct": str(self.trailing_stop_pct) if self.trailing_stop_pct is not None else None,
+            "breakeven_trigger_pct": str(self.breakeven_trigger_pct)
+            if self.breakeven_trigger_pct is not None
+            else None,
         }
 
 
@@ -149,6 +155,7 @@ class PaperExchange:
             price=signal.price,
             exit_orders=exit_orders,
             trailing_stop_pct=signal.trailing_stop_pct,
+            breakeven_trigger_pct=signal.breakeven_trigger_pct,
         )
         self.orders.append(order)
         if quantity is not None:
@@ -178,6 +185,7 @@ class PaperExchange:
         for lot in list(self.lots):
             if lot.symbol != symbol or lot.remaining_quantity <= 0:
                 continue
+            self._apply_breakeven(lot, price)
             self._update_trailing_stop(lot, price)
             exit_order = self._triggered_exit(lot, price)
             if exit_order is None:
@@ -224,6 +232,7 @@ class PaperExchange:
                     exit_orders=exit_orders,
                     trailing_stop_pct=signal.trailing_stop_pct,
                     high_water_mark=signal.price if signal.trailing_stop_pct is not None else None,
+                    breakeven_trigger_pct=signal.breakeven_trigger_pct,
                 )
             )
         elif signal.side == "sell":
@@ -246,6 +255,7 @@ class PaperExchange:
                     exit_orders=order.exit_orders,
                     trailing_stop_pct=order.trailing_stop_pct,
                     high_water_mark=order.price if order.trailing_stop_pct is not None else None,
+                    breakeven_trigger_pct=order.breakeven_trigger_pct,
                 )
             )
         elif order.side == "sell":
@@ -271,11 +281,26 @@ class PaperExchange:
         lot.high_water_mark = price
         trigger = _money(price * (Decimal("1") - lot.trailing_stop_pct / Decimal("100")))
         lot.exit_orders = [
-            ExitOrder(kind=exit_order.kind, trigger_price=trigger)
+            ExitOrder(kind=exit_order.kind, trigger_price=max(exit_order.trigger_price, trigger))
             if exit_order.kind == "trailing_stop"
             else exit_order
             for exit_order in lot.exit_orders
         ]
+
+    def _apply_breakeven(self, lot: PaperLot, price: Decimal) -> None:
+        if lot.breakeven_trigger_pct is None or lot.breakeven_applied:
+            return
+        trigger_price = lot.entry_price * (Decimal("1") + lot.breakeven_trigger_pct / Decimal("100"))
+        if price < trigger_price:
+            return
+        breakeven_price = _money(lot.entry_price)
+        lot.exit_orders = [
+            ExitOrder(kind=exit_order.kind, trigger_price=max(exit_order.trigger_price, breakeven_price))
+            if exit_order.kind in {"stop_loss", "trailing_stop"}
+            else exit_order
+            for exit_order in lot.exit_orders
+        ]
+        lot.breakeven_applied = True
 
     def _close_lot(self, lot: PaperLot, price: Decimal) -> None:
         position = self.positions.get(lot.symbol)
@@ -382,6 +407,9 @@ def _paper_order_from_dict(payload: dict) -> PaperOrder:
         ],
         trailing_stop_pct=Decimal(str(payload["trailing_stop_pct"]))
         if payload.get("trailing_stop_pct") is not None
+        else None,
+        breakeven_trigger_pct=Decimal(str(payload["breakeven_trigger_pct"]))
+        if payload.get("breakeven_trigger_pct") is not None
         else None,
         status=str(payload.get("status") or "accepted"),
     )

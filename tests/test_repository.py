@@ -46,6 +46,7 @@ def test_sqlite_repository_persists_signals_orders_and_audit_events(tmp_path):
     assert persisted_order["created_at"]
     assert persisted_order["exit_orders"][0]["kind"] == "stop_loss"
     assert persisted_order["trailing_stop_pct"] is None
+    assert persisted_order["breakeven_trigger_pct"] is None
     audit_event = reopened.list_audit()[0]
     assert audit_event.event_type == "order.accepted"
     assert audit_event.data == {"order_id": "paper-1"}
@@ -83,6 +84,7 @@ def test_sqlite_repository_persists_and_pops_pending_approval(tmp_path):
             "stop_loss_pct": "2",
             "take_profit_pct": "4",
             "trailing_stop_pct": "3",
+            "breakeven_trigger_pct": "2",
         },
         source="test",
     )
@@ -104,6 +106,7 @@ def test_sqlite_repository_persists_and_pops_pending_approval(tmp_path):
             "stop_loss_pct": "2",
             "take_profit_pct": "4",
             "trailing_stop_pct": "3",
+            "breakeven_trigger_pct": "2",
             "strategy_id": "manual",
             "created_at": pending[0]["created_at"],
         }
