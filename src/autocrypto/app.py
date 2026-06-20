@@ -11,7 +11,9 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .approvals import ApprovalQueue
+from .bot_event_bus import BotEvent, event_bus
 from .config import load_settings
+from .edge_actions import apply_edge_action
 from .engine import TradingEngine
 from .exchanges.bitunix_adapter import (
     BitunixConfigurationError,
@@ -121,6 +123,36 @@ def create_app(
     def control_status() -> dict[str, Any]:
         return {"halted": engine.halted, "reason": engine.halt_reason}
 
+    @app.post("/bus/events")
+    async def publish_bus_event(event: BotEvent) -> dict[str, Any]:
+        accepted = event_bus.publish(event)
+        result: dict[str, Any] | None = None
+        if event.event_type == "edge.action":
+            result = apply_edge_action(event=accepted, engine=engine, repository=repository)
+        return {
+            "status": "accepted",
+            "event": accepted.model_dump(mode="json"),
+            "result": result,
+        }
+
+    @app.get("/bus/events")
+    def recent_bus_events(limit: int = 100, event_type: str | None = None) -> dict[str, Any]:
+        return {"events": event_bus.recent(limit=limit, event_type=event_type)}
+
+    @app.post("/bus/edge-actions")
+    async def publish_edge_action(payload: dict[str, Any]) -> dict[str, Any]:
+        event = event_bus.publish(
+            BotEvent(
+                event_type="edge.action",
+                source_bot="sentinel-edge",
+                correlation_id=str(payload.get("idempotency_key") or ""),
+                dedupe_key=str(payload.get("idempotency_key") or ""),
+                target_bots=["auto-crypto"],
+                payload={"contract_version": "edge.action.v1", **payload},
+            )
+        )
+        result = apply_edge_action(event=event, engine=engine, repository=repository)
+        return {"status": "accepted", "event": event.model_dump(mode="json"), "result": result}
     @app.post("/control/halt")
     async def halt(request: Request) -> dict[str, Any]:
         payload = await request.json()
