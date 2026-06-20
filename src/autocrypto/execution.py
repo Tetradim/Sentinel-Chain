@@ -16,6 +16,8 @@ class ExitOrder:
     kind: str
     trigger_price: Decimal
     close_pct: Decimal = Decimal("100")
+    oca_group: str | None = None
+    status: str = "open"
 
 
 @dataclass
@@ -95,6 +97,8 @@ class PaperOrder:
     trailing_stop_pct: Decimal | None = None
     trailing_activation_pct: Decimal | None = None
     breakeven_trigger_pct: Decimal | None = None
+    exit_kind: str | None = None
+    canceled_exit_orders: list[ExitOrder] = field(default_factory=list)
     reduce_only: bool = False
     status: str = "accepted"
 
@@ -114,6 +118,8 @@ class PaperOrder:
                     "kind": exit_order.kind,
                     "trigger_price": str(exit_order.trigger_price),
                     "close_pct": str(exit_order.close_pct),
+                    "oca_group": exit_order.oca_group,
+                    "status": exit_order.status,
                 }
                 for exit_order in self.exit_orders
             ],
@@ -124,6 +130,17 @@ class PaperOrder:
             "breakeven_trigger_pct": str(self.breakeven_trigger_pct)
             if self.breakeven_trigger_pct is not None
             else None,
+            "exit_kind": self.exit_kind,
+            "canceled_exit_orders": [
+                {
+                    "kind": exit_order.kind,
+                    "trigger_price": str(exit_order.trigger_price),
+                    "close_pct": str(exit_order.close_pct),
+                    "oca_group": exit_order.oca_group,
+                    "status": exit_order.status,
+                }
+                for exit_order in self.canceled_exit_orders
+            ],
             "reduce_only": self.reduce_only,
         }
 
@@ -228,6 +245,9 @@ class PaperExchange:
                 self._close_lot(lot, price, exit_quantity)
                 if exit_order.kind == "take_profit" and lot.remaining_quantity > 0:
                     lot.exit_orders = [order for order in lot.exit_orders if order is not exit_order]
+                canceled_exit_orders = self._canceled_sibling_exits(lot, exit_order)
+                if lot.remaining_quantity <= 0:
+                    lot.exit_orders = []
                 order_number = len(self.orders) + 1
                 exit_side = "sell" if lot.direction == "long" else "buy"
                 order = PaperOrder(
@@ -239,6 +259,8 @@ class PaperExchange:
                     side=exit_side,
                     notional=notional,
                     price=price,
+                    exit_kind=exit_order.kind,
+                    canceled_exit_orders=canceled_exit_orders,
                 )
                 self.orders.append(order)
                 triggered.append(
@@ -418,7 +440,13 @@ class PaperExchange:
         lot.high_water_mark = price
         trigger = _money(price * (Decimal("1") - lot.trailing_stop_pct / Decimal("100")))
         lot.exit_orders = [
-            ExitOrder(kind=exit_order.kind, trigger_price=max(exit_order.trigger_price, trigger))
+            ExitOrder(
+                kind=exit_order.kind,
+                trigger_price=max(exit_order.trigger_price, trigger),
+                close_pct=exit_order.close_pct,
+                oca_group=exit_order.oca_group,
+                status=exit_order.status,
+            )
             if exit_order.kind == "trailing_stop"
             else exit_order
             for exit_order in lot.exit_orders
@@ -440,7 +468,13 @@ class PaperExchange:
         lot.low_water_mark = price
         trigger = _money(price * (Decimal("1") + lot.trailing_stop_pct / Decimal("100")))
         lot.exit_orders = [
-            ExitOrder(kind=exit_order.kind, trigger_price=min(exit_order.trigger_price, trigger))
+            ExitOrder(
+                kind=exit_order.kind,
+                trigger_price=min(exit_order.trigger_price, trigger),
+                close_pct=exit_order.close_pct,
+                oca_group=exit_order.oca_group,
+                status=exit_order.status,
+            )
             if exit_order.kind == "trailing_stop"
             else exit_order
             for exit_order in lot.exit_orders
@@ -464,6 +498,9 @@ class PaperExchange:
                 trigger_price=max(exit_order.trigger_price, breakeven_price)
                 if lot.direction == "long"
                 else min(exit_order.trigger_price, breakeven_price),
+                close_pct=exit_order.close_pct,
+                oca_group=exit_order.oca_group,
+                status=exit_order.status,
             )
             if exit_order.kind in {"stop_loss", "trailing_stop"}
             else exit_order
@@ -496,6 +533,21 @@ class PaperExchange:
             position.avg_entry = Decimal("0")
         else:
             self._refresh_position_average(lot.symbol)
+
+    def _canceled_sibling_exits(self, lot: PaperLot, triggered_exit: ExitOrder) -> list[ExitOrder]:
+        if lot.remaining_quantity > 0:
+            return []
+        return [
+            ExitOrder(
+                kind=exit_order.kind,
+                trigger_price=exit_order.trigger_price,
+                close_pct=exit_order.close_pct,
+                oca_group=exit_order.oca_group,
+                status="canceled",
+            )
+            for exit_order in lot.exit_orders
+            if exit_order is not triggered_exit and exit_order.status == "open"
+        ]
 
     def _sell_quantity(self, symbol: str, quantity: Decimal, price: Decimal) -> None:
         position = self.positions.setdefault(symbol, PaperPosition(symbol=symbol))
@@ -574,12 +626,13 @@ def build_exit_orders(signal: CryptoSignal) -> list[ExitOrder]:
         return []
 
     exits: list[ExitOrder] = []
+    oca_group = f"oca-{_order_fragment(signal.signal_id)}"
     if signal.stop_loss_price is not None:
-        exits.append(ExitOrder(kind="stop_loss", trigger_price=_money(signal.stop_loss_price)))
+        exits.append(ExitOrder(kind="stop_loss", trigger_price=_money(signal.stop_loss_price), oca_group=oca_group))
     elif signal.stop_loss_pct is not None:
         stop_direction = Decimal("-1") if signal.side == "buy" else Decimal("1")
         trigger = signal.price * (Decimal("1") + stop_direction * signal.stop_loss_pct / Decimal("100"))
-        exits.append(ExitOrder(kind="stop_loss", trigger_price=_money(trigger)))
+        exits.append(ExitOrder(kind="stop_loss", trigger_price=_money(trigger), oca_group=oca_group))
     if signal.take_profit_targets:
         for target in signal.take_profit_targets:
             if target.trigger_price is not None:
@@ -592,12 +645,13 @@ def build_exit_orders(signal: CryptoSignal) -> list[ExitOrder]:
                     kind="take_profit",
                     trigger_price=_money(trigger),
                     close_pct=target.close_pct,
+                    oca_group=oca_group,
                 )
             )
     if signal.trailing_stop_pct is not None:
         trail_direction = Decimal("-1") if signal.side == "buy" else Decimal("1")
         trigger = signal.price * (Decimal("1") + trail_direction * signal.trailing_stop_pct / Decimal("100"))
-        exits.append(ExitOrder(kind="trailing_stop", trigger_price=_money(trigger)))
+        exits.append(ExitOrder(kind="trailing_stop", trigger_price=_money(trigger), oca_group=oca_group))
     return exits
 
 
@@ -634,16 +688,7 @@ def _paper_order_from_dict(payload: dict) -> PaperOrder:
         side=str(payload["side"]),
         notional=Decimal(str(payload["notional"])),
         price=Decimal(str(payload["price"])) if payload.get("price") is not None else None,
-        exit_orders=[
-            ExitOrder(kind=str(exit_order["kind"]), trigger_price=Decimal(str(exit_order["trigger_price"])))
-            if exit_order.get("close_pct") is None
-            else ExitOrder(
-                kind=str(exit_order["kind"]),
-                trigger_price=Decimal(str(exit_order["trigger_price"])),
-                close_pct=Decimal(str(exit_order["close_pct"])),
-            )
-            for exit_order in payload.get("exit_orders", [])
-        ],
+        exit_orders=[_exit_order_from_dict(exit_order) for exit_order in payload.get("exit_orders", [])],
         trailing_stop_pct=Decimal(str(payload["trailing_stop_pct"]))
         if payload.get("trailing_stop_pct") is not None
         else None,
@@ -653,6 +698,21 @@ def _paper_order_from_dict(payload: dict) -> PaperOrder:
         breakeven_trigger_pct=Decimal(str(payload["breakeven_trigger_pct"]))
         if payload.get("breakeven_trigger_pct") is not None
         else None,
+        exit_kind=payload.get("exit_kind"),
+        canceled_exit_orders=[
+            _exit_order_from_dict(exit_order, default_status="canceled")
+            for exit_order in payload.get("canceled_exit_orders", [])
+        ],
         reduce_only=bool(payload.get("reduce_only", False)),
         status=str(payload.get("status") or "accepted"),
+    )
+
+
+def _exit_order_from_dict(payload: dict, *, default_status: str = "open") -> ExitOrder:
+    return ExitOrder(
+        kind=str(payload["kind"]),
+        trigger_price=Decimal(str(payload["trigger_price"])),
+        close_pct=Decimal(str(payload.get("close_pct") or "100")),
+        oca_group=payload.get("oca_group"),
+        status=str(payload.get("status") or default_status),
     )

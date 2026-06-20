@@ -48,6 +48,9 @@ def test_market_price_response_includes_updated_active_exits():
     assert response.status_code == 200
     body = response.json()
     trailing_exit = next(exit_order for exit_order in body["active_exits"] if exit_order["kind"] == "trailing_stop")
+    stop_exit = next(exit_order for exit_order in body["active_exits"] if exit_order["kind"] == "stop_loss")
     assert body["triggered"] == []
+    assert stop_exit["status"] == "open"
+    assert stop_exit["oca_group"]
     assert trailing_exit["trigger_price"] == "104.50"
     assert trailing_exit["high_water_mark"] == "110"

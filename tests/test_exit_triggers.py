@@ -356,6 +356,36 @@ def test_staged_take_profit_fills_all_crossed_targets_on_one_price_mark():
     assert exchange.list_positions()[0]["realized_pnl"] == "10.00000000"
 
 
+def test_final_bracket_exit_records_canceled_oca_siblings():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "oca-final-close",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+            "trailing_stop_pct": "4",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    triggered = exchange.update_price("BTC/USDT", Decimal("110"))
+
+    assert triggered == [
+        {"symbol": "BTC/USDT", "kind": "take_profit", "price": "110.00000000", "quantity": "1.00000000"}
+    ]
+    assert exchange.orders[-1].exit_kind == "take_profit"
+    assert [(order.kind, order.status, order.oca_group) for order in exchange.orders[-1].canceled_exit_orders] == [
+        ("stop_loss", "canceled", "oca-oca-final-close"),
+        ("trailing_stop", "canceled", "oca-oca-final-close"),
+    ]
+
+
 def test_short_bracket_take_profit_closes_with_buy_exit():
     exchange = PaperExchange()
     engine = TradingEngine(exchange=exchange)

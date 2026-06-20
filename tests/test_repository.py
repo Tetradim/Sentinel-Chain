@@ -45,8 +45,11 @@ def test_sqlite_repository_persists_signals_orders_and_audit_events(tmp_path):
     assert persisted_order["order_id"] == "paper-1"
     assert persisted_order["created_at"]
     assert persisted_order["exit_orders"][0]["kind"] == "stop_loss"
+    assert persisted_order["exit_orders"][0]["status"] == "open"
     assert persisted_order["trailing_stop_pct"] is None
     assert persisted_order["breakeven_trigger_pct"] is None
+    assert persisted_order["exit_kind"] is None
+    assert persisted_order["canceled_exit_orders"] == []
     audit_event = reopened.list_audit()[0]
     assert audit_event.event_type == "order.accepted"
     assert audit_event.data == {"order_id": "paper-1"}

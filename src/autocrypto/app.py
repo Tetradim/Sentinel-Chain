@@ -592,6 +592,8 @@ def _active_exits_to_dict(lots: list[Any]) -> list[dict[str, str]]:
             "kind": exit_order.kind,
             "trigger_price": str(exit_order.trigger_price),
             "close_pct": str(exit_order.close_pct),
+            "oca_group": exit_order.oca_group,
+            "status": exit_order.status,
             "trailing_stop_pct": str(lot.trailing_stop_pct) if exit_order.kind == "trailing_stop" and lot.trailing_stop_pct else None,
             "trailing_activation_pct": str(lot.trailing_activation_pct)
             if exit_order.kind == "trailing_stop" and lot.trailing_activation_pct
@@ -609,4 +611,3 @@ def _active_exits_to_dict(lots: list[Any]) -> list[dict[str, str]]:
         if lot.remaining_quantity > 0
         for exit_order in lot.exit_orders
     ]
-
