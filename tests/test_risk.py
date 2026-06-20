@@ -165,3 +165,26 @@ def test_risk_rejects_wide_stop_or_weak_reward_risk():
     assert decision.approved is False
     assert "max_stop_loss_pct_exceeded" in decision.reason_codes
     assert "min_reward_risk_ratio_not_met" in decision.reason_codes
+
+
+def test_risk_rejects_when_consecutive_loss_limit_is_reached():
+    signal = normalize_signal(
+        {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "50000",
+            "stop_loss_pct": "2",
+            "take_profit_pct": "6",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(
+        signal,
+        RiskConfig(max_consecutive_losses=2),
+        AccountState(consecutive_losses=2),
+    )
+
+    assert decision.approved is False
+    assert "consecutive_loss_limit_exceeded" in decision.reason_codes

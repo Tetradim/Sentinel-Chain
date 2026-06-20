@@ -12,6 +12,7 @@ def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(mo
     monkeypatch.setenv("AUTO_CRYPTO_MAX_OPEN_NOTIONAL", "750")
     monkeypatch.setenv("AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT", "5")
     monkeypatch.setenv("AUTO_CRYPTO_MAX_LEVERAGE", "2")
+    monkeypatch.setenv("AUTO_CRYPTO_MAX_CONSECUTIVE_LOSSES", "3")
     monkeypatch.setenv("AUTO_CRYPTO_REQUIRE_STOP_LOSS", "false")
     monkeypatch.setenv("AUTO_CRYPTO_MAX_STOP_LOSS_PCT", "4")
     monkeypatch.setenv("AUTO_CRYPTO_MIN_REWARD_RISK_RATIO", "2")
@@ -30,6 +31,7 @@ def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(mo
     assert settings.risk.max_open_notional == Decimal("750")
     assert settings.risk.max_position_equity_pct == Decimal("5")
     assert settings.risk.max_leverage == Decimal("2")
+    assert settings.risk.max_consecutive_losses == 3
     assert settings.risk.require_stop_loss is False
     assert settings.risk.max_stop_loss_pct == Decimal("4")
     assert settings.risk.min_reward_risk_ratio == Decimal("2")

@@ -67,3 +67,46 @@ def test_market_price_exit_reduces_open_notional_for_future_risk(tmp_path):
     )
 
     assert next_order.json()["status"] == "accepted"
+
+
+def test_market_price_stop_loss_updates_daily_pnl_and_loss_streak(tmp_path):
+    repo = SQLiteRepository(tmp_path / "market_loss_streak.sqlite3")
+    app = create_app(
+        repository=repo,
+        risk_config=RiskConfig(max_order_notional=Decimal("500"), max_consecutive_losses=1),
+    )
+    client = TestClient(app)
+    entry = client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "loss-streak-entry",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "2",
+            "take_profit_pct": "4",
+        },
+    )
+    exit_response = client.post("/market/price", json={"symbol": "BTCUSDT", "price": "97"})
+    next_signal = client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "loss-streak-next",
+            "symbol": "ETHUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "2",
+            "take_profit_pct": "4",
+        },
+    )
+
+    assert entry.status_code == 200
+    assert exit_response.status_code == 200
+    exit_body = exit_response.json()
+    assert exit_body["realized_pnl_delta"] == "-3"
+    assert exit_body["daily_pnl"] == "-3"
+    assert exit_body["consecutive_losses"] == 1
+    assert next_signal.json()["status"] == "rejected"
+    assert "consecutive_loss_limit_exceeded" in next_signal.json()["risk"]["reason_codes"]

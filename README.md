@@ -12,7 +12,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Parses text alerts without ordering at `POST /signals/parse-text`
 - Normalizes crypto pairs such as `BTCUSDT`, `BTC/USDT`, `ETH-USDC`, and `SOL_USDT`
 - Blocks duplicate signal IDs across restarts with SQLite-backed idempotency
-- Applies pre-trade risk checks for stop loss, maximum stop width, minimum reward/risk, max order notional, max open notional, equity-percent position size, leverage, slippage, allowed exchanges, blocked symbols, and daily loss
+- Applies pre-trade risk checks for stop loss, maximum stop width, minimum reward/risk, max order notional, max open notional, equity-percent position size, leverage, slippage, allowed exchanges, blocked symbols, daily loss, and consecutive losing exits
 - Supports approval-required mode with persisted pending approvals
 - Records paper orders, paper positions, realized PnL, active bracket lots, and audit events
 - Rehydrates paper positions, bracket lots, and exposure risk state from SQLite after restart
@@ -210,6 +210,7 @@ Risk checks run before paper execution:
 - `max_position_equity_pct_exceeded`
 - `max_leverage_exceeded`
 - `max_slippage_exceeded`
+- `consecutive_loss_limit_exceeded`
 - `max_stop_loss_pct_exceeded`
 - `min_reward_risk_ratio_not_met`
 - `exchange_not_allowed`
@@ -218,7 +219,7 @@ Risk checks run before paper execution:
 - `daily_loss_limit_exceeded`
 - `price_required_for_base_amount`
 
-Set `AUTO_CRYPTO_MAX_OPEN_NOTIONAL` above `0` to cap cumulative open buy exposure. Set `AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT` above `0` to limit a single ticket to a percentage of account equity. Set `AUTO_CRYPTO_MAX_STOP_LOSS_PCT` and `AUTO_CRYPTO_MIN_REWARD_RISK_RATIO` above `0` to reject alerts whose stop is too wide or whose take-profit does not justify the stop risk. SQLite-backed paper state restores open exposure after restart, and triggered paper exits release exposure for later risk checks.
+Set `AUTO_CRYPTO_MAX_OPEN_NOTIONAL` above `0` to cap cumulative open buy exposure. Set `AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT` above `0` to limit a single ticket to a percentage of account equity. Set `AUTO_CRYPTO_MAX_STOP_LOSS_PCT` and `AUTO_CRYPTO_MIN_REWARD_RISK_RATIO` above `0` to reject alerts whose stop is too wide or whose take-profit does not justify the stop risk. Set `AUTO_CRYPTO_MAX_CONSECUTIVE_LOSSES` above `0` to pause new entries after repeated losing bracket exits. SQLite-backed paper state restores open exposure after restart, and triggered paper exits release exposure for later risk checks.
 
 ## Environment Variables
 
@@ -236,6 +237,7 @@ AUTO_CRYPTO_MAX_OPEN_NOTIONAL=0
 AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT=0
 AUTO_CRYPTO_MAX_LEVERAGE=1
 AUTO_CRYPTO_MAX_DAILY_LOSS=500
+AUTO_CRYPTO_MAX_CONSECUTIVE_LOSSES=0
 AUTO_CRYPTO_MAX_SLIPPAGE_BPS=100
 AUTO_CRYPTO_REQUIRE_STOP_LOSS=true
 AUTO_CRYPTO_MAX_STOP_LOSS_PCT=0

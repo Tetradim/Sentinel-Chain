@@ -13,6 +13,7 @@ class RiskConfig:
     max_position_equity_pct: Decimal = Decimal("0")
     max_leverage: Decimal = Decimal("1")
     max_daily_loss: Decimal = Decimal("500")
+    max_consecutive_losses: int = 0
     require_stop_loss: bool = True
     max_stop_loss_pct: Decimal = Decimal("0")
     min_reward_risk_ratio: Decimal = Decimal("0")
@@ -27,6 +28,7 @@ class AccountState:
     equity: Decimal = Decimal("10000")
     daily_pnl: Decimal = Decimal("0")
     open_notional: Decimal = Decimal("0")
+    consecutive_losses: int = 0
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,8 @@ def evaluate_signal(
         reasons.append("max_leverage_exceeded")
     if config.max_daily_loss > 0 and account_state.daily_pnl <= -config.max_daily_loss:
         reasons.append("daily_loss_limit_exceeded")
+    if config.max_consecutive_losses > 0 and account_state.consecutive_losses >= config.max_consecutive_losses:
+        reasons.append("consecutive_loss_limit_exceeded")
     if signal.stop_loss_pct is not None and config.max_stop_loss_pct > 0 and signal.stop_loss_pct > config.max_stop_loss_pct:
         reasons.append("max_stop_loss_pct_exceeded")
     if (

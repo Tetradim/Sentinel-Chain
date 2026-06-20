@@ -37,6 +37,7 @@ def load_settings() -> AppSettings:
             max_position_equity_pct=Decimal(os.getenv("AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT", "0")),
             max_leverage=Decimal(os.getenv("AUTO_CRYPTO_MAX_LEVERAGE", "1")),
             max_daily_loss=Decimal(os.getenv("AUTO_CRYPTO_MAX_DAILY_LOSS", "500")),
+            max_consecutive_losses=int(os.getenv("AUTO_CRYPTO_MAX_CONSECUTIVE_LOSSES", "0")),
             require_stop_loss=_bool(os.getenv("AUTO_CRYPTO_REQUIRE_STOP_LOSS", "true")),
             max_stop_loss_pct=Decimal(os.getenv("AUTO_CRYPTO_MAX_STOP_LOSS_PCT", "0")),
             min_reward_risk_ratio=Decimal(os.getenv("AUTO_CRYPTO_MIN_REWARD_RISK_RATIO", "0")),

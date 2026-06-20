@@ -150,6 +150,8 @@ def test_ui_state_returns_dashboard_contract(tmp_path):
     assert "max_position_equity_pct" in body["risk"]
     assert "max_stop_loss_pct" in body["risk"]
     assert "min_reward_risk_ratio" in body["risk"]
+    assert "max_consecutive_losses" in body["risk"]
+    assert body["account"]["consecutive_losses"] == 0
     assert body["orders"] == []
     assert body["positions"] == []
     assert body["approvals"] == []

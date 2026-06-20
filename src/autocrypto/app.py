@@ -308,8 +308,15 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         order_offset = len(engine.exchange.orders)
+        realized_before = _position_realized_pnl(engine.exchange, symbol)
         triggered = engine.exchange.update_price(symbol, price)
         if triggered:
+            realized_pnl_delta = _position_realized_pnl(engine.exchange, symbol) - realized_before
+            engine.account_state.daily_pnl += realized_pnl_delta
+            if realized_pnl_delta < 0:
+                engine.account_state.consecutive_losses += 1
+            elif realized_pnl_delta > 0:
+                engine.account_state.consecutive_losses = 0
             engine.account_state.open_notional = engine.exchange.open_notional()
         if repository:
             for order in engine.exchange.orders[order_offset:]:
@@ -323,6 +330,9 @@ def create_app(
             "symbol": symbol,
             "price": str(price),
             "triggered": triggered,
+            "realized_pnl_delta": str(realized_pnl_delta) if triggered else "0",
+            "daily_pnl": str(engine.account_state.daily_pnl),
+            "consecutive_losses": engine.account_state.consecutive_losses,
             "positions": engine.exchange.list_positions(),
         }
 
@@ -470,6 +480,7 @@ def _risk_config_to_dict(config: RiskConfig) -> dict[str, Any]:
         "max_position_equity_pct": str(config.max_position_equity_pct),
         "max_leverage": str(config.max_leverage),
         "max_daily_loss": str(config.max_daily_loss),
+        "max_consecutive_losses": config.max_consecutive_losses,
         "require_stop_loss": config.require_stop_loss,
         "max_stop_loss_pct": str(config.max_stop_loss_pct),
         "min_reward_risk_ratio": str(config.min_reward_risk_ratio),
@@ -485,6 +496,7 @@ def _account_state_to_dict(account_state: AccountState) -> dict[str, Any]:
         "equity": str(account_state.equity),
         "daily_pnl": str(account_state.daily_pnl),
         "open_notional": str(account_state.open_notional),
+        "consecutive_losses": account_state.consecutive_losses,
     }
 
 
@@ -559,3 +571,8 @@ def _active_exits_to_dict(lots: list[Any]) -> list[dict[str, str]]:
         if lot.remaining_quantity > 0
         for exit_order in lot.exit_orders
     ]
+
+
+def _position_realized_pnl(exchange: PaperExchange, symbol: str) -> Decimal:
+    position = exchange.positions.get(symbol)
+    return position.realized_pnl if position else Decimal("0")
