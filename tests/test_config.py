@@ -46,6 +46,14 @@ def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(mo
     assert settings.risk.allowed_exchanges == {"paper", "binance", "kraken"}
 
 
+def test_zero_webhook_tolerance_disables_timestamp_staleness_window(monkeypatch):
+    monkeypatch.setenv("AUTO_CRYPTO_WEBHOOK_TOLERANCE_SECONDS", "0")
+
+    settings = load_settings()
+
+    assert settings.webhook_tolerance_seconds is None
+
+
 def test_load_settings_reads_dotenv_from_current_working_directory(monkeypatch, tmp_path):
     db_path = tmp_path / "dotenv.sqlite3"
     (tmp_path / ".env").write_text(f"AUTO_CRYPTO_DB_PATH={db_path}\n", encoding="utf-8")

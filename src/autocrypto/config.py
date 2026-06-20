@@ -29,7 +29,7 @@ def load_settings() -> AppSettings:
     return AppSettings(
         db_path=Path(db_path_raw) if db_path_raw else None,
         webhook_secret=webhook_secret,
-        webhook_tolerance_seconds=int(tolerance_raw) if tolerance_raw else None,
+        webhook_tolerance_seconds=_positive_int_or_none(tolerance_raw),
         require_approval=_bool(os.getenv("AUTO_CRYPTO_REQUIRE_APPROVAL", "false")),
         risk=RiskConfig(
             max_order_notional=Decimal(os.getenv("AUTO_CRYPTO_MAX_ORDER_NOTIONAL", "1000")),
@@ -60,6 +60,13 @@ def _empty_to_none(value: str | None) -> str | None:
         return None
     value = value.strip()
     return value or None
+
+
+def _positive_int_or_none(value: str | None) -> int | None:
+    if value is None:
+        return None
+    parsed = int(value)
+    return parsed if parsed > 0 else None
 
 
 def _csv_set(value: str) -> set[str]:
