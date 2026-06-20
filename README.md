@@ -34,6 +34,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Supports paper-only bracket close-by-signal controls that flatten or partially reduce the selected simulated bracket at an operator-supplied mark or at the current nearest protective trigger
 - Previews one active bracket by signal ID at a hypothetical mark or through a multi-mark path, including trigger distance, trailing activation context, and simulated post-mark trailing ratchets without mutating live paper state
 - Shows a paper bracket exit ladder by signal ID with trigger order, estimated close quantity, estimated notional, estimated P&L, and optional mark-distance math for each stop, trailing, take-profit, or time-stop leg
+- Shows read-only bracket decision support by signal ID with paper exit sequencing, health flags, and next-trailing-ratchet telemetry for a supplied mark
 - Cancels active synthetic paper bracket exits by signal ID while leaving the underlying paper position open for separate manual management
 - Previews hypothetical market-price marks and bracket/trailing exits without mutating paper orders or positions, including simulated post-mark trailing-stop ratchets
 - Previews server-side risk decisions from the operator UI without placing orders
@@ -235,6 +236,8 @@ Invoke-RestMethod http://127.0.0.1:8004/brackets/btc-breakout-001
 
 Invoke-RestMethod "http://127.0.0.1:8004/brackets/btc-breakout-001/exit-ladder?mark_price=50600"
 
+Invoke-RestMethod "http://127.0.0.1:8004/brackets/btc-breakout-001/decision-support?mark_price=50600"
+
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/brackets/btc-breakout-001/preview -ContentType "application/json" -Body '{
   "price": "50600"
 }'
@@ -287,6 +290,8 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/brackets/btc-breakout-
 `POST /brackets/{signal_id}/preview-path` is also signal-specific and paper-only. Send `prices` or `marks` as a non-empty list to replay several hypothetical marks through one deep-copied bracket state. The response includes each mark's `would_trigger` exits, `preview_active_exits` after that mark, simulated preview positions, and `mutates_state: false`; the live paper bracket, positions, audit log, and order history are unchanged. This is useful for reviewing whether an activation-gated or stepped trailing stop would ratchet before it would trigger.
 
 `GET /brackets/{signal_id}/exit-ladder` is also signal-specific and paper-only. It lists the bracket's synthetic exits in the direction they would be encountered by price, including each leg's intent, status, `close_pct`, estimated close quantity, estimated trigger notional, estimated P&L, and whether that leg would close the remaining paper lot. Add `?mark_price=...` to include current distance-to-trigger values without mutating trailing stops or recording any order.
+
+`GET /brackets/{signal_id}/decision-support` is a read-only operator view over the same synthetic paper bracket. It returns the bracket summary, health row, next open trigger, full trigger sequence, and a `trailing` block for each trailing leg. Add `?mark_price=...` to see whether that mark would activate a pending trailing stop, whether a stepped trailing stop would ratchet, the `next_trailing_trigger`, `next_trailing_trigger_change`, and the configured `trailing_step_required`. The endpoint does not mutate paper orders, P&L, active exits, or water marks.
 
 Stop amendments are paper-only bracket maintenance events. A long bracket stop can only move upward, and a short bracket stop can only move downward. Attempts to loosen the stop return `409` and leave the bracket unchanged. Successful amendments record a synthetic `bracket_stop_amend` paper order plus a `bracket.stop_amended` audit event when SQLite persistence is configured, and those amendments replay after restart.
 
@@ -538,6 +543,9 @@ Current bot work is guided by paper-first risk controls and exchange order behav
 - Coinbase's current Advanced Trade order guide describes bracket orders as a single sell order with linked limit and trigger prices where one side filling disables the other, and Coinbase Exchange TP/SL docs note only one TP/SL on one side; Auto-Crypto keeps staged or partial close plans paper-required and makes the close action explicit in the planning preview: <https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/guides/orders> and <https://docs.cdp.coinbase.com/exchange/fix-api/order-entry-messages/tpsl-orders>
 - Current backtesting guidance warns against look-ahead bias and unrealistic assumptions; Auto-Crypto persists `risk_pct`, `risk_amount`, and `max_hold_marks` through approval restarts so paper approvals replay the same rules that were originally reviewed instead of silently changing the test setup: <https://www.fortraders.com/blog/how-to-avoid-bias-in-backtesting>
 - Binance's current trailing-stop FAQ describes trailing stops as dynamic contingent orders that move with favorable price action and trigger on reversal, while Freqtrade's current stoploss docs note that trailing stop changes should only tighten risk; Auto-Crypto's bracket path preview therefore shows a step-by-step synthetic ratchet/trigger sequence on a copied paper bracket before any operator applies real paper marks: <https://developers.binance.com/docs/binance-spot-api-docs/faqs/trailing-stop-faq> and <https://www.freqtrade.io/en/stable/stoploss/>
+- CCXT's current FAQ separates attached TP/SL parameters, standalone closing orders, trailing support, and exchange-specific feature checks, so `/brackets/{signal_id}/decision-support` remains paper-only operator telemetry rather than an exchange order instruction: <https://docs.ccxt.com/docs/faq>
+- Current 2026 bot-setting guidance still treats stop loss, take profit, demo testing, and backtesting as core setup work, so the decision-support endpoint surfaces exit health and trigger sequencing before any live venue mapping: <https://bitsgap.com/blog/how-to-choose-crypto-trading-bot-settings-in-2026-range-investment-stop-loss-and-take-profit>
+- Walk-forward/backtesting guidance warns against false confidence from one fixed historical test, so Auto-Crypto exposes next-trailing-ratchet telemetry on active snapshots and path previews to make paper assumptions auditable mark by mark: <https://blog.quantinsti.com/walk-forward-optimization-introduction/>
 
 ## Environment Variables
 

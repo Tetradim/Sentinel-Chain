@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from copy import deepcopy
 from collections.abc import Callable
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
 
@@ -395,6 +395,30 @@ def create_app(
             "direction": lots[0].direction,
             "mark_price": str(parsed_mark_price) if parsed_mark_price is not None else None,
             "ladders": [_bracket_exit_ladder_to_dict(lot, mark_price=parsed_mark_price) for lot in lots],
+        }
+
+    @app.get("/brackets/{signal_id}/decision-support")
+    def bracket_decision_support(signal_id: str, mark_price: str | None = None) -> dict[str, Any]:
+        lots = [
+            lot
+            for lot in engine.exchange.lots
+            if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
+        ]
+        if not lots:
+            raise HTTPException(status_code=404, detail="active bracket not found")
+        parsed_mark_price: Decimal | None = None
+        if mark_price not in (None, ""):
+            try:
+                parsed_mark_price = _positive_decimal(mark_price)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "signal_id": signal_id,
+            "symbol": lots[0].symbol,
+            "direction": lots[0].direction,
+            "mark_price": str(parsed_mark_price) if parsed_mark_price is not None else None,
+            "mutates_state": False,
+            "summaries": [_bracket_decision_support_to_dict(lot, mark_price=parsed_mark_price) for lot in lots],
         }
 
     @app.post("/brackets/{signal_id}/preview")
@@ -1435,6 +1459,7 @@ def _active_exits_to_dict(
 def _active_exit_to_dict(lot: Any, exit_order: Any, *, mark_price: Decimal | None) -> dict[str, Any]:
     trailing_activation_price = _lot_trailing_activation_price(lot) if exit_order.kind == "trailing_stop" else None
     distance = _exit_distance(lot, exit_order, mark_price) if mark_price is not None else None
+    trailing_telemetry = _trailing_telemetry(lot, exit_order, mark_price=mark_price)
     return {
         "symbol": lot.symbol,
         "direction": lot.direction,
@@ -1475,6 +1500,11 @@ def _active_exit_to_dict(lot: Any, exit_order: Any, *, mark_price: Decimal | Non
         "trailing_activated": str(lot.trailing_activated).lower() if exit_order.kind == "trailing_stop" else None,
         "high_water_mark": str(lot.high_water_mark) if exit_order.kind == "trailing_stop" and lot.high_water_mark else None,
         "low_water_mark": str(lot.low_water_mark) if exit_order.kind == "trailing_stop" and lot.low_water_mark else None,
+        "next_trailing_trigger": trailing_telemetry["next_trailing_trigger"],
+        "next_trailing_trigger_change": trailing_telemetry["next_trailing_trigger_change"],
+        "trailing_step_required": trailing_telemetry["trailing_step_required"],
+        "trailing_ratchet_ready_at_mark": trailing_telemetry["trailing_ratchet_ready_at_mark"],
+        "trailing_activation_ready_at_mark": trailing_telemetry["trailing_activation_ready_at_mark"],
         "distance_to_trigger": str(distance) if distance is not None else None,
         "distance_to_trigger_pct": str(distance / mark_price * Decimal("100"))
         if distance is not None and mark_price is not None and mark_price > 0
@@ -1553,6 +1583,44 @@ def _bracket_exit_ladder_to_dict(lot: Any, *, mark_price: Decimal | None = None)
     }
 
 
+def _bracket_decision_support_to_dict(lot: Any, *, mark_price: Decimal | None = None) -> dict[str, Any]:
+    rows = [
+        _decision_support_row(lot, exit_order, trigger_order=index + 1, mark_price=mark_price)
+        for index, exit_order in enumerate(
+            sorted(lot.exit_orders, key=lambda exit_order: _exit_ladder_sort_key(lot, exit_order))
+        )
+    ]
+    next_trigger = next((row for row in rows if row["status"] == "open"), rows[0] if rows else None)
+    trailing_rows = [row for row in rows if row["kind"] == "trailing_stop"]
+    return {
+        "signal_id": lot.signal_id,
+        "symbol": lot.symbol,
+        "direction": lot.direction,
+        "entry_price": str(lot.entry_price),
+        "remaining_quantity": str(lot.remaining_quantity),
+        "summary": _bracket_summary(lot),
+        "health": _bracket_health_row(lot),
+        "next_open_trigger": next_trigger,
+        "trailing": trailing_rows,
+        "trigger_sequence": rows,
+    }
+
+
+def _decision_support_row(
+    lot: Any,
+    exit_order: Any,
+    *,
+    trigger_order: int,
+    mark_price: Decimal | None,
+) -> dict[str, Any]:
+    row = _exit_ladder_row(lot, exit_order, trigger_order=trigger_order, mark_price=mark_price)
+    row["protective"] = exit_order.kind in {"stop_loss", "trailing_stop"}
+    row["profit_taking"] = exit_order.kind == "take_profit"
+    row["paper_only"] = True
+    row.update(_trailing_telemetry(lot, exit_order, mark_price=mark_price))
+    return row
+
+
 def _exit_ladder_row(
     lot: Any,
     exit_order: Any,
@@ -1589,6 +1657,7 @@ def _exit_ladder_row(
         "marks_remaining": max(lot.max_hold_marks - lot.marks_seen, 0)
         if exit_order.kind == "time_exit" and lot.max_hold_marks is not None
         else None,
+        **_trailing_telemetry(lot, exit_order, mark_price=mark_price),
     }
 
 
@@ -1620,6 +1689,84 @@ def _exit_ladder_sort_key(lot: Any, exit_order: Any) -> tuple[int, Decimal, str]
         return (1, Decimal("0"), exit_order.kind)
     price_key = exit_order.trigger_price if lot.direction == "long" else -exit_order.trigger_price
     return (0, price_key, exit_order.kind)
+
+
+def _trailing_telemetry(lot: Any, exit_order: Any, *, mark_price: Decimal | None) -> dict[str, Any]:
+    empty = {
+        "next_trailing_trigger": None,
+        "next_trailing_trigger_change": None,
+        "trailing_step_required": None,
+        "trailing_ratchet_ready_at_mark": None,
+        "trailing_activation_ready_at_mark": None,
+    }
+    if exit_order.kind != "trailing_stop":
+        return empty
+
+    activation_ready = _trailing_activation_ready(lot, mark_price) if mark_price is not None else None
+    step_required = _trailing_step_required(lot, exit_order.trigger_price)
+    if mark_price is None or exit_order.status != "open":
+        return {
+            **empty,
+            "trailing_step_required": _decimal_to_plain(step_required) if step_required is not None else None,
+            "trailing_activation_ready_at_mark": str(activation_ready).lower() if activation_ready is not None else None,
+        }
+
+    next_trigger = _candidate_trailing_trigger(lot, mark_price)
+    if next_trigger is None:
+        return {
+            **empty,
+            "trailing_step_required": _decimal_to_plain(step_required) if step_required is not None else None,
+            "trailing_ratchet_ready_at_mark": "false",
+            "trailing_activation_ready_at_mark": str(activation_ready).lower() if activation_ready is not None else None,
+        }
+    change = next_trigger - exit_order.trigger_price if lot.direction == "long" else exit_order.trigger_price - next_trigger
+    ratchet_ready = change > 0 and (step_required is None or change >= step_required)
+    return {
+        "next_trailing_trigger": str(next_trigger) if ratchet_ready else None,
+        "next_trailing_trigger_change": _decimal_to_plain(change) if change > 0 else None,
+        "trailing_step_required": _decimal_to_plain(step_required) if step_required is not None else None,
+        "trailing_ratchet_ready_at_mark": str(ratchet_ready).lower(),
+        "trailing_activation_ready_at_mark": str(activation_ready).lower() if activation_ready is not None else None,
+    }
+
+
+def _trailing_activation_ready(lot: Any, mark_price: Decimal | None) -> bool | None:
+    activation_price = _lot_trailing_activation_price(lot)
+    if activation_price is None or mark_price is None:
+        return None
+    return mark_price >= activation_price if lot.direction == "long" else mark_price <= activation_price
+
+
+def _candidate_trailing_trigger(lot: Any, mark_price: Decimal) -> Decimal | None:
+    if lot.trailing_stop_pct is None and lot.trailing_stop_amount is None:
+        return None
+    if lot.direction == "long":
+        water_mark = max(lot.high_water_mark or lot.entry_price, mark_price)
+        distance = _trailing_distance(lot, water_mark)
+        return _money(water_mark - distance)
+    water_mark = min(lot.low_water_mark or lot.entry_price, mark_price)
+    distance = _trailing_distance(lot, water_mark)
+    return _money(water_mark + distance)
+
+
+def _trailing_distance(lot: Any, price: Decimal) -> Decimal:
+    if lot.trailing_stop_amount is not None:
+        return lot.trailing_stop_amount
+    if lot.trailing_stop_pct is None:
+        return Decimal("0")
+    return price * lot.trailing_stop_pct / Decimal("100")
+
+
+def _trailing_step_required(lot: Any, current_trigger: Decimal) -> Decimal | None:
+    if lot.trailing_step_amount is not None:
+        return lot.trailing_step_amount
+    if lot.trailing_step_pct is not None:
+        return current_trigger * lot.trailing_step_pct / Decimal("100")
+    return Decimal("0")
+
+
+def _money(value: Decimal) -> Decimal:
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def _bracket_risk_summary(lots: list[Any]) -> dict[str, Any]:

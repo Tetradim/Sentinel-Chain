@@ -56,6 +56,76 @@ def test_market_price_response_includes_updated_active_exits():
     assert trailing_exit["status"] == "open"
     assert trailing_exit["trigger_price"] == "104.50"
     assert trailing_exit["high_water_mark"] == "110"
+    assert trailing_exit["next_trailing_trigger"] is None
+    assert trailing_exit["trailing_ratchet_ready_at_mark"] == "false"
+
+
+def test_market_price_preview_reports_next_trailing_ratchet_without_mutating_state():
+    app = create_app()
+    client = TestClient(app)
+
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "ratchet-preview",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "20",
+            "trailing_stop_pct": "5",
+            "trailing_step_pct": "1",
+        },
+    )
+
+    response = client.post("/market/price/preview", json={"symbol": "BTCUSDT", "price": "110"})
+
+    assert response.status_code == 200
+    body = response.json()
+    live_trail = next(exit_order for exit_order in body["active_exits"] if exit_order["kind"] == "trailing_stop")
+    preview_trail = next(
+        exit_order for exit_order in body["preview_active_exits"] if exit_order["kind"] == "trailing_stop"
+    )
+    assert live_trail["trigger_price"] == "95.00"
+    assert live_trail["next_trailing_trigger"] == "104.50"
+    assert live_trail["next_trailing_trigger_change"] == "9.50"
+    assert live_trail["trailing_step_required"] == "0.95"
+    assert live_trail["trailing_ratchet_ready_at_mark"] == "true"
+    assert preview_trail["trigger_price"] == "104.50"
+
+
+def test_bracket_decision_support_sequences_exits_and_trailing_context():
+    app = create_app()
+    client = TestClient(app)
+
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "decision-support",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "20",
+            "trailing_stop_pct": "5",
+            "trailing_activation_pct": "4",
+        },
+    )
+
+    response = client.get("/brackets/decision-support/decision-support?mark_price=104")
+
+    assert response.status_code == 200
+    body = response.json()
+    summary = body["summaries"][0]
+    assert body["mutates_state"] is False
+    assert [row["kind"] for row in summary["trigger_sequence"]] == ["stop_loss", "trailing_stop", "take_profit"]
+    trailing = summary["trailing"][0]
+    assert trailing["status"] == "pending_activation"
+    assert trailing["trailing_activation_ready_at_mark"] == "true"
+    assert trailing["paper_only"] is True
+    assert summary["health"]["issues"] == ["protective_exit_still_at_risk", "trailing_stop_pending"]
 
 
 def test_signal_preview_includes_synthetic_bracket_plan_for_short_trailing_order():
