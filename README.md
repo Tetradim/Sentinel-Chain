@@ -45,7 +45,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Shows timestamped audit events, exports filtered audit CSVs, and copies JSON payloads from operator panels
 - Exposes CCXT venue discovery and capability inspection without enabling live execution
 - Exposes a non-executing bracket/trailing exchange-plan preview that classifies a signal as paper synthetic, attached TP/SL, entry-then-OCO, entry-then-trailing, or paper-required based on venue capability flags, staged/partial exit shape, and time-stop use, plus leg-level exchange-family, buy/sell sequencing, activation, partial-close, and plan-summary metadata
-- Tracks a curated Bitcoin platform registry for Coinbase, Kraken, Gemini, Bitstamp, Binance.US, Alpaca, Robinhood, Crypto.com, OKX, Bybit, KuCoin, Bitget, Gate.io, MEXC, Phemex, BitMEX, Deribit, and Bitunix
+- Tracks a curated BTC/ETH/SOL platform registry for Coinbase, Kraken, Binance.US, Binance, Gemini, Bitstamp, Alpaca, Robinhood, Crypto.com, OKX, Bybit, KuCoin, Bitget, Gate.io, MEXC, Phemex, BitMEX, Deribit, and Bitunix
 - Provides a minimal Discord slash-command client for `/health` and `/signal_test`
 
 ## Windows Launcher
@@ -472,6 +472,13 @@ Current bot work is guided by paper-first risk controls and exchange order behav
 - Coinbase's current bracket-order guidance describes a paired take-profit/stop-loss target where one side filling cancels the other, so Auto-Crypto now exposes `execution_sequence` and `exchange_order_family` in `/signals/exchange-plan` before any non-paper venue can be mapped: <https://help.coinbase.com/en/coinbase/trading-and-funding/advanced-trade/order-types>
 - Coinbase Advanced Trade API attached TP/SL examples attach one stop-loss/take-profit configuration to the originating order, so Auto-Crypto treats staged or partial bracket shapes as `paper_required_for_staged_or_partial_bracket` unless a future adapter explicitly proves the native mapping: <https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/guides/orders>
 - CCXT's current FAQ separates attached stop-loss/take-profit parameters, standalone closing orders, exchange-specific trailing support, and reduce-only handling, reinforcing why Auto-Crypto now labels each planned exit with an `exchange_order_family` instead of assuming every bracket/trailing combination is portable: <https://docs.ccxt.com/docs/faq>
+- Coinbase says Advanced Trade supports programmatic trading, order management, and real-time market data over REST and WebSocket, so Auto-Crypto now marks Coinbase as a high-priority BTC/ETH/SOL venue while keeping execution behind paper planning and future native JWT review: <https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/overview>
+- Coinbase's product endpoints list available trading pairs and product detail/candle data, which maps to Auto-Crypto's non-secret platform metadata for default BTC/USD, ETH/USD, and SOL/USD review pairs: <https://docs.cdp.coinbase.com/api-reference/advanced-trade-api/rest-api/products/list-products>
+- Kraken's developer docs cover spot, derivatives, OTC, custody, and payments over REST, WebSocket, and FIX, and its Add Order endpoint requires signed private requests, so Auto-Crypto exposes Kraken adapter metadata but does not add a live order path: <https://docs.kraken.com/> and <https://docs.kraken.com/api-reference/trading/add-order>
+- Binance.US documents REST and WebSocket access for market data, user data, account data, and trade order management, so Auto-Crypto tracks Binance.US separately from global Binance in the curated platform registry: <https://docs.binance.us/>
+- Binance's official Spot API docs identify production REST base endpoints and separate Spot Testnet/Demo endpoints; Auto-Crypto therefore records global Binance as a BTC/ETH/SOL venue with `sandbox: "spot_testnet"` and keeps live submission disabled: <https://developers.binance.com/docs/binance-spot-api-docs/rest-api> and <https://developers.binance.com/docs/binance-spot-api-docs/testnet/rest-api/general-api-information>
+- Binance Spot Testnet request-security docs state that API keys can be permission-scoped and that trading permission is not enabled by default, matching Auto-Crypto's `required_permissions` metadata and explicit live gate fields: <https://developers.binance.com/docs/binance-spot-api-docs/testnet/rest-api/request-security>
+- Gemini's REST API docs cover order management, market data, derivatives, and fund management, while its create-order docs note the API does not directly support market orders and recommends aggressive protected limits instead; Auto-Crypto records Gemini as a paper-safe spot adapter target and keeps market-style behavior simulated until a native mapping is reviewed: <https://developer.gemini.com/rest-api/rest-api> and <https://developer.gemini.com/rest-api/trading/orders/create-new-order>
 - Bot setting guidance consistently emphasizes stop loss, take profit, demo/paper testing, backtesting, and position sizing before live automation: <https://bitsgap.com/blog/how-to-choose-crypto-trading-bot-settings-in-2026-range-investment-stop-loss-and-take-profit>
 - Current bot-setting guidance treats take-profit and stop-loss selection as part of the strategy's risk/reward profile, so Auto-Crypto now reports and can gate both first-target and weighted staged-target reward/risk before paper execution: <https://bitsgap.com/blog/how-to-choose-crypto-trading-bot-settings-in-2026-range-investment-stop-loss-and-take-profit>
 - Recent crypto-bot risk guidance highlights fixed-fraction sizing, commonly around 1-2% per trade, plus stop-loss and drawdown limits before live automation; Auto-Crypto's `risk_pct` sizing stays paper-only and can be capped with `AUTO_CRYPTO_MAX_RISK_PER_TRADE_PCT`: <https://cryptorobot.ai/blog/essential-tips-managing-risks-crypto-trading-bots>
@@ -529,6 +536,27 @@ AUTO_CRYPTO_MAX_TAKE_PROFIT_TARGETS=0
 
 AUTO_CRYPTO_DEFAULT_EXCHANGE=paper
 AUTO_CRYPTO_ALLOWED_EXCHANGES=paper
+
+# Priority crypto exchange credentials. Keep live gates false by default.
+AUTO_CRYPTO_COINBASE_API_KEY_NAME=
+AUTO_CRYPTO_COINBASE_PRIVATE_KEY=
+AUTO_CRYPTO_COINBASE_LIVE_ENABLED=false
+
+AUTO_CRYPTO_KRAKEN_API_KEY=
+AUTO_CRYPTO_KRAKEN_API_SECRET=
+AUTO_CRYPTO_KRAKEN_LIVE_ENABLED=false
+
+AUTO_CRYPTO_BINANCEUS_API_KEY=
+AUTO_CRYPTO_BINANCEUS_API_SECRET=
+AUTO_CRYPTO_BINANCEUS_LIVE_ENABLED=false
+
+AUTO_CRYPTO_BINANCE_API_KEY=
+AUTO_CRYPTO_BINANCE_API_SECRET=
+AUTO_CRYPTO_BINANCE_LIVE_ENABLED=false
+
+AUTO_CRYPTO_GEMINI_API_KEY=
+AUTO_CRYPTO_GEMINI_API_SECRET=
+AUTO_CRYPTO_GEMINI_LIVE_ENABLED=false
 
 DISCORD_BOT_TOKEN=
 ```
@@ -701,7 +729,7 @@ Signals whose `exchange` value is not in `AUTO_CRYPTO_ALLOWED_EXCHANGES` are rej
 
 ## Supported Platform Registry
 
-`GET /exchanges/platforms` returns the curated integration backlog and readiness state for all high-priority Bitcoin venues. Each row includes driver type, CCXT mapping when available, market types, API coverage, credential-field status, documentation URL, and live-execution gate state.
+`GET /exchanges/platforms` returns the curated integration backlog and readiness state for high-priority crypto venues. Each row includes driver type, CCXT mapping when available, market types, API coverage, BTC/ETH/SOL priority assets, default review symbols, sandbox posture, required permission labels, credential-field status, documentation URL, adapter scope, and live-execution gate state.
 
 Current platforms:
 
@@ -709,9 +737,10 @@ Current platforms:
 | --- | --- | --- | --- |
 | Coinbase Advanced Trade | `coinbase` | CCXT now, native planned | spot, derivatives |
 | Kraken | `kraken` | CCXT | spot, margin, futures |
-| Gemini | `gemini` | CCXT | spot |
-| Bitstamp | `bitstamp` | CCXT | spot |
 | Binance.US | `binanceus` | CCXT | spot, OTC |
+| Binance | `binance` | CCXT, sandbox planned | spot, margin, swaps, futures, options |
+| Gemini | `gemini` | CCXT, sandbox-aware metadata | spot |
+| Bitstamp | `bitstamp` | CCXT | spot |
 | Alpaca Crypto | `alpaca` | CCXT, native broker adapter planned | spot |
 | Robinhood Crypto | `robinhood` | native broker adapter planned | spot |
 | Crypto.com Exchange | `cryptocom` | CCXT | spot, margin, derivatives |
@@ -730,12 +759,14 @@ Example checks:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8004/exchanges/platforms
+Invoke-RestMethod http://127.0.0.1:8004/exchanges/binance/integration
+Invoke-RestMethod http://127.0.0.1:8004/exchanges/binanceus/integration
 Invoke-RestMethod http://127.0.0.1:8004/exchanges/deribit/integration
 Invoke-RestMethod http://127.0.0.1:8004/exchanges/bitmex/integration
 Invoke-RestMethod http://127.0.0.1:8004/exchanges/coinbase/integration
 ```
 
-Use `.[exchange]` dependencies to let CCXT-backed platforms report `adapter_ready`. A native Robinhood adapter and richer native Alpaca broker flows require separate request-signing implementations before live execution can be considered.
+Use `.[exchange]` dependencies to let CCXT-backed platforms report `adapter_ready`. Platform metadata is non-secret review data; it does not enable live execution. Keep `AUTO_CRYPTO_ALLOWED_EXCHANGES=paper` unless you are deliberately testing a non-paper path, keep every `AUTO_CRYPTO_<VENUE>_LIVE_ENABLED=false`, and use trade-only keys without withdrawal permission. A native Robinhood adapter and richer native Alpaca broker flows require separate request-signing implementations before live execution can be considered.
 
 ## Bitunix Integration
 

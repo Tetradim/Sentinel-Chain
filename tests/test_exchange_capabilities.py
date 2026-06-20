@@ -158,9 +158,13 @@ def test_platforms_endpoint_returns_curated_trading_targets(monkeypatch):
     body = response.json()
     assert body["ccxt_available"] is True
     platforms = {row["exchange_id"]: row for row in body["platforms"]}
-    assert {"coinbase", "kraken", "deribit", "bitmex", "bitunix"}.issubset(platforms)
+    assert {"coinbase", "kraken", "binance", "binanceus", "gemini", "deribit", "bitmex", "bitunix"}.issubset(platforms)
     assert platforms["coinbase"]["driver_available"] is True
+    assert platforms["binance"]["driver_available"] is False
+    assert platforms["binance"]["sandbox"] == "spot_testnet"
+    assert platforms["binance"]["default_symbols"] == ["BTC/USDT", "ETH/USDT", "SOL/USDT"]
     assert platforms["kraken"]["integration_status"] == "ccxt_not_found"
+    assert platforms["gemini"]["priority_assets"] == ["BTC", "ETH", "SOL"]
     assert platforms["deribit"]["market_types"] == ["options", "futures", "swap"]
     assert platforms["bitmex"]["market_types"] == ["swap", "futures"]
 

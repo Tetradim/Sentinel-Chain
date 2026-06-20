@@ -6,6 +6,7 @@ EXPECTED_PLATFORM_IDS = {
     "kraken",
     "gemini",
     "bitstamp",
+    "binance",
     "binanceus",
     "alpaca",
     "robinhood",
@@ -29,6 +30,7 @@ def test_registry_contains_all_requested_bitcoin_trading_platforms():
     assert {row["exchange_id"] for row in rows} == EXPECTED_PLATFORM_IDS
     assert rows[0]["exchange_id"] == "coinbase"
     assert get_platform("binance-us").exchange_id == "binanceus"
+    assert get_platform("binance.com").exchange_id == "binance"
     assert get_platform("crypto.com").exchange_id == "cryptocom"
 
 
@@ -52,3 +54,21 @@ def test_registry_reports_credential_presence_without_values(monkeypatch):
     assert all(field["configured"] for field in kraken["credential_fields"])
     assert "key-value" not in str(kraken)
     assert "secret-value" not in str(kraken)
+
+
+def test_priority_crypto_platforms_expose_paper_safe_adapter_metadata():
+    rows = {row["exchange_id"]: row for row in platform_rows({"coinbase", "kraken", "binance", "binanceus", "gemini"})}
+
+    for exchange_id in ("coinbase", "kraken", "binance", "binanceus", "gemini"):
+        row = rows[exchange_id]
+        assert row["driver"] == "ccxt"
+        assert row["driver_available"] is True
+        assert row["live_execution_enabled"] is False
+        assert {"BTC", "ETH", "SOL"}.issubset(set(row["priority_assets"]))
+        assert row["default_symbols"]
+        assert "capability_metadata" in row["adapter_scope"]
+        assert "non_executing_exchange_plan" in row["adapter_scope"]
+        assert row["required_permissions"]
+
+    assert rows["binance"]["sandbox"] == "spot_testnet"
+    assert rows["gemini"]["sandbox"] == "sandbox_api"
