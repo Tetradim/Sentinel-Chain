@@ -138,6 +138,27 @@ def test_normalizes_exact_initial_trailing_stop_price_from_nested_bracket():
     assert signal.trailing_stop_price == Decimal("98.25")
 
 
+def test_normalizes_amount_trail_and_absolute_activation_from_nested_bracket():
+    signal = normalize_signal(
+        {
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "bracket": {
+                "stop_loss_pct": "5",
+                "take_profit_pct": "10",
+                "trail_amount": "4",
+                "activation_price": "106",
+            },
+        },
+        source="test",
+    )
+
+    assert signal.trailing_stop_amount == Decimal("4")
+    assert signal.trailing_activation_price == Decimal("106")
+
+
 @pytest.mark.parametrize(
     "payload",
     [

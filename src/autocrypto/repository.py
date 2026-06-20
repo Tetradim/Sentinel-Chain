@@ -236,9 +236,13 @@ def _signal_to_dict(signal: CryptoSignal) -> dict[str, Any]:
             for target in signal.take_profit_targets
         ],
         "trailing_stop_pct": str(signal.trailing_stop_pct) if signal.trailing_stop_pct is not None else None,
+        "trailing_stop_amount": str(signal.trailing_stop_amount) if signal.trailing_stop_amount is not None else None,
         "trailing_stop_price": str(signal.trailing_stop_price) if signal.trailing_stop_price is not None else None,
         "trailing_activation_pct": str(signal.trailing_activation_pct)
         if signal.trailing_activation_pct is not None
+        else None,
+        "trailing_activation_price": str(signal.trailing_activation_price)
+        if signal.trailing_activation_price is not None
         else None,
         "breakeven_trigger_pct": str(signal.breakeven_trigger_pct)
         if signal.breakeven_trigger_pct is not None
@@ -277,9 +281,13 @@ def _pending_summary(signal: CryptoSignal, *, created_at: str | None = None) -> 
             for target in signal.take_profit_targets
         ],
         "trailing_stop_pct": str(signal.trailing_stop_pct) if signal.trailing_stop_pct is not None else None,
+        "trailing_stop_amount": str(signal.trailing_stop_amount) if signal.trailing_stop_amount is not None else None,
         "trailing_stop_price": str(signal.trailing_stop_price) if signal.trailing_stop_price is not None else None,
         "trailing_activation_pct": str(signal.trailing_activation_pct)
         if signal.trailing_activation_pct is not None
+        else None,
+        "trailing_activation_price": str(signal.trailing_activation_price)
+        if signal.trailing_activation_price is not None
         else None,
         "breakeven_trigger_pct": str(signal.breakeven_trigger_pct)
         if signal.breakeven_trigger_pct is not None

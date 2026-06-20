@@ -796,9 +796,13 @@ def _signal_to_dict(signal: CryptoSignal) -> dict[str, Any]:
             for target in signal.take_profit_targets
         ],
         "trailing_stop_pct": str(signal.trailing_stop_pct) if signal.trailing_stop_pct is not None else None,
+        "trailing_stop_amount": str(signal.trailing_stop_amount) if signal.trailing_stop_amount is not None else None,
         "trailing_stop_price": str(signal.trailing_stop_price) if signal.trailing_stop_price is not None else None,
         "trailing_activation_pct": str(signal.trailing_activation_pct)
         if signal.trailing_activation_pct is not None
+        else None,
+        "trailing_activation_price": str(signal.trailing_activation_price)
+        if signal.trailing_activation_price is not None
         else None,
         "breakeven_trigger_pct": str(signal.breakeven_trigger_pct)
         if signal.breakeven_trigger_pct is not None
@@ -852,7 +856,11 @@ def _signal_preview(
 def _bracket_plan_to_dict(signal: CryptoSignal, decision: RiskDecision, account_state: AccountState) -> dict[str, Any]:
     exits = build_exit_orders(signal)
     exit_side = "sell" if signal.side == "buy" else "buy"
-    trailing_starts_armed = signal.trailing_stop_pct is not None and signal.trailing_activation_pct is None
+    trailing_starts_armed = (
+        (signal.trailing_stop_pct is not None or signal.trailing_stop_amount is not None)
+        and signal.trailing_activation_pct is None
+        and signal.trailing_activation_price is None
+    )
     trailing_activation_price = _planned_trailing_activation_price(signal)
     stop_exit = next((exit_order for exit_order in exits if exit_order.kind == "stop_loss"), None)
     first_target = next((exit_order for exit_order in exits if exit_order.kind == "take_profit"), None)
@@ -922,7 +930,11 @@ def _target_reward(signal: CryptoSignal, notional: Decimal | None, target_exit: 
 
 
 def _planned_trailing_activation_price(signal: CryptoSignal) -> Decimal | None:
-    if signal.price is None or signal.trailing_stop_pct is None or signal.trailing_activation_pct is None:
+    if signal.price is None or (signal.trailing_stop_pct is None and signal.trailing_stop_amount is None):
+        return None
+    if signal.trailing_activation_price is not None:
+        return signal.trailing_activation_price
+    if signal.trailing_activation_pct is None:
         return None
     direction = Decimal("1") if signal.side == "buy" else Decimal("-1")
     return signal.price * (Decimal("1") + direction * signal.trailing_activation_pct / Decimal("100"))
@@ -958,11 +970,17 @@ def _active_exit_to_dict(lot: Any, exit_order: Any, *, mark_price: Decimal | Non
         "oca_group": exit_order.oca_group,
         "status": exit_order.status,
         "trailing_stop_pct": str(lot.trailing_stop_pct) if exit_order.kind == "trailing_stop" and lot.trailing_stop_pct else None,
+        "trailing_stop_amount": str(lot.trailing_stop_amount)
+        if exit_order.kind == "trailing_stop" and lot.trailing_stop_amount
+        else None,
         "initial_trailing_stop_price": str(lot.trailing_stop_price)
         if exit_order.kind == "trailing_stop" and lot.trailing_stop_price
         else None,
         "trailing_activation_pct": str(lot.trailing_activation_pct)
         if exit_order.kind == "trailing_stop" and lot.trailing_activation_pct
+        else None,
+        "trailing_activation_price": str(lot.trailing_activation_price)
+        if exit_order.kind == "trailing_stop" and lot.trailing_activation_price
         else None,
         "trailing_activation_price": str(trailing_activation_price) if trailing_activation_price is not None else None,
         "trailing_activated": str(lot.trailing_activated).lower() if exit_order.kind == "trailing_stop" else None,
@@ -981,7 +999,11 @@ def _active_exit_to_dict(lot: Any, exit_order: Any, *, mark_price: Decimal | Non
 
 
 def _lot_trailing_activation_price(lot: Any) -> Decimal | None:
-    if lot.trailing_stop_pct is None or lot.trailing_activation_pct is None:
+    if lot.trailing_stop_pct is None and lot.trailing_stop_amount is None:
+        return None
+    if lot.trailing_activation_price is not None:
+        return lot.trailing_activation_price
+    if lot.trailing_activation_pct is None:
         return None
     direction = Decimal("1") if lot.direction == "long" else Decimal("-1")
     return lot.entry_price * (Decimal("1") + direction * lot.trailing_activation_pct / Decimal("100"))

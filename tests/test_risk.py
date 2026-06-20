@@ -406,6 +406,65 @@ def test_risk_rejects_wide_trailing_stop_or_activation_without_trailing_stop():
     assert "trailing_stop_required_for_activation" in activation_decision.reason_codes
 
 
+def test_risk_applies_trailing_amount_to_max_trailing_stop_pct_cap():
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "3",
+            "trailing_stop_amount": "8",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(signal, RiskConfig(max_trailing_stop_pct=Decimal("5")), AccountState())
+
+    assert decision.approved is False
+    assert "max_trailing_stop_pct_exceeded" in decision.reason_codes
+
+
+def test_risk_rejects_invalid_trailing_activation_price():
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "sell",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "3",
+            "trailing_stop_amount": "4",
+            "trailing_activation_price": "102",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(signal, RiskConfig(), AccountState())
+
+    assert decision.approved is False
+    assert "invalid_trailing_activation_price" in decision.reason_codes
+
+
+def test_risk_still_validates_initial_trailing_price_when_amount_sets_distance():
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "3",
+            "trailing_stop_amount": "4",
+            "trailing_stop_price": "101",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(signal, RiskConfig(), AccountState())
+
+    assert decision.approved is False
+    assert "invalid_trailing_stop_price" in decision.reason_codes
+
+
 def test_risk_rejects_breakeven_without_protective_exit_to_move():
     signal = normalize_signal(
         {

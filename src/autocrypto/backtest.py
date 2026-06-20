@@ -188,6 +188,18 @@ def _active_exits_snapshot(lots: list) -> list[dict]:
             "initial_trailing_stop_price": str(lot.trailing_stop_price)
             if exit_order.kind == "trailing_stop" and lot.trailing_stop_price
             else None,
+            "trailing_stop_pct": str(lot.trailing_stop_pct)
+            if exit_order.kind == "trailing_stop" and lot.trailing_stop_pct
+            else None,
+            "trailing_stop_amount": str(lot.trailing_stop_amount)
+            if exit_order.kind == "trailing_stop" and lot.trailing_stop_amount
+            else None,
+            "trailing_activation_pct": str(lot.trailing_activation_pct)
+            if exit_order.kind == "trailing_stop" and lot.trailing_activation_pct
+            else None,
+            "trailing_activation_price": str(lot.trailing_activation_price)
+            if exit_order.kind == "trailing_stop" and lot.trailing_activation_price
+            else None,
             "trailing_activated": lot.trailing_activated if exit_order.kind == "trailing_stop" else None,
             "high_water_mark": str(lot.high_water_mark) if exit_order.kind == "trailing_stop" and lot.high_water_mark else None,
             "low_water_mark": str(lot.low_water_mark) if exit_order.kind == "trailing_stop" and lot.low_water_mark else None,

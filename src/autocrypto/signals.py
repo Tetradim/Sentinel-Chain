@@ -37,8 +37,10 @@ class CryptoSignal:
     take_profit_price: Decimal | None = None
     take_profit_targets: tuple[TakeProfitTarget, ...] = ()
     trailing_stop_pct: Decimal | None = None
+    trailing_stop_amount: Decimal | None = None
     trailing_stop_price: Decimal | None = None
     trailing_activation_pct: Decimal | None = None
+    trailing_activation_price: Decimal | None = None
     breakeven_trigger_pct: Decimal | None = None
     leverage: Decimal = Decimal("1")
     max_slippage_bps: int = 100
@@ -92,11 +94,17 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
     if take_profit_pct is None and take_profit_targets:
         take_profit_pct = take_profit_targets[0].pct
     trailing_stop_pct = _optional_positive_decimal(_field(payload, bracket, "trailing_stop_pct"))
+    trailing_stop_amount = _optional_positive_decimal(
+        _field(payload, bracket, "trailing_stop_amount", "trail_amount")
+    )
     trailing_stop_price = _optional_positive_decimal(
         _field(payload, bracket, "trailing_stop_price", "trail_price")
     )
     trailing_activation_pct = _optional_positive_decimal(
         _field(payload, bracket, "trailing_activation_pct", "trail_activation_pct")
+    )
+    trailing_activation_price = _optional_positive_decimal(
+        _field(payload, bracket, "trailing_activation_price", "trail_activation_price", "activation_price")
     )
     breakeven_trigger_pct = _optional_positive_decimal(_field(payload, bracket, "breakeven_trigger_pct"))
     leverage = _optional_positive_decimal(payload.get("leverage")) or Decimal("1")
@@ -129,8 +137,12 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
             for target in take_profit_targets
         ],
         "trailing_stop_pct": str(trailing_stop_pct) if trailing_stop_pct is not None else None,
+        "trailing_stop_amount": str(trailing_stop_amount) if trailing_stop_amount is not None else None,
         "trailing_stop_price": str(trailing_stop_price) if trailing_stop_price is not None else None,
         "trailing_activation_pct": str(trailing_activation_pct) if trailing_activation_pct is not None else None,
+        "trailing_activation_price": str(trailing_activation_price)
+        if trailing_activation_price is not None
+        else None,
         "breakeven_trigger_pct": str(breakeven_trigger_pct) if breakeven_trigger_pct is not None else None,
         "leverage": str(leverage),
         "max_slippage_bps": max_slippage_bps,
@@ -157,8 +169,10 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         take_profit_price=take_profit_price,
         take_profit_targets=take_profit_targets,
         trailing_stop_pct=trailing_stop_pct,
+        trailing_stop_amount=trailing_stop_amount,
         trailing_stop_price=trailing_stop_price,
         trailing_activation_pct=trailing_activation_pct,
+        trailing_activation_price=trailing_activation_price,
         breakeven_trigger_pct=breakeven_trigger_pct,
         leverage=leverage,
         max_slippage_bps=max_slippage_bps,

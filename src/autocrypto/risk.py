@@ -102,10 +102,23 @@ def evaluate_signal(
         and trailing_stop_pct > config.max_trailing_stop_pct
     ):
         reasons.append("max_trailing_stop_pct_exceeded")
-    if signal.trailing_activation_pct is not None and signal.trailing_stop_pct is None:
+    if (
+        signal.trailing_activation_pct is not None
+        and signal.trailing_stop_pct is None
+        and signal.trailing_stop_amount is None
+    ):
         reasons.append("trailing_stop_required_for_activation")
-    if signal.trailing_stop_price is not None and signal.trailing_stop_pct is None:
+    if (
+        signal.trailing_activation_price is not None
+        and signal.trailing_stop_pct is None
+        and signal.trailing_stop_amount is None
+    ):
+        reasons.append("trailing_stop_required_for_activation")
+    if signal.trailing_activation_pct is not None and signal.trailing_activation_price is not None:
+        reasons.append("duplicate_trailing_activation")
+    if signal.trailing_stop_price is not None and signal.trailing_stop_pct is None and signal.trailing_stop_amount is None:
         reasons.append("trailing_stop_pct_required_for_price")
+    _validate_trailing_activation_price(signal, reasons)
     if (
         signal.breakeven_trigger_pct is not None
         and stop_loss_pct is None
@@ -164,7 +177,9 @@ def _opens_position(signal: CryptoSignal) -> bool:
         or bool(signal.take_profit_targets)
         or signal.take_profit_price is not None
         or signal.trailing_stop_pct is not None
+        or signal.trailing_stop_amount is not None
         or signal.trailing_stop_price is not None
+        or signal.trailing_activation_price is not None
         or signal.breakeven_trigger_pct is not None
     )
 
@@ -212,7 +227,14 @@ def _take_profit_pct(signal: CryptoSignal, reasons: list[str]) -> Decimal | None
 
 def _trailing_stop_pct(signal: CryptoSignal, reasons: list[str]) -> Decimal | None:
     if signal.trailing_stop_price is None:
-        return signal.trailing_stop_pct
+        if signal.trailing_stop_pct is not None:
+            return signal.trailing_stop_pct
+        if signal.trailing_stop_amount is None:
+            return None
+        if signal.price is None:
+            reasons.append("price_required_for_trailing_stop_amount")
+            return None
+        return signal.trailing_stop_amount / signal.price * Decimal("100")
     if signal.price is None:
         reasons.append("price_required_for_trailing_stop_price")
         return signal.trailing_stop_pct
@@ -220,11 +242,27 @@ def _trailing_stop_pct(signal: CryptoSignal, reasons: list[str]) -> Decimal | No
         if signal.trailing_stop_price >= signal.price:
             reasons.append("invalid_trailing_stop_price")
             return signal.trailing_stop_pct
+        if signal.trailing_stop_amount is not None:
+            return signal.trailing_stop_amount / signal.price * Decimal("100")
         return (signal.price - signal.trailing_stop_price) / signal.price * Decimal("100")
     if signal.trailing_stop_price <= signal.price:
         reasons.append("invalid_trailing_stop_price")
         return signal.trailing_stop_pct
+    if signal.trailing_stop_amount is not None:
+        return signal.trailing_stop_amount / signal.price * Decimal("100")
     return (signal.trailing_stop_price - signal.price) / signal.price * Decimal("100")
+
+
+def _validate_trailing_activation_price(signal: CryptoSignal, reasons: list[str]) -> None:
+    if signal.trailing_activation_price is None:
+        return
+    if signal.price is None:
+        reasons.append("price_required_for_trailing_activation_price")
+        return
+    if signal.side == "buy" and signal.trailing_activation_price <= signal.price:
+        reasons.append("invalid_trailing_activation_price")
+    if signal.side == "sell" and signal.trailing_activation_price >= signal.price:
+        reasons.append("invalid_trailing_activation_price")
 
 
 def _validate_take_profit_targets(signal: CryptoSignal, reasons: list[str]) -> None:

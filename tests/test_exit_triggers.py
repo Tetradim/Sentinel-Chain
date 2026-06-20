@@ -295,6 +295,74 @@ def test_trailing_stop_activation_waits_for_favorable_move_before_arming():
     ]
 
 
+def test_amount_trailing_stop_uses_fixed_quote_distance_for_long():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "amount-trail-long",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "10",
+            "take_profit_pct": "30",
+            "trailing_stop_amount": "4",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    first = exchange.update_price("BTC/USDT", Decimal("110"))
+    trailing_exit = next(exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "trailing_stop")
+    second = exchange.update_price("BTC/USDT", Decimal("106"))
+
+    assert first == []
+    assert trailing_exit.trigger_price == Decimal("106.00")
+    assert second == [
+        {"symbol": "BTC/USDT", "kind": "trailing_stop", "price": "106.00000000", "quantity": "1.00000000"}
+    ]
+
+
+def test_absolute_trailing_activation_price_arms_short_trail():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "absolute-activation-short",
+            "symbol": "ETH/USDT",
+            "side": "sell",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "10",
+            "take_profit_pct": "30",
+            "trailing_stop_amount": "5",
+            "trailing_activation_price": "94",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    before_activation = exchange.update_price("ETH/USDT", Decimal("95"))
+    dormant_trailing_exit = next(
+        exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "trailing_stop"
+    )
+    activation_mark = exchange.update_price("ETH/USDT", Decimal("94"))
+    trailing_activated = exchange.lots[0].trailing_activated
+    trailing_exit = next(exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "trailing_stop")
+    pullback = exchange.update_price("ETH/USDT", Decimal("99"))
+
+    assert before_activation == []
+    assert dormant_trailing_exit.status == "pending_activation"
+    assert activation_mark == []
+    assert trailing_activated is True
+    assert trailing_exit.status == "open"
+    assert trailing_exit.trigger_price == Decimal("99.00")
+    assert pullback == [
+        {"symbol": "ETH/USDT", "kind": "trailing_stop", "price": "99.00000000", "quantity": "1.00000000"}
+    ]
+
+
 def test_breakeven_trigger_raises_protective_stops_to_entry():
     exchange = PaperExchange()
     engine = TradingEngine(exchange=exchange)
