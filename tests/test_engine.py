@@ -147,3 +147,36 @@ def test_engine_recomputes_open_notional_after_partial_sell_at_exit_price():
     assert sell.status == "accepted"
     assert engine.exchange.open_notional() == Decimal("50")
     assert account.open_notional == Decimal("50")
+
+
+def test_engine_mark_price_recomputes_account_exposure_after_bracket_exit():
+    account = AccountState(open_notional=Decimal("0"))
+    engine = TradingEngine(
+        exchange=PaperExchange(),
+        risk_config=RiskConfig(max_order_notional=Decimal("500"), max_open_notional=Decimal("150")),
+        account_state=account,
+        idempotency=InMemoryIdempotencyStore(),
+    )
+    signal = normalize_signal(
+        {
+            "signal_id": "engine-mark-entry",
+            "symbol": "SOL/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "2",
+            "take_profit_pct": "5",
+        },
+        source="test",
+    )
+
+    accepted = engine.process_signal(signal)
+    update = engine.mark_price("SOL/USDT", Decimal("105"))
+
+    assert accepted.status == "accepted"
+    assert update.triggered == [
+        {"symbol": "SOL/USDT", "kind": "take_profit", "price": "105.00000000", "quantity": "1.00000000"}
+    ]
+    assert update.open_notional == Decimal("0")
+    assert account.open_notional == Decimal("0")
+    assert account.daily_pnl == Decimal("5")

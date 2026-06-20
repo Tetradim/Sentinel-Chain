@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -254,6 +255,10 @@ class PaperExchange:
         self.lots = [lot for lot in self.lots if lot.remaining_quantity > 0]
         self._refresh_active_exits(symbol)
         return triggered
+
+    def preview_price(self, symbol: str, price: Decimal) -> list[dict]:
+        """Return paper exits that would trigger at price without mutating state."""
+        return deepcopy(self).update_price(symbol, price)
 
     def _fill_quantity(self, signal: CryptoSignal, notional: Decimal) -> Decimal:
         if signal.price is None:

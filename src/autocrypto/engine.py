@@ -1,9 +1,23 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from decimal import Decimal
+
 from .execution import ExecutionResult, PaperExchange
 from .idempotency import InMemoryIdempotencyStore
 from .risk import AccountState, RiskConfig, evaluate_signal
 from .signals import CryptoSignal
+
+
+@dataclass(frozen=True)
+class MarketPriceUpdate:
+    symbol: str
+    price: Decimal
+    triggered: list[dict]
+    realized_pnl_delta: Decimal
+    daily_pnl: Decimal
+    consecutive_losses: int
+    open_notional: Decimal
 
 
 class TradingEngine:
@@ -47,3 +61,30 @@ class TradingEngine:
         order = self.exchange.submit(signal, decision)
         self.account_state.open_notional = self.exchange.open_notional()
         return ExecutionResult(status="accepted", decision=decision, order=order)
+
+    def mark_price(self, symbol: str, price: Decimal) -> MarketPriceUpdate:
+        realized_before = _position_realized_pnl(self.exchange, symbol)
+        triggered = self.exchange.update_price(symbol, price)
+        realized_pnl_delta = Decimal("0")
+        if triggered:
+            realized_pnl_delta = _position_realized_pnl(self.exchange, symbol) - realized_before
+            self.account_state.daily_pnl += realized_pnl_delta
+            if realized_pnl_delta < 0:
+                self.account_state.consecutive_losses += 1
+            elif realized_pnl_delta > 0:
+                self.account_state.consecutive_losses = 0
+        self.account_state.open_notional = self.exchange.open_notional()
+        return MarketPriceUpdate(
+            symbol=symbol,
+            price=price,
+            triggered=triggered,
+            realized_pnl_delta=realized_pnl_delta,
+            daily_pnl=self.account_state.daily_pnl,
+            consecutive_losses=self.account_state.consecutive_losses,
+            open_notional=self.account_state.open_notional,
+        )
+
+
+def _position_realized_pnl(exchange: PaperExchange, symbol: str) -> Decimal:
+    position = exchange.positions.get(symbol)
+    return position.realized_pnl if position else Decimal("0")

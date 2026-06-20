@@ -298,42 +298,49 @@ def create_app(
         except BitunixRequestError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    @app.post("/market/price")
-    async def market_price(request: Request) -> dict[str, Any]:
+    async def _market_price_payload(request: Request) -> tuple[str, Decimal]:
         payload = await request.json()
         try:
             symbol = normalize_symbol(payload.get("symbol"))
             price = _positive_decimal(payload.get("price"))
         except (SignalValidationError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return symbol, price
 
+    @app.post("/market/price/preview")
+    async def market_price_preview(request: Request) -> dict[str, Any]:
+        symbol, price = await _market_price_payload(request)
+        return {
+            "symbol": symbol,
+            "price": str(price),
+            "would_trigger": engine.exchange.preview_price(symbol, price),
+            "active_exits": _active_exits_to_dict(engine.exchange.lots),
+            "positions": engine.exchange.list_positions(),
+            "account": _account_state_to_dict(engine.account_state),
+        }
+
+    @app.post("/market/price")
+    async def market_price(request: Request) -> dict[str, Any]:
+        symbol, price = await _market_price_payload(request)
         order_offset = len(engine.exchange.orders)
-        realized_before = _position_realized_pnl(engine.exchange, symbol)
-        triggered = engine.exchange.update_price(symbol, price)
-        if triggered:
-            realized_pnl_delta = _position_realized_pnl(engine.exchange, symbol) - realized_before
-            engine.account_state.daily_pnl += realized_pnl_delta
-            if realized_pnl_delta < 0:
-                engine.account_state.consecutive_losses += 1
-            elif realized_pnl_delta > 0:
-                engine.account_state.consecutive_losses = 0
-            engine.account_state.open_notional = engine.exchange.open_notional()
+        update = engine.mark_price(symbol, price)
         if repository:
             for order in engine.exchange.orders[order_offset:]:
                 repository.save_order(order)
-            if triggered:
+            if update.triggered:
                 repository.record_audit(
                     "exit.triggered",
-                    {"symbol": symbol, "price": str(price), "triggered": triggered},
+                    {"symbol": symbol, "price": str(price), "triggered": update.triggered},
                 )
         return {
             "symbol": symbol,
             "price": str(price),
-            "triggered": triggered,
+            "triggered": update.triggered,
             "active_exits": _active_exits_to_dict(engine.exchange.lots),
-            "realized_pnl_delta": str(realized_pnl_delta) if triggered else "0",
-            "daily_pnl": str(engine.account_state.daily_pnl),
-            "consecutive_losses": engine.account_state.consecutive_losses,
+            "realized_pnl_delta": str(update.realized_pnl_delta),
+            "daily_pnl": str(update.daily_pnl),
+            "consecutive_losses": update.consecutive_losses,
+            "open_notional": str(update.open_notional),
             "positions": engine.exchange.list_positions(),
         }
 
@@ -603,7 +610,3 @@ def _active_exits_to_dict(lots: list[Any]) -> list[dict[str, str]]:
         for exit_order in lot.exit_orders
     ]
 
-
-def _position_realized_pnl(exchange: PaperExchange, symbol: str) -> Decimal:
-    position = exchange.positions.get(symbol)
-    return position.realized_pnl if position else Decimal("0")

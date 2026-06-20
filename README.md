@@ -17,6 +17,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Records paper orders, paper positions, realized PnL, active bracket lots, and audit events
 - Rehydrates paper positions, bracket lots, and exposure risk state from SQLite after restart
 - Triggers paper long and short stop-loss, single or staged take-profit, activation-gated trailing-stop, and break-even exits from `POST /market/price`
+- Previews hypothetical market-price marks and bracket/trailing exits without mutating paper orders or positions
 - Previews server-side risk decisions from the operator UI without placing orders
 - Shows persisted signal history with one-click reload into the Trading Desk
 - Supports quote-notional and base-quantity ticket sizing, paper position close controls, bracket lot context and trigger tests, and local unrealized P&L marks in the operator UI
@@ -343,8 +344,11 @@ Signal intake:
 Paper market updates:
 
 - `POST /market/price`
+- `POST /market/price/preview`
 
-`POST /market/price` returns any triggered exits plus the current `active_exits` snapshot, including ratcheted trailing-stop trigger prices, activation state, and water marks.
+`POST /market/price/preview` returns the paper exits that would trigger at a hypothetical mark without mutating orders, positions, audit history, daily P&L, or exposure. Use it before applying a mark when testing bracket and trailing-stop behavior.
+
+`POST /market/price` applies the mark, returns any triggered exits, refreshes account open notional through the trading engine, and returns the current `active_exits` snapshot, including ratcheted trailing-stop trigger prices, activation state, and water marks.
 
 Operator controls:
 
