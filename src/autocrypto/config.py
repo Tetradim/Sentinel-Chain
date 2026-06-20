@@ -43,6 +43,8 @@ def load_settings() -> AppSettings:
             max_stop_loss_pct=Decimal(os.getenv("AUTO_CRYPTO_MAX_STOP_LOSS_PCT", "0")),
             max_trailing_stop_pct=Decimal(os.getenv("AUTO_CRYPTO_MAX_TRAILING_STOP_PCT", "0")),
             min_reward_risk_ratio=Decimal(os.getenv("AUTO_CRYPTO_MIN_REWARD_RISK_RATIO", "0")),
+            min_total_reward_risk_ratio=Decimal(os.getenv("AUTO_CRYPTO_MIN_TOTAL_REWARD_RISK_RATIO", "0")),
+            max_take_profit_targets=int(os.getenv("AUTO_CRYPTO_MAX_TAKE_PROFIT_TARGETS", "0")),
             max_slippage_bps=int(os.getenv("AUTO_CRYPTO_MAX_SLIPPAGE_BPS", "100")),
             allowed_exchanges=_csv_set(os.getenv("AUTO_CRYPTO_ALLOWED_EXCHANGES", "paper")),
         ),

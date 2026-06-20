@@ -332,6 +332,56 @@ def test_risk_rejects_staged_take_profit_target_above_short_entry():
     assert "invalid_take_profit_price" in decision.reason_codes
 
 
+def test_risk_rejects_staged_plan_with_weak_total_reward_risk():
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_targets": [
+                {"pct": "5", "close_pct": "50"},
+                {"pct": "10", "close_pct": "50"},
+            ],
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(
+        signal,
+        RiskConfig(min_reward_risk_ratio=Decimal("1"), min_total_reward_risk_ratio=Decimal("2")),
+        AccountState(),
+    )
+
+    assert decision.approved is False
+    assert "min_reward_risk_ratio_not_met" not in decision.reason_codes
+    assert "min_total_reward_risk_ratio_not_met" in decision.reason_codes
+
+
+def test_risk_can_cap_staged_take_profit_target_count():
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_targets": [
+                {"pct": "5", "close_pct": "30"},
+                {"pct": "8", "close_pct": "30"},
+                {"pct": "12", "close_pct": "40"},
+            ],
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(signal, RiskConfig(max_take_profit_targets=2), AccountState())
+
+    assert decision.approved is False
+    assert "max_take_profit_targets_exceeded" in decision.reason_codes
+
+
 def test_risk_treats_reduce_only_close_as_non_opening_even_without_stop_loss():
     signal = normalize_signal(
         {

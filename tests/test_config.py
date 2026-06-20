@@ -18,6 +18,8 @@ def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(mo
     monkeypatch.setenv("AUTO_CRYPTO_MAX_STOP_LOSS_PCT", "4")
     monkeypatch.setenv("AUTO_CRYPTO_MAX_TRAILING_STOP_PCT", "6")
     monkeypatch.setenv("AUTO_CRYPTO_MIN_REWARD_RISK_RATIO", "2")
+    monkeypatch.setenv("AUTO_CRYPTO_MIN_TOTAL_REWARD_RISK_RATIO", "1.5")
+    monkeypatch.setenv("AUTO_CRYPTO_MAX_TAKE_PROFIT_TARGETS", "3")
     monkeypatch.setenv("AUTO_CRYPTO_ALLOWED_EXCHANGES", "paper,binance, kraken")
     monkeypatch.setenv("AUTO_CRYPTO_WEBHOOK_SECRET", "secret")
     monkeypatch.setenv("AUTO_CRYPTO_WEBHOOK_TOLERANCE_SECONDS", "120")
@@ -39,6 +41,8 @@ def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(mo
     assert settings.risk.max_stop_loss_pct == Decimal("4")
     assert settings.risk.max_trailing_stop_pct == Decimal("6")
     assert settings.risk.min_reward_risk_ratio == Decimal("2")
+    assert settings.risk.min_total_reward_risk_ratio == Decimal("1.5")
+    assert settings.risk.max_take_profit_targets == 3
     assert settings.risk.allowed_exchanges == {"paper", "binance", "kraken"}
 
 

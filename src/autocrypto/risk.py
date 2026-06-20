@@ -19,6 +19,8 @@ class RiskConfig:
     max_stop_loss_pct: Decimal = Decimal("0")
     max_trailing_stop_pct: Decimal = Decimal("0")
     min_reward_risk_ratio: Decimal = Decimal("0")
+    min_total_reward_risk_ratio: Decimal = Decimal("0")
+    max_take_profit_targets: int = 0
     max_slippage_bps: int = 100
     allowed_exchanges: set[str] = field(default_factory=lambda: {"paper"})
     allowed_symbols: set[str] = field(default_factory=set)
@@ -142,6 +144,15 @@ def evaluate_signal(
         and take_profit_pct / stop_loss_pct < config.min_reward_risk_ratio
     ):
         reasons.append("min_reward_risk_ratio_not_met")
+    total_reward_risk_ratio = _total_reward_risk_ratio(signal, stop_loss_pct, reasons)
+    if (
+        total_reward_risk_ratio is not None
+        and config.min_total_reward_risk_ratio > 0
+        and total_reward_risk_ratio < config.min_total_reward_risk_ratio
+    ):
+        reasons.append("min_total_reward_risk_ratio_not_met")
+    if config.max_take_profit_targets > 0 and len(signal.take_profit_targets) > config.max_take_profit_targets:
+        reasons.append("max_take_profit_targets_exceeded")
     if signal.max_slippage_bps > config.max_slippage_bps:
         reasons.append("max_slippage_exceeded")
 
@@ -289,6 +300,32 @@ def _validate_take_profit_targets(signal: CryptoSignal, reasons: list[str]) -> N
             _append_reason(reasons, "invalid_take_profit_price")
         if signal.side == "sell" and target.trigger_price >= signal.price:
             _append_reason(reasons, "invalid_take_profit_price")
+
+
+def _total_reward_risk_ratio(
+    signal: CryptoSignal,
+    stop_loss_pct: Decimal | None,
+    reasons: list[str],
+) -> Decimal | None:
+    if stop_loss_pct is None or stop_loss_pct <= 0 or not signal.take_profit_targets:
+        return None
+    total_reward_pct = Decimal("0")
+    for target in signal.take_profit_targets:
+        target_pct = target.pct
+        if target_pct is None and target.trigger_price is not None:
+            if signal.price is None:
+                _append_reason(reasons, "price_required_for_take_profit_price")
+                return None
+            if signal.side == "buy":
+                target_pct = (target.trigger_price - signal.price) / signal.price * Decimal("100")
+            else:
+                target_pct = (signal.price - target.trigger_price) / signal.price * Decimal("100")
+        if target_pct is None or target_pct <= 0:
+            continue
+        total_reward_pct += target_pct * target.close_pct / Decimal("100")
+    if total_reward_pct <= 0:
+        return None
+    return total_reward_pct / stop_loss_pct
 
 
 def _append_reason(reasons: list[str], reason: str) -> None:

@@ -810,6 +810,8 @@ def _risk_config_to_dict(config: RiskConfig) -> dict[str, Any]:
         "max_stop_loss_pct": str(config.max_stop_loss_pct),
         "max_trailing_stop_pct": str(config.max_trailing_stop_pct),
         "min_reward_risk_ratio": str(config.min_reward_risk_ratio),
+        "min_total_reward_risk_ratio": str(config.min_total_reward_risk_ratio),
+        "max_take_profit_targets": config.max_take_profit_targets,
         "max_slippage_bps": config.max_slippage_bps,
         "allowed_exchanges": sorted(config.allowed_exchanges),
         "allowed_symbols": sorted(config.allowed_symbols),
@@ -930,6 +932,7 @@ def _bracket_plan_to_dict(signal: CryptoSignal, decision: RiskDecision, account_
     )
     worst_case_loss = _worst_case_loss(signal, decision.order_notional, stop_exit)
     first_target_reward = _target_reward(signal, decision.order_notional, first_target)
+    total_target_reward = _total_target_reward(signal, decision.order_notional, exits)
     return {
         "entry_side": signal.side,
         "exit_side": exit_side,
@@ -948,6 +951,10 @@ def _bracket_plan_to_dict(signal: CryptoSignal, decision: RiskDecision, account_
         "first_target_reward": _decimal_to_plain(first_target_reward) if first_target_reward is not None else None,
         "first_target_reward_risk_ratio": _decimal_to_plain(first_target_reward / worst_case_loss)
         if first_target_reward is not None and worst_case_loss is not None and worst_case_loss > 0
+        else None,
+        "total_target_reward": _decimal_to_plain(total_target_reward) if total_target_reward is not None else None,
+        "total_target_reward_risk_ratio": _decimal_to_plain(total_target_reward / worst_case_loss)
+        if total_target_reward is not None and worst_case_loss is not None and worst_case_loss > 0
         else None,
         "exits": [
             {
@@ -993,6 +1000,19 @@ def _target_reward(signal: CryptoSignal, notional: Decimal | None, target_exit: 
         return None
     target_notional = notional * target_exit.close_pct / Decimal("100")
     return target_notional * target_distance / signal.price
+
+
+def _total_target_reward(signal: CryptoSignal, notional: Decimal | None, exits: list[Any]) -> Decimal | None:
+    rewards = [
+        reward
+        for exit_order in exits
+        if exit_order.kind == "take_profit"
+        for reward in [_target_reward(signal, notional, exit_order)]
+        if reward is not None
+    ]
+    if not rewards:
+        return None
+    return sum(rewards, Decimal("0"))
 
 
 def _position_realized_pnl(exchange: PaperExchange, symbol: str) -> Decimal:
@@ -1124,6 +1144,7 @@ def _bracket_summary(lot: Any) -> dict[str, str | None]:
     protective_locked_pnl = _lot_protective_locked_pnl(lot, protective_exit)
     protective_distance_pct = _lot_protective_distance_pct(lot, protective_exit)
     first_target_reward = _lot_target_reward(lot, first_target)
+    total_target_reward = _lot_total_target_reward(lot)
     return {
         "remaining_notional": _decimal_to_plain(remaining_notional),
         "protective_exit_kind": protective_exit.kind if protective_exit is not None else None,
@@ -1139,6 +1160,10 @@ def _bracket_summary(lot: Any) -> dict[str, str | None]:
         "first_target_reward": _decimal_to_plain(first_target_reward) if first_target_reward is not None else None,
         "first_target_reward_risk_ratio": _decimal_to_plain(first_target_reward / worst_case_loss)
         if first_target_reward is not None and worst_case_loss is not None and worst_case_loss > 0
+        else None,
+        "total_target_reward": _decimal_to_plain(total_target_reward) if total_target_reward is not None else None,
+        "total_target_reward_risk_ratio": _decimal_to_plain(total_target_reward / worst_case_loss)
+        if total_target_reward is not None and worst_case_loss is not None and worst_case_loss > 0
         else None,
     }
 
@@ -1206,3 +1231,16 @@ def _lot_target_reward(lot: Any, target_exit: Any | None) -> Decimal | None:
         return None
     target_quantity = min(lot.remaining_quantity, lot.original_quantity * target_exit.close_pct / Decimal("100"))
     return distance * target_quantity
+
+
+def _lot_total_target_reward(lot: Any) -> Decimal | None:
+    rewards = [
+        reward
+        for exit_order in lot.exit_orders
+        if exit_order.kind == "take_profit" and exit_order.status != "canceled"
+        for reward in [_lot_target_reward(lot, exit_order)]
+        if reward is not None
+    ]
+    if not rewards:
+        return None
+    return sum(rewards, Decimal("0"))

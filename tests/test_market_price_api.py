@@ -207,6 +207,8 @@ def test_bracket_list_includes_remaining_risk_summary(tmp_path):
         "first_target_price": "110.00",
         "first_target_reward": "10.00",
         "first_target_reward_risk_ratio": "2",
+        "total_target_reward": "10.00",
+        "total_target_reward_risk_ratio": "2",
     }
     assert status["summary"] == listed["summary"]
 

@@ -168,6 +168,36 @@ def test_signal_preview_reports_risk_sized_bracket_metrics():
     assert body["bracket_plan"]["risk_pct_of_equity"] == "1.00"
     assert body["bracket_plan"]["first_target_reward"] == "200"
     assert body["bracket_plan"]["first_target_reward_risk_ratio"] == "2"
+    assert body["bracket_plan"]["total_target_reward"] == "200"
+    assert body["bracket_plan"]["total_target_reward_risk_ratio"] == "2"
+
+
+def test_signal_preview_reports_weighted_total_reward_for_staged_targets():
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/signals/preview",
+        json={
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_targets": [
+                {"pct": "5", "close_pct": "50"},
+                {"pct": "10", "close_pct": "50"},
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["bracket_plan"]["worst_case_loss"] == "5.00"
+    assert body["bracket_plan"]["first_target_reward"] == "2.50"
+    assert body["bracket_plan"]["first_target_reward_risk_ratio"] == "0.5"
+    assert body["bracket_plan"]["total_target_reward"] == "7.50"
+    assert body["bracket_plan"]["total_target_reward_risk_ratio"] == "1.5"
 
 
 def test_backtest_signal_replays_price_path_without_mutating_live_engine():
@@ -303,3 +333,33 @@ def test_bracket_summary_reports_protective_distance_and_locked_pnl_after_tighte
     assert summary["protective_distance_pct"] == "-2.00"
     assert summary["worst_case_loss"] == "0"
     assert summary["protective_locked_pnl"] == "2.00"
+
+
+def test_bracket_summary_reports_total_target_reward_for_staged_targets():
+    app = create_app()
+    client = TestClient(app)
+
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "staged-risk-summary",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_targets": [
+                {"pct": "5", "close_pct": "50"},
+                {"pct": "10", "close_pct": "50"},
+            ],
+        },
+    )
+    response = client.get("/brackets/staged-risk-summary")
+
+    assert response.status_code == 200
+    summary = response.json()["summary"]
+    assert summary["worst_case_loss"] == "5.00"
+    assert summary["first_target_reward"] == "2.500"
+    assert summary["first_target_reward_risk_ratio"] == "0.5"
+    assert summary["total_target_reward"] == "7.500"
+    assert summary["total_target_reward_risk_ratio"] == "1.5"

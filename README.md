@@ -12,7 +12,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Parses text alerts without ordering at `POST /signals/parse-text`
 - Normalizes crypto pairs such as `BTCUSDT`, `BTC/USDT`, `ETH-USDC`, and `SOL_USDT`
 - Blocks duplicate signal IDs across restarts with SQLite-backed idempotency
-- Applies pre-trade risk checks for stop loss, maximum stop width, minimum reward/risk, max order notional, max open notional, equity-percent position size, leverage, slippage, allowed exchanges, blocked symbols, daily loss, and consecutive losing exits
+- Applies pre-trade risk checks for stop loss, maximum stop width, first-target and total staged reward/risk, staged target count, max order notional, max open notional, equity-percent position size, leverage, slippage, allowed exchanges, blocked symbols, daily loss, and consecutive losing exits
 - Supports fixed-fraction paper sizing from `risk_pct` or `risk_amount` plus stop distance, with an optional max risk-percent cap
 - Supports approval-required mode with persisted pending approvals
 - Records paper orders, paper positions, realized PnL, active bracket lots, and audit events
@@ -235,7 +235,7 @@ Bracket close records a synthetic `bracket_manual_close` paper order plus a `bra
 
 The Portfolio Sentinel `Bracket Ledger` exposes those same paper-only controls in the UI. `Preview` calls `POST /brackets/{signal_id}/preview` at the selected exit trigger, `Tighten Stop` prompts for a new protective stop and calls `POST /brackets/{signal_id}/stop`, `Breakeven` calls `POST /brackets/{signal_id}/breakeven`, `Cancel Bracket` removes synthetic exits without closing the paper position, and `Trigger` still applies the mark through `POST /market/price`. These controls are operator maintenance tools for simulated brackets; they do not place live exchange orders.
 
-Use `take_profit_targets` for staged exits. Each target accepts either `pct` or `trigger_price` plus `close_pct`, and the total `close_pct` cannot exceed `100`. For example, `[{ "pct": "3", "close_pct": "50" }, { "trigger_price": "53000", "close_pct": "50" }]` sells half of the original paper lot at 3% profit and the remaining half at the exact trigger price. Long absolute targets must sit above entry and short absolute targets must sit below entry; risk checks reject the whole signal if any staged target is inverted. If the first target fills and price later falls to the stop, the remaining paper quantity exits through the stop-loss or trailing-stop leg. If `breakeven_after_take_profit` is true, a partial take-profit fill also tightens remaining stop-loss and trailing-stop legs to entry when that reduces paper risk. If `take_profit_targets` is omitted, `take_profit_pct` or `take_profit_price` still creates one full-size take-profit target.
+Use `take_profit_targets` for staged exits. Each target accepts either `pct` or `trigger_price` plus `close_pct`, and the total `close_pct` cannot exceed `100`. For example, `[{ "pct": "3", "close_pct": "50" }, { "trigger_price": "53000", "close_pct": "50" }]` sells half of the original paper lot at 3% profit and the remaining half at the exact trigger price. Long absolute targets must sit above entry and short absolute targets must sit below entry; risk checks reject the whole signal if any staged target is inverted. If configured, `AUTO_CRYPTO_MAX_TAKE_PROFIT_TARGETS` rejects target lists that are too long, and `AUTO_CRYPTO_MIN_TOTAL_REWARD_RISK_RATIO` evaluates the weighted staged reward/risk across all targets. If the first target fills and price later falls to the stop, the remaining paper quantity exits through the stop-loss or trailing-stop leg. If `breakeven_after_take_profit` is true, a partial take-profit fill also tightens remaining stop-loss and trailing-stop legs to entry when that reduces paper risk. If `take_profit_targets` is omitted, `take_profit_pct` or `take_profit_price` still creates one full-size take-profit target.
 
 Bracket fields may be sent at the top level or grouped under `bracket`, `bracket_order`, or `exit_plan`. Top-level values win if both are present:
 
@@ -352,6 +352,8 @@ Risk checks run before paper execution:
 - `breakeven_requires_protective_exit`
 - `breakeven_after_take_profit_requires_take_profit`
 - `min_reward_risk_ratio_not_met`
+- `min_total_reward_risk_ratio_not_met`
+- `max_take_profit_targets_exceeded`
 - `invalid_stop_loss_price`
 - `invalid_take_profit_price`
 - `price_required_for_stop_loss_price`
@@ -363,7 +365,7 @@ Risk checks run before paper execution:
 - `price_required_for_base_amount`
 - `risk_sizing_requires_stop_loss`
 
-Set `AUTO_CRYPTO_MAX_OPEN_NOTIONAL` above `0` to cap cumulative open long plus short paper exposure. Set `AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT` above `0` to limit a single ticket to a percentage of account equity. Set `AUTO_CRYPTO_MAX_RISK_PER_TRADE_PCT` above `0` to cap `risk_pct` sizing requests. Set `AUTO_CRYPTO_MAX_STOP_LOSS_PCT`, `AUTO_CRYPTO_MAX_TRAILING_STOP_PCT`, and `AUTO_CRYPTO_MIN_REWARD_RISK_RATIO` above `0` to reject alerts whose fixed stop or trailing stop is too wide or whose take-profit does not justify the stop risk. Absolute `stop_loss_price`, `take_profit_price`, and fixed `trailing_stop_amount` values are converted to entry-relative percentages for those same checks, and every staged absolute take-profit target is checked for the correct side of entry. Set `AUTO_CRYPTO_MAX_CONSECUTIVE_LOSSES` above `0` to pause new entries after repeated losing bracket exits. SQLite-backed paper state restores open exposure after restart, and triggered paper exits release exposure for later risk checks.
+Set `AUTO_CRYPTO_MAX_OPEN_NOTIONAL` above `0` to cap cumulative open long plus short paper exposure. Set `AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT` above `0` to limit a single ticket to a percentage of account equity. Set `AUTO_CRYPTO_MAX_RISK_PER_TRADE_PCT` above `0` to cap `risk_pct` sizing requests. Set `AUTO_CRYPTO_MAX_STOP_LOSS_PCT`, `AUTO_CRYPTO_MAX_TRAILING_STOP_PCT`, and `AUTO_CRYPTO_MIN_REWARD_RISK_RATIO` above `0` to reject alerts whose fixed stop or trailing stop is too wide or whose first take-profit does not justify the stop risk. Set `AUTO_CRYPTO_MIN_TOTAL_REWARD_RISK_RATIO` above `0` to evaluate the weighted reward/risk of every staged take-profit target by `close_pct`, and set `AUTO_CRYPTO_MAX_TAKE_PROFIT_TARGETS` above `0` to cap overly complex staged brackets. Absolute `stop_loss_price`, `take_profit_price`, and fixed `trailing_stop_amount` values are converted to entry-relative percentages for those same checks, and every staged absolute take-profit target is checked for the correct side of entry. Set `AUTO_CRYPTO_MAX_CONSECUTIVE_LOSSES` above `0` to pause new entries after repeated losing bracket exits. SQLite-backed paper state restores open exposure after restart, and triggered paper exits release exposure for later risk checks.
 
 When `quote_amount` and `base_amount` are omitted, JSON signals may set `risk_amount` or `risk_pct` with a stop loss. Auto-Crypto computes the paper order notional as `risk budget / stop distance`. For example, `risk_pct: "1"` with `equity: 10000` and `stop_loss_pct: "5"` sizes a `2000` paper notional so the stop represents about `100` quote currency of paper risk before slippage.
 
@@ -390,6 +392,7 @@ Current bot work is guided by paper-first risk controls and exchange order behav
 - CCXT describes trailing orders as exchange-dependent, sometimes usable with `reduceOnly`, and able to trail by percentage or quote amount, so Auto-Crypto accepts `trailing_stop_pct`, fixed `trailing_stop_amount`, and exact paper trail starts while keeping live execution gated until adapter support is explicit: <https://docs.ccxt.com/docs/faq>
 - Coinbase documents bracket and TP/SL behavior as paired exits where the triggered side executes and the other side cancels; exact `trailing_stop_price` remains paper-only because this venue behavior differs from portable trailing-order semantics: <https://help.coinbase.com/en/coinbase/trading-and-funding/advanced-trade/order-types>
 - Bot setting guidance consistently emphasizes stop loss, take profit, demo/paper testing, backtesting, and position sizing before live automation: <https://bitsgap.com/blog/how-to-choose-crypto-trading-bot-settings-in-2026-range-investment-stop-loss-and-take-profit>
+- Current bot-setting guidance treats take-profit and stop-loss selection as part of the strategy's risk/reward profile, so Auto-Crypto now reports and can gate both first-target and weighted staged-target reward/risk before paper execution: <https://bitsgap.com/blog/how-to-choose-crypto-trading-bot-settings-in-2026-range-investment-stop-loss-and-take-profit>
 - Recent crypto-bot risk guidance highlights fixed-fraction sizing, commonly around 1-2% per trade, plus stop-loss and drawdown limits before live automation; Auto-Crypto's `risk_pct` sizing stays paper-only and can be capped with `AUTO_CRYPTO_MAX_RISK_PER_TRADE_PCT`: <https://cryptorobot.ai/blog/essential-tips-managing-risks-crypto-trading-bots>
 - Current crypto backtesting guidance emphasizes testing strategies on historical or simulated price paths before launch; Auto-Crypto's `/backtest/signal` endpoint applies that idea to bracket and trailing-stop paper logic without mutating active state: <https://bitsgap.com/blog/crypto-backtesting-guide-2025-tools-tips-and-how-bitsgap-helps>
 - Current crypto-bot backtesting guidance warns that clean historical fills can hide slippage, fees, latency, and stressed-market liquidity; Auto-Crypto's backtest-only `fee_bps` and `slippage_bps` inputs make those assumptions explicit while keeping live execution disabled: <https://bitsgap.com/blog/crypto-bot-backtesting-in-2026-what-it-shows-and-what-it-cannot-predict>
@@ -408,7 +411,7 @@ AUTO_CRYPTO_REQUIRE_APPROVAL=false
 AUTO_CRYPTO_DB_PATH=./data/auto_crypto.sqlite3
 
 AUTO_CRYPTO_WEBHOOK_SECRET=
-AUTO_CRYPTO_WEBHOOK_TOLERANCE_SECONDS=300
+AUTO_CRYPTO_WEBHOOK_TOLERANCE_SECONDS=0
 
 AUTO_CRYPTO_MAX_ORDER_NOTIONAL=1000
 AUTO_CRYPTO_MAX_OPEN_NOTIONAL=0
@@ -422,6 +425,8 @@ AUTO_CRYPTO_REQUIRE_STOP_LOSS=true
 AUTO_CRYPTO_MAX_STOP_LOSS_PCT=0
 AUTO_CRYPTO_MAX_TRAILING_STOP_PCT=0
 AUTO_CRYPTO_MIN_REWARD_RISK_RATIO=0
+AUTO_CRYPTO_MIN_TOTAL_REWARD_RISK_RATIO=0
+AUTO_CRYPTO_MAX_TAKE_PROFIT_TARGETS=0
 
 AUTO_CRYPTO_DEFAULT_EXCHANGE=paper
 AUTO_CRYPTO_ALLOWED_EXCHANGES=paper
@@ -448,7 +453,7 @@ Digest payload:
 timestamp + "." + raw_request_body
 ```
 
-Accepted signed payloads are replay-protected. Stale timestamps are rejected when `AUTO_CRYPTO_WEBHOOK_TOLERANCE_SECONDS` is set.
+Accepted signed payloads are replay-protected. Stale timestamps are rejected when `AUTO_CRYPTO_WEBHOOK_TOLERANCE_SECONDS` is set above `0`; keep it at `0` to disable timestamp staleness checks.
 
 ## Main Endpoints
 
@@ -484,7 +489,7 @@ Paper market updates:
 - `POST /brackets/{signal_id}/close`
 - `POST /brackets/{signal_id}/cancel`
 
-`POST /signals/preview` and `POST /signals/preview-text` return a `bracket_plan` object with the synthetic entry side, exit side, OCA group, trailing arming state, trailing activation price, stop/take-profit/trailing triggers, estimated notional and quantity, worst-case stop loss, equity risk percent, and first-target reward/risk estimate that would apply if the signal were submitted. The preview echoes both percentage and fixed-amount trail fields in the normalized signal payload.
+`POST /signals/preview` and `POST /signals/preview-text` return a `bracket_plan` object with the synthetic entry side, exit side, OCA group, trailing arming state, trailing activation price, stop/take-profit/trailing triggers, estimated notional and quantity, worst-case stop loss, equity risk percent, first-target reward/risk, and weighted total staged target reward/risk that would apply if the signal were submitted. The preview echoes both percentage and fixed-amount trail fields in the normalized signal payload.
 
 `POST /backtest/signal` accepts a `signal` object plus a `prices` list, runs the signal through an isolated paper engine, marks each supplied price, and returns triggered exits, active exit snapshots after each mark, final paper P&L, final open notional, final positions, and the applied cost assumptions. It does not save orders, write audit events, or mutate the active engine.
 
@@ -534,7 +539,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/backtest/signal -Conte
 
 `GET /brackets` returns active synthetic paper brackets grouped by signal, including a summary of remaining notional, nearest protective trigger, worst-case stop loss, and first-target reward/risk when available. `GET /brackets/{signal_id}` returns the same summary plus active synthetic paper exit legs for one signal. `POST /brackets/{signal_id}/preview` previews only that bracket against a mark without mutating active state. `POST /brackets/{signal_id}/stop` tightens a paper stop without loosening risk, persists an amendment order, and records audit context. `POST /brackets/{signal_id}/trailing-stop` tightens a paper trailing trigger without loosening risk, persists an amendment order, and records audit context. `POST /brackets/{signal_id}/breakeven` moves open protective exits to entry when it tightens risk, persists an amendment order, and records audit context. `POST /brackets/{signal_id}/close` closes the selected synthetic paper bracket at the supplied mark, persists a reduce-only close order, records realized paper P&L, and cancels remaining exits. `POST /brackets/{signal_id}/cancel` removes those synthetic exits, persists a cancellation order, and records audit context without closing the position.
 
-Bracket summaries now include `protective_distance_pct` and `protective_locked_pnl`. A negative protective distance means the stop/trailing trigger has moved beyond entry and the paper bracket has locked in profit if that protective exit fires at the trigger. `worst_case_loss` floors at zero once the protective exit is at or beyond breakeven.
+Bracket summaries now include `protective_distance_pct`, `protective_locked_pnl`, `total_target_reward`, and `total_target_reward_risk_ratio`. A negative protective distance means the stop/trailing trigger has moved beyond entry and the paper bracket has locked in profit if that protective exit fires at the trigger. `worst_case_loss` floors at zero once the protective exit is at or beyond breakeven. For staged exits, total target reward is weighted by each target's `close_pct`, so operators can compare the whole bracket plan instead of only the nearest target.
 
 Operator controls:
 
