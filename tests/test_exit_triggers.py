@@ -666,6 +666,47 @@ def test_amend_long_trailing_stop_tightens_and_arms_pending_trail():
     ]
 
 
+def test_manual_breakeven_moves_stop_and_trailing_exit_to_entry():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "manual-breakeven",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "10",
+            "take_profit_pct": "30",
+            "trailing_stop_pct": "8",
+            "trailing_activation_pct": "5",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    order = exchange.move_bracket_to_breakeven("manual-breakeven", reason="operator locked risk")
+    stop_exit = next(exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "stop_loss")
+    trailing_exit = next(exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "trailing_stop")
+    breakeven_applied = exchange.lots[0].breakeven_applied
+    trailing_activated = exchange.lots[0].trailing_activated
+    triggered = exchange.update_price("BTC/USDT", Decimal("100"))
+
+    assert order is not None
+    assert order.exit_kind == "bracket_breakeven"
+    assert [(exit_order.kind, exit_order.trigger_price, exit_order.status) for exit_order in order.exit_orders] == [
+        ("stop_loss", Decimal("100.00"), "open"),
+        ("trailing_stop", Decimal("100.00"), "open"),
+    ]
+    assert stop_exit.trigger_price == Decimal("100.00")
+    assert trailing_exit.trigger_price == Decimal("100.00")
+    assert breakeven_applied is True
+    assert trailing_activated is True
+    assert triggered == [
+        {"symbol": "BTC/USDT", "kind": "stop_loss", "price": "100.00000000", "quantity": "1.00000000"}
+    ]
+
+
 def test_amend_short_trailing_stop_tightens_downward():
     exchange = PaperExchange()
     engine = TradingEngine(exchange=exchange)

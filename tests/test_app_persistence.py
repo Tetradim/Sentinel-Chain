@@ -225,3 +225,37 @@ def test_app_replays_trailing_stop_amendment_after_restart(tmp_path):
     ]
     assert repo.list_orders()[-1]["exit_kind"] == "trailing_stop"
     assert any(event.event_type == "bracket.trailing_stop_amended" for event in repo.list_audit())
+
+
+def test_app_replays_breakeven_amendment_after_restart(tmp_path):
+    db_path = tmp_path / "breakeven_amend_replay.sqlite3"
+    first_client = TestClient(create_app(repository=SQLiteRepository(db_path)))
+    first_client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "replay-breakeven",
+            "symbol": "SOLUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+            "trailing_stop_pct": "4",
+        },
+    )
+    amended = first_client.post("/brackets/replay-breakeven/breakeven", json={"reason": "operator lock"})
+
+    second_client = TestClient(create_app(repository=SQLiteRepository(db_path)))
+    bracket = second_client.get("/brackets/replay-breakeven").json()
+    triggered = second_client.post("/market/price", json={"symbol": "SOLUSDT", "price": "100"})
+    stop_exit = next(exit_order for exit_order in bracket["active_exits"] if exit_order["kind"] == "stop_loss")
+    trailing_exit = next(exit_order for exit_order in bracket["active_exits"] if exit_order["kind"] == "trailing_stop")
+
+    assert amended.status_code == 200
+    assert amended.json()["order"]["exit_kind"] == "bracket_breakeven"
+    assert stop_exit["trigger_price"] == "100.00"
+    assert trailing_exit["trigger_price"] == "100.00"
+    assert bracket["summary"]["worst_case_loss"] == "0.00"
+    assert triggered.json()["triggered"] == [
+        {"symbol": "SOL/USDT", "kind": "stop_loss", "price": "100.00000000", "quantity": "1.00000000"}
+    ]

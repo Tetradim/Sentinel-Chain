@@ -424,6 +424,49 @@ class PaperExchange:
         self._refresh_active_exits(first_lot.symbol)
         return order
 
+    def move_bracket_to_breakeven(self, signal_id: str, *, reason: str = "") -> PaperOrder | None:
+        """Move open protective paper exits to entry without loosening risk."""
+        target_lots = [
+            lot
+            for lot in self.lots
+            if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
+        ]
+        if not target_lots:
+            return None
+
+        amended_exits: list[ExitOrder] = []
+        for lot in target_lots:
+            updated_exit_orders, lot_amendments = _breakeven_exit_amendments(lot)
+            if not lot_amendments:
+                continue
+            lot.exit_orders = updated_exit_orders
+            lot.breakeven_applied = True
+            for amendment in lot_amendments:
+                if amendment.kind == "trailing_stop":
+                    _sync_trailing_water_mark(lot, amendment.trigger_price)
+            amended_exits.extend(lot_amendments)
+
+        if not amended_exits:
+            return None
+
+        first_lot = target_lots[0]
+        order = PaperOrder(
+            order_id=f"paper-breakeven-{_order_fragment(signal_id)}-{len(self.orders) + 1}",
+            signal_id=signal_id,
+            mode="paper",
+            exchange="paper",
+            symbol=first_lot.symbol,
+            side="amend",
+            notional=Decimal("0"),
+            price=_money(first_lot.entry_price),
+            exit_orders=amended_exits,
+            exit_kind="bracket_breakeven",
+            status="amended",
+        )
+        self.orders.append(order)
+        self._refresh_active_exits(first_lot.symbol)
+        return order
+
     def _fill_quantity(self, signal: CryptoSignal, notional: Decimal) -> Decimal:
         if signal.price is None:
             return Decimal("0")
@@ -490,6 +533,9 @@ class PaperExchange:
             return
         if order.exit_kind == "bracket_trailing_stop_amend":
             self._replay_bracket_trailing_stop_amend(order)
+            return
+        if order.exit_kind == "bracket_breakeven":
+            self._replay_bracket_breakeven(order)
             return
         if order.price is None:
             return
@@ -568,6 +614,18 @@ class PaperExchange:
                 if amended_trail is not None:
                     lot.exit_orders = _replace_or_append_trailing_stop(lot.exit_orders, amended_trail)
                     _sync_trailing_water_mark(lot, amended_trail.trigger_price)
+        self._refresh_active_exits(order.symbol)
+
+    def _replay_bracket_breakeven(self, order: PaperOrder) -> None:
+        for lot in self.lots:
+            if lot.signal_id == order.signal_id and lot.remaining_quantity > 0:
+                updated_exit_orders, amendments = _breakeven_exit_amendments(lot)
+                if amendments:
+                    lot.exit_orders = updated_exit_orders
+                    lot.breakeven_applied = True
+                    for amendment in amendments:
+                        if amendment.kind == "trailing_stop":
+                            _sync_trailing_water_mark(lot, amendment.trigger_price)
         self._refresh_active_exits(order.symbol)
 
     def _triggered_exit(self, lot: PaperLot, price: Decimal) -> ExitOrder | None:
@@ -902,6 +960,32 @@ def _replace_or_append_trailing_stop(exit_orders: list[ExitOrder], amended_trail
     if not replaced:
         updated.append(amended_trail)
     return updated
+
+
+def _breakeven_exit_amendments(lot: PaperLot) -> tuple[list[ExitOrder], list[ExitOrder]]:
+    breakeven_price = _money(lot.entry_price)
+    amendments: list[ExitOrder] = []
+    updated: list[ExitOrder] = []
+    for exit_order in lot.exit_orders:
+        if exit_order.kind not in {"stop_loss", "trailing_stop"}:
+            updated.append(exit_order)
+            continue
+        if lot.direction == "long" and breakeven_price <= exit_order.trigger_price:
+            updated.append(exit_order)
+            continue
+        if lot.direction == "short" and breakeven_price >= exit_order.trigger_price:
+            updated.append(exit_order)
+            continue
+        amendment = ExitOrder(
+            kind=exit_order.kind,
+            trigger_price=breakeven_price,
+            close_pct=exit_order.close_pct,
+            oca_group=exit_order.oca_group,
+            status="open",
+        )
+        updated.append(amendment)
+        amendments.append(amendment)
+    return updated, amendments
 
 
 def _sync_trailing_water_mark(lot: PaperLot, trigger_price: Decimal) -> None:

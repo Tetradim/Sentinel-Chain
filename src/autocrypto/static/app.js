@@ -721,6 +721,7 @@ function renderPortfolio() {
                 <button type="button" data-action="preview-bracket" data-signal-id="${escapeHtml(exit.signal_id)}" data-price="${escapeHtml(exit.trigger_price)}">Preview</button>
                 <button type="button" data-action="trigger-exit-price" data-symbol="${escapeHtml(compact)}" data-price="${escapeHtml(exit.trigger_price)}">Trigger</button>
                 <button type="button" data-action="amend-bracket-stop" data-signal-id="${escapeHtml(exit.signal_id)}" data-price="${escapeHtml(exit.trigger_price)}">Tighten Stop</button>
+                <button type="button" data-action="breakeven-bracket" data-signal-id="${escapeHtml(exit.signal_id)}">Breakeven</button>
                 ${trailingAction}
                 <button type="button" data-action="cancel-bracket" data-signal-id="${escapeHtml(exit.signal_id)}">Cancel Bracket</button>
               </div>
@@ -1131,6 +1132,20 @@ async function amendBracketTrailingStop(signalId, currentPrice) {
   });
   appState.lastPayload = result;
   setStatus(`Tightened ${signalId} trailing stop to ${triggerPrice}.`, "ok");
+  await loadState(false);
+}
+
+async function moveBracketToBreakeven(signalId) {
+  if (!window.confirm(`Move protective exits for ${signalId} to breakeven?`)) {
+    setStatus("Breakeven amendment aborted.", "warn");
+    return;
+  }
+  const result = await api(`/brackets/${encodeURIComponent(signalId)}/breakeven`, {
+    method: "POST",
+    body: { reason: "operator UI breakeven lock" },
+  });
+  appState.lastPayload = result;
+  setStatus(`Moved ${signalId} protective exits to breakeven.`, "ok");
   await loadState(false);
 }
 
@@ -1780,6 +1795,10 @@ function bindEvents() {
     }
     if (action === "amend-bracket-trailing-stop") {
       amendBracketTrailingStop(target.dataset.signalId, target.dataset.price)
+        .catch((error) => setStatus(error.message, "error"));
+    }
+    if (action === "breakeven-bracket") {
+      moveBracketToBreakeven(target.dataset.signalId)
         .catch((error) => setStatus(error.message, "error"));
     }
     if (action === "cancel-bracket") {

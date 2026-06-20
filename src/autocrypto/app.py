@@ -351,10 +351,15 @@ def create_app(
 
     @app.get("/brackets/{signal_id}")
     def bracket_status(signal_id: str) -> dict[str, Any]:
-        exits = _active_exits_to_dict(engine.exchange.lots, signal_id=signal_id)
+        lots = [
+            lot
+            for lot in engine.exchange.lots
+            if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
+        ]
+        exits = _active_exits_to_dict(lots, signal_id=signal_id)
         if not exits:
             raise HTTPException(status_code=404, detail="active bracket not found")
-        return {"signal_id": signal_id, "active_exits": exits}
+        return {"signal_id": signal_id, "summary": _bracket_summary(lots[0]), "active_exits": exits}
 
     @app.post("/brackets/{signal_id}/preview")
     async def bracket_preview(signal_id: str, request: Request) -> dict[str, Any]:
@@ -442,6 +447,46 @@ def create_app(
                     "signal_id": signal_id,
                     "reason": reason,
                     "trigger_price": str(trigger_price),
+                    "exit_orders": [
+                        {
+                            "kind": exit_order.kind,
+                            "trigger_price": str(exit_order.trigger_price),
+                            "close_pct": str(exit_order.close_pct),
+                            "oca_group": exit_order.oca_group,
+                            "status": exit_order.status,
+                        }
+                        for exit_order in order.exit_orders
+                    ],
+                },
+            )
+        return {
+            "status": "amended",
+            "signal_id": signal_id,
+            "order": order.to_dict(),
+            "active_exits": _active_exits_to_dict(engine.exchange.lots, signal_id=signal_id),
+            "positions": engine.exchange.list_positions(),
+            "account": _account_state_to_dict(engine.account_state),
+        }
+
+    @app.post("/brackets/{signal_id}/breakeven")
+    async def move_bracket_to_breakeven(signal_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        reason = str(payload.get("reason") or "manual move protective exits to breakeven")
+        order = engine.exchange.move_bracket_to_breakeven(signal_id, reason=reason)
+        if order is None:
+            raise HTTPException(
+                status_code=409,
+                detail="active bracket not found, no protective exit found, or breakeven would loosen risk",
+            )
+        engine.account_state.open_notional = engine.exchange.open_notional()
+        if repository:
+            repository.save_order(order)
+            repository.record_audit(
+                "bracket.breakeven_amended",
+                {
+                    "signal_id": signal_id,
+                    "reason": reason,
+                    "entry_price": str(order.price),
                     "exit_orders": [
                         {
                             "kind": exit_order.kind,
@@ -914,7 +959,72 @@ def _active_brackets_to_dict(lots: list[Any]) -> list[dict[str, Any]]:
                 "direction": lot.direction,
                 "remaining_quantity": str(lot.remaining_quantity),
                 "entry_price": str(lot.entry_price),
+                "summary": _bracket_summary(lot),
                 "exits": _active_exits_to_dict([lot], signal_id=lot.signal_id),
             }
         )
     return brackets
+
+
+def _bracket_summary(lot: Any) -> dict[str, str | None]:
+    remaining_notional = lot.remaining_quantity * lot.entry_price
+    protective_exit = _nearest_protective_exit(lot)
+    first_target = _nearest_take_profit_exit(lot)
+    worst_case_loss = _lot_protective_loss(lot, protective_exit)
+    first_target_reward = _lot_target_reward(lot, first_target)
+    return {
+        "remaining_notional": _decimal_to_plain(remaining_notional),
+        "protective_exit_kind": protective_exit.kind if protective_exit is not None else None,
+        "protective_trigger_price": str(protective_exit.trigger_price) if protective_exit is not None else None,
+        "worst_case_loss": _decimal_to_plain(worst_case_loss) if worst_case_loss is not None else None,
+        "first_target_price": str(first_target.trigger_price) if first_target is not None else None,
+        "first_target_reward": _decimal_to_plain(first_target_reward) if first_target_reward is not None else None,
+        "first_target_reward_risk_ratio": _decimal_to_plain(first_target_reward / worst_case_loss)
+        if first_target_reward is not None and worst_case_loss is not None and worst_case_loss > 0
+        else None,
+    }
+
+
+def _nearest_protective_exit(lot: Any) -> Any | None:
+    protective_exits = [
+        exit_order
+        for exit_order in lot.exit_orders
+        if exit_order.kind in {"stop_loss", "trailing_stop"} and exit_order.status != "canceled"
+    ]
+    if lot.direction == "long":
+        return max(protective_exits, key=lambda item: item.trigger_price, default=None)
+    return min(protective_exits, key=lambda item: item.trigger_price, default=None)
+
+
+def _nearest_take_profit_exit(lot: Any) -> Any | None:
+    targets = [
+        exit_order
+        for exit_order in lot.exit_orders
+        if exit_order.kind == "take_profit" and exit_order.status != "canceled"
+    ]
+    if lot.direction == "long":
+        return min(targets, key=lambda item: item.trigger_price, default=None)
+    return max(targets, key=lambda item: item.trigger_price, default=None)
+
+
+def _lot_protective_loss(lot: Any, protective_exit: Any | None) -> Decimal | None:
+    if protective_exit is None:
+        return None
+    if lot.direction == "long":
+        distance = lot.entry_price - protective_exit.trigger_price
+    else:
+        distance = protective_exit.trigger_price - lot.entry_price
+    return max(distance, Decimal("0")) * lot.remaining_quantity
+
+
+def _lot_target_reward(lot: Any, target_exit: Any | None) -> Decimal | None:
+    if target_exit is None:
+        return None
+    if lot.direction == "long":
+        distance = target_exit.trigger_price - lot.entry_price
+    else:
+        distance = lot.entry_price - target_exit.trigger_price
+    if distance <= 0:
+        return None
+    target_quantity = min(lot.remaining_quantity, lot.original_quantity * target_exit.close_pct / Decimal("100"))
+    return distance * target_quantity

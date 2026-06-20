@@ -177,6 +177,72 @@ def test_bracket_preview_reports_one_signal_trigger_distance_without_mutating_st
     assert len(state_after_preview["orders"]) == 2
 
 
+def test_bracket_list_includes_remaining_risk_summary(tmp_path):
+    repo = SQLiteRepository(tmp_path / "bracket_summary.sqlite3")
+    app = create_app(repository=repo)
+    client = TestClient(app)
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "summary-entry",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+        },
+    )
+
+    listed = client.get("/brackets").json()["brackets"][0]
+    status = client.get("/brackets/summary-entry").json()
+
+    assert listed["summary"] == {
+        "remaining_notional": "100",
+        "protective_exit_kind": "stop_loss",
+        "protective_trigger_price": "95.00",
+        "worst_case_loss": "5.00",
+        "first_target_price": "110.00",
+        "first_target_reward": "10.00",
+        "first_target_reward_risk_ratio": "2",
+    }
+    assert status["summary"] == listed["summary"]
+
+
+def test_bracket_breakeven_endpoint_moves_protective_exits_and_records_audit(tmp_path):
+    repo = SQLiteRepository(tmp_path / "bracket_breakeven.sqlite3")
+    app = create_app(repository=repo)
+    client = TestClient(app)
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "api-breakeven",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+            "trailing_stop_pct": "4",
+        },
+    )
+
+    amended = client.post("/brackets/api-breakeven/breakeven", json={"reason": "lock risk"})
+    loosened = client.post("/brackets/api-breakeven/breakeven", json={"reason": "already locked"})
+    active_exits = amended.json()["active_exits"]
+
+    assert amended.status_code == 200
+    assert amended.json()["order"]["exit_kind"] == "bracket_breakeven"
+    assert [(exit_order["kind"], exit_order["trigger_price"]) for exit_order in active_exits] == [
+        ("stop_loss", "100.00"),
+        ("take_profit", "110.00"),
+        ("trailing_stop", "100.00"),
+    ]
+    assert loosened.status_code == 409
+    assert repo.list_orders()[-1]["exit_kind"] == "bracket_breakeven"
+    assert repo.list_audit()[-1].event_type == "bracket.breakeven_amended"
+
+
 def test_bracket_cancel_endpoint_cancels_exits_and_records_audit(tmp_path):
     repo = SQLiteRepository(tmp_path / "bracket_cancel.sqlite3")
     app = create_app(repository=repo)
