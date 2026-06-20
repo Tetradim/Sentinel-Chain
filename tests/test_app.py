@@ -54,3 +54,36 @@ def test_market_price_response_includes_updated_active_exits():
     assert stop_exit["oca_group"]
     assert trailing_exit["trigger_price"] == "104.50"
     assert trailing_exit["high_water_mark"] == "110"
+
+
+def test_signal_preview_includes_synthetic_bracket_plan_for_short_trailing_order():
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/signals/preview",
+        json={
+            "symbol": "ETHUSDT",
+            "side": "short",
+            "quote_amount": "100",
+            "price": "100",
+            "bracket": {
+                "stop_loss_pct": "5",
+                "take_profit_pct": "10",
+                "trailing_stop_pct": "3",
+                "trailing_activation_pct": "2",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["execution"]["next_status"] == "accepted"
+    assert body["bracket_plan"]["entry_side"] == "sell"
+    assert body["bracket_plan"]["exit_side"] == "buy"
+    assert body["bracket_plan"]["trailing_starts_armed"] is False
+    assert [(item["kind"], item["trigger_price"]) for item in body["bracket_plan"]["exits"]] == [
+        ("stop_loss", "105.00"),
+        ("take_profit", "90.00"),
+        ("trailing_stop", "103.00"),
+    ]

@@ -85,6 +85,37 @@ def test_normalizes_absolute_bracket_prices_and_reduce_only_close_short():
     ]
 
 
+def test_normalizes_nested_bracket_order_payload():
+    signal = normalize_signal(
+        {
+            "symbol": "SOL/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "50",
+            "bracket_order": {
+                "stop_loss_pct": "3",
+                "take_profit_targets": [
+                    {"pct": "5", "close_pct": "40"},
+                    {"pct": "10", "close_pct": "60"},
+                ],
+                "trailing_stop_pct": "4",
+                "trailing_activation_pct": "2",
+                "breakeven_trigger_pct": "1.5",
+            },
+        },
+        source="test",
+    )
+
+    assert signal.stop_loss_pct == Decimal("3")
+    assert [(target.pct, target.close_pct) for target in signal.take_profit_targets] == [
+        (Decimal("5"), Decimal("40")),
+        (Decimal("10"), Decimal("60")),
+    ]
+    assert signal.trailing_stop_pct == Decimal("4")
+    assert signal.trailing_activation_pct == Decimal("2")
+    assert signal.breakeven_trigger_pct == Decimal("1.5")
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -104,6 +135,7 @@ def test_normalizes_absolute_bracket_prices_and_reduce_only_close_short():
             "quote_amount": "100",
             "take_profit_targets": [{"close_pct": "100"}],
         },
+        {"symbol": "BTC/USDT", "side": "buy", "quote_amount": "100", "bracket": "stop 2 tp 4"},
     ],
 )
 def test_rejects_unsafe_or_ambiguous_signals(payload):

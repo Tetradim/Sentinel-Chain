@@ -352,6 +352,25 @@ def test_risk_rejects_wide_trailing_stop_or_activation_without_trailing_stop():
     assert "trailing_stop_required_for_activation" in activation_decision.reason_codes
 
 
+def test_risk_rejects_breakeven_without_protective_exit_to_move():
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "sell",
+            "quote_amount": "100",
+            "price": "100",
+            "take_profit_pct": "5",
+            "breakeven_trigger_pct": "2",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(signal, RiskConfig(require_stop_loss=False), AccountState())
+
+    assert decision.approved is False
+    assert "breakeven_requires_protective_exit" in decision.reason_codes
+
+
 def test_risk_rejects_when_consecutive_loss_limit_is_reached():
     signal = normalize_signal(
         {

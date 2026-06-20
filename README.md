@@ -17,7 +17,9 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Records paper orders, paper positions, realized PnL, active bracket lots, and audit events
 - Rehydrates paper positions, bracket lots, and exposure risk state from SQLite after restart
 - Triggers paper long and short stop-loss, single or staged take-profit, activation-gated trailing-stop, and break-even exits from `POST /market/price`
+- Accepts bracket exits either as top-level signal fields or nested under `bracket`, `bracket_order`, or `exit_plan`
 - Rejects staged take-profit brackets when any absolute target is on the wrong side of entry for the order direction
+- Rejects standalone break-even triggers unless there is a stop-loss or trailing-stop leg for the break-even rule to move
 - Links paper bracket exit legs with OCA-style groups and records which sibling stop, take-profit, or trailing legs are canceled when a final paper exit closes the lot
 - Cancels active synthetic paper bracket exits by signal ID while leaving the underlying paper position open for separate manual management
 - Previews hypothetical market-price marks and bracket/trailing exits without mutating paper orders or positions
@@ -185,6 +187,24 @@ Bracket cancellation records a synthetic `bracket_cancel` paper order plus a `br
 
 Use `take_profit_targets` for staged exits. Each target accepts either `pct` or `trigger_price` plus `close_pct`, and the total `close_pct` cannot exceed `100`. For example, `[{ "pct": "3", "close_pct": "50" }, { "trigger_price": "53000", "close_pct": "50" }]` sells half of the original paper lot at 3% profit and the remaining half at the exact trigger price. Long absolute targets must sit above entry and short absolute targets must sit below entry; risk checks reject the whole signal if any staged target is inverted. If the first target fills and price later falls to the stop, the remaining paper quantity exits through the stop-loss or trailing-stop leg. If `take_profit_targets` is omitted, `take_profit_pct` or `take_profit_price` still creates one full-size take-profit target.
 
+Bracket fields may be sent at the top level or grouped under `bracket`, `bracket_order`, or `exit_plan`. Top-level values win if both are present:
+
+```json
+{
+  "symbol": "ETHUSDT",
+  "side": "short",
+  "quote_amount": "100",
+  "price": "100",
+  "bracket": {
+    "stop_loss_pct": "5",
+    "take_profit_pct": "10",
+    "trailing_stop_pct": "3",
+    "trailing_activation_pct": "2",
+    "breakeven_trigger_pct": "1.5"
+  }
+}
+```
+
 ## Text Crypto Alerts
 
 The text parser is intentionally strict so Discord-style alerts are explicit and auditable.
@@ -238,6 +258,7 @@ Recommended fields:
 - `trailing_stop_pct`
 - `trailing_activation_pct` or `trail_activation_pct`
 - `breakeven_trigger_pct`
+- `bracket`, `bracket_order`, or `exit_plan` object containing the same stop-loss, take-profit, trailing-stop, and break-even fields
 - `max_slippage_bps`
 - `reduce_only`
 - `strategy_id` or `strategy`
@@ -260,6 +281,7 @@ Risk checks run before paper execution:
 - `max_stop_loss_pct_exceeded`
 - `max_trailing_stop_pct_exceeded`
 - `trailing_stop_required_for_activation`
+- `breakeven_requires_protective_exit`
 - `min_reward_risk_ratio_not_met`
 - `invalid_stop_loss_price`
 - `invalid_take_profit_price`
@@ -282,6 +304,7 @@ Current bot work is guided by paper-first risk controls and exchange order behav
 - Binance order payloads expose trailing-stop fields such as `trailingDelta` and `trailingTime`, which is useful when mapping paper behavior to future live adapters: <https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints>
 - Coinbase describes bracket and TP/SL orders as linked exits where only the triggered side executes and the other side is turned off, which is the behavior Auto-Crypto mirrors in paper bracket lots: <https://help.coinbase.com/en/coinbase/trading-and-funding/advanced-trade/order-types>
 - Coinbase Advanced Trade API attached TP/SL order examples use explicit stop and limit trigger prices, so Auto-Crypto accepts `stop_loss_price`, `take_profit_price`, and staged `trigger_price` values in addition to percentage offsets: <https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/guides/orders>
+- Interactive Brokers describes bracket orders as an entry plus opposite-side profit-taking and stop-loss children where the unfilled child is canceled after one side triggers; Auto-Crypto's synthetic OCA metadata follows that paper-first model: <https://www.interactivebrokers.com/campus/trading-lessons/bracket-orders-for-tws-mosaic-2/>
 - Binance documents that OCO orders can include a trailing-stop contingent leg and that triggering it cancels the paired limit leg, which is why Auto-Crypto now stores OCA grouping and canceled sibling metadata in paper exit orders before any live adapter work: <https://developers.binance.com/docs/binance-spot-api-docs/faqs/trailing-stop-faq>
 - CCXT notes that trailing orders and stop/take-profit parameters vary by exchange, so Auto-Crypto keeps exchange-specific live execution disabled and paper-first until adapter capability checks are explicit: <https://docs.ccxt.com/docs/faq>
 - CCXT documents take-profit and stop-loss orders as closing orders for an existing position, including trigger prices and an inverted side when closing a sell/short position; Auto-Crypto mirrors that by using paper buy exits for short bracket lots: <https://github.com/ccxt/ccxt/wiki/manual>
@@ -365,6 +388,8 @@ Paper market updates:
 - `POST /market/price/preview`
 - `GET /brackets/{signal_id}`
 - `POST /brackets/{signal_id}/cancel`
+
+`POST /signals/preview` and `POST /signals/preview-text` return a `bracket_plan` object with the synthetic entry side, exit side, OCA group, trailing arming state, and stop/take-profit/trailing triggers that would be attached if the signal were submitted.
 
 `POST /market/price/preview` returns the paper exits that would trigger at a hypothetical mark without mutating orders, positions, audit history, daily P&L, or exposure. Use it before applying a mark when testing bracket and trailing-stop behavior.
 

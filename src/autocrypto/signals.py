@@ -63,6 +63,7 @@ FORBIDDEN_ACTIONS = {"withdraw", "transfer", "internal_transfer", "deposit"}
 def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
     if not isinstance(payload, dict):
         raise SignalValidationError("signal payload must be an object")
+    bracket = _bracket_payload(payload)
 
     raw_side = payload.get("side") or payload.get("action")
     side = _normalize_side(raw_side)
@@ -75,21 +76,21 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         raise SignalValidationError("signal requires quote_amount or base_amount")
 
     price = _optional_positive_decimal(payload.get("price") or payload.get("entry_price") or payload.get("limit_price"))
-    stop_loss_pct = _optional_positive_decimal(payload.get("stop_loss_pct"))
-    stop_loss_price = _optional_positive_decimal(payload.get("stop_loss_price") or payload.get("stop_price"))
-    take_profit_pct = _optional_positive_decimal(payload.get("take_profit_pct"))
+    stop_loss_pct = _optional_positive_decimal(_field(payload, bracket, "stop_loss_pct"))
+    stop_loss_price = _optional_positive_decimal(_field(payload, bracket, "stop_loss_price", "stop_price"))
+    take_profit_pct = _optional_positive_decimal(_field(payload, bracket, "take_profit_pct"))
     take_profit_price = _optional_positive_decimal(
-        payload.get("take_profit_price") or payload.get("target_price")
+        _field(payload, bracket, "take_profit_price", "target_price")
     )
-    take_profit_targets = _take_profit_targets(payload.get("take_profit_targets"), take_profit_pct, take_profit_price)
+    take_profit_targets = _take_profit_targets(_field(payload, bracket, "take_profit_targets"), take_profit_pct, take_profit_price)
     take_profit_targets = _sort_take_profit_targets(take_profit_targets, side=side, entry_price=price)
     if take_profit_pct is None and take_profit_targets:
         take_profit_pct = take_profit_targets[0].pct
-    trailing_stop_pct = _optional_positive_decimal(payload.get("trailing_stop_pct"))
+    trailing_stop_pct = _optional_positive_decimal(_field(payload, bracket, "trailing_stop_pct"))
     trailing_activation_pct = _optional_positive_decimal(
-        payload.get("trailing_activation_pct") or payload.get("trail_activation_pct")
+        _field(payload, bracket, "trailing_activation_pct", "trail_activation_pct")
     )
-    breakeven_trigger_pct = _optional_positive_decimal(payload.get("breakeven_trigger_pct"))
+    breakeven_trigger_pct = _optional_positive_decimal(_field(payload, bracket, "breakeven_trigger_pct"))
     leverage = _optional_positive_decimal(payload.get("leverage")) or Decimal("1")
     max_slippage_bps = _non_negative_int(payload.get("max_slippage_bps"), default=100)
     exchange = str(payload.get("exchange") or payload.get("venue") or "paper").strip().lower()
@@ -151,6 +152,25 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         strategy_id=strategy_id,
         raw_payload=dict(payload),
     )
+
+
+def _bracket_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    bracket = payload.get("bracket") or payload.get("bracket_order") or payload.get("exit_plan") or {}
+    if bracket in (None, ""):
+        return {}
+    if not isinstance(bracket, dict):
+        raise SignalValidationError("bracket must be an object")
+    return bracket
+
+
+def _field(payload: dict[str, Any], bracket: dict[str, Any], *names: str) -> Any:
+    for name in names:
+        if payload.get(name) not in (None, ""):
+            return payload.get(name)
+    for name in names:
+        if bracket.get(name) not in (None, ""):
+            return bracket.get(name)
+    return None
 
 
 def _normalize_side(value: Any) -> str:

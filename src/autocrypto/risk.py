@@ -96,6 +96,12 @@ def evaluate_signal(
     if signal.trailing_activation_pct is not None and signal.trailing_stop_pct is None:
         reasons.append("trailing_stop_required_for_activation")
     if (
+        signal.breakeven_trigger_pct is not None
+        and stop_loss_pct is None
+        and signal.trailing_stop_pct is None
+    ):
+        reasons.append("breakeven_requires_protective_exit")
+    if (
         stop_loss_pct is not None
         and take_profit_pct is not None
         and config.min_reward_risk_ratio > 0

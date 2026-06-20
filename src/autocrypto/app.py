@@ -30,7 +30,7 @@ from .exchanges.ccxt_adapter import (
     list_ccxt_exchange_ids,
 )
 from .exchanges.platform_registry import get_platform, platform_rows
-from .execution import PaperExchange
+from .execution import PaperExchange, build_exit_orders
 from .intake import SignalIntakeService
 from .repository import SQLiteRepository
 from .risk import AccountState, RiskConfig, RiskDecision, evaluate_signal
@@ -623,7 +623,30 @@ def _signal_preview(
             "halt_reason": engine.halt_reason,
             "approval_required": require_approval,
         },
+        "bracket_plan": _bracket_plan_to_dict(signal),
         "account": _account_state_to_dict(engine.account_state),
+    }
+
+
+def _bracket_plan_to_dict(signal: CryptoSignal) -> dict[str, Any]:
+    exits = build_exit_orders(signal)
+    exit_side = "sell" if signal.side == "buy" else "buy"
+    trailing_starts_armed = signal.trailing_stop_pct is not None and signal.trailing_activation_pct is None
+    return {
+        "entry_side": signal.side,
+        "exit_side": exit_side,
+        "oca_group": exits[0].oca_group if exits else None,
+        "trailing_starts_armed": trailing_starts_armed,
+        "exits": [
+            {
+                "kind": exit_order.kind,
+                "trigger_price": str(exit_order.trigger_price),
+                "close_pct": str(exit_order.close_pct),
+                "oca_group": exit_order.oca_group,
+                "status": exit_order.status,
+            }
+            for exit_order in exits
+        ],
     }
 
 
