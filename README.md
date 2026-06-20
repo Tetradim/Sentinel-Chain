@@ -32,11 +32,11 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Supports paper-only bracket close-by-signal controls that flatten or partially reduce the selected simulated bracket at an operator-supplied mark or at the current nearest protective trigger
 - Previews one active bracket by signal ID at a hypothetical mark, including trigger distance and trailing activation context
 - Cancels active synthetic paper bracket exits by signal ID while leaving the underlying paper position open for separate manual management
-- Previews hypothetical market-price marks and bracket/trailing exits without mutating paper orders or positions
+- Previews hypothetical market-price marks and bracket/trailing exits without mutating paper orders or positions, including simulated post-mark trailing-stop ratchets
 - Previews server-side risk decisions from the operator UI without placing orders
 - Backtests one signal against a supplied paper mark-price path and returns active exit snapshots after each mark without mutating the live in-memory engine
 - Backtests one signal against OHLC candles with conservative adverse-first intrabar sequencing, plus MFE/MAE excursion metrics, without mutating active state
-- Backtests can opt into paper fee and slippage assumptions so bracket/trailing-stop results are not limited to clean mark-price fills
+- Backtests can opt into paper fee and slippage assumptions and report closed-P&L drawdown/runup so bracket/trailing-stop results are not limited to clean mark-price fills
 - Shows persisted signal history with one-click reload into the Trading Desk
 - Supports quote-notional and base-quantity ticket sizing, paper position close controls, bracket lot context, bracket previews, stop tightening, breakeven locks, bracket cancellation, trigger tests, and local unrealized P&L marks in the operator UI
 - Captures inline halt and approval rejection reasons in operator workflows
@@ -86,6 +86,35 @@ FastAPI docs remain available at:
 ```text
 http://127.0.0.1:8004/docs
 ```
+
+## macOS Beta Installer
+
+MacBook beta testers can install the local source build with the bundled macOS installer script. It creates the Python virtual environment, installs the package in editable mode, uses persistent SQLite storage, and adds a double-click launcher to the Desktop.
+
+Prerequisites:
+
+- macOS with Python 3.11+ on `PATH`
+
+From the repository root:
+
+```bash
+chmod +x install-macos.sh
+./install-macos.sh
+```
+
+After installation, double-click `Auto-Crypto.command` on the Desktop. The launcher starts the API on `8004` and opens `http://127.0.0.1:8004/ui`. Logs are written to `~/Desktop/Auto-Crypto.log`.
+
+Manual launch options:
+
+```bash
+./install-macos.sh --launch
+./install-macos.sh --launch --install-deps
+./install-macos.sh --launch --exchange-deps
+./install-macos.sh --launch --start-discord
+./install-macos.sh --launch --port 8004 --no-browser
+```
+
+`--start-discord` requires `DISCORD_BOT_TOKEN` in the environment.
 
 ## UI Prototype Gallery
 
@@ -423,6 +452,9 @@ Current bot work is guided by paper-first risk controls and exchange order behav
 - Recent crypto bot risk guidance recommends combining trailing stops with a fixed initial stop so risk is defined before the trailing logic activates; Auto-Crypto's time-stop addition keeps that same paper-first bracket lifecycle explicit instead of replacing protective exits: <https://cryptorobot.ai/blog/essential-tips-managing-risks-crypto-trading-bots>
 - Current order-type guidance describes OCO/bracket orders as paired conditional exits where one fill cancels the other, reinforcing why Auto-Crypto records `time_exit` sibling cancellation metadata in paper mode before considering exchange-native behavior: <https://bitsgap.com/blog/the-only-guide-to-order-types-youll-ever-need>
 - Backtesting guidance for entry and exit rules emphasizes objective, structured exits; `max_hold_marks` adds a deterministic paper time-stop rule that can be replayed through `/backtest/signal` alongside stop-loss, take-profit, and trailing-stop paths: <https://www.fortraders.com/blog/backtesting-entry-and-exit-rules-best-practices>
+- Current trailing-stop guidance describes the order type as a dynamic stop that follows favorable price movement and exits on reversal, which is why Auto-Crypto preview responses now show the simulated post-mark trailing trigger before applying the mark: <https://www.investopedia.com/terms/t/trailingstop.asp>
+- Coinbase order-type guidance describes bracket orders as target exits for locking profit or avoiding losses; Auto-Crypto keeps those bracket updates synthetic and now exposes both current and previewed exit snapshots for operator review: <https://help.coinbase.com/en/coinbase/trading-and-funding/advanced-trade/order-types>
+- Recent crypto backtesting guidance recommends analyzing drawdowns alongside returns, fees, slippage, and forward tests; Auto-Crypto's isolated backtest summary now includes closed-P&L drawdown/runup while live execution remains disabled: <https://coinbureau.com/guides/how-to-backtest-your-crypto-trading-strategy>
 
 ## Environment Variables
 
@@ -513,7 +545,7 @@ Paper market updates:
 
 `POST /signals/preview` and `POST /signals/preview-text` return a `bracket_plan` object with the synthetic entry side, exit side, OCA group, trailing arming state, trailing activation price, stop/take-profit/trailing triggers, estimated notional and quantity, worst-case stop loss, equity risk percent, first-target reward/risk, and weighted total staged target reward/risk that would apply if the signal were submitted. The preview echoes both percentage and fixed-amount trail fields in the normalized signal payload.
 
-`POST /backtest/signal` accepts a `signal` object plus a `prices` list, runs the signal through an isolated paper engine, marks each supplied price, and returns triggered exits, active exit snapshots after each mark, final paper P&L, final open notional, final positions, and the applied cost assumptions. It does not save orders, write audit events, or mutate the active engine.
+`POST /backtest/signal` accepts a `signal` object plus a `prices` list, runs the signal through an isolated paper engine, marks each supplied price, and returns triggered exits, active exit snapshots after each mark, final paper P&L, final open notional, final positions, closed-P&L drawdown/runup, and the applied cost assumptions. It does not save orders, write audit events, or mutate the active engine.
 
 `POST /backtest/signal` also accepts a `candles` list instead of `prices`. Each candle requires `high`, `low`, and `close`, plus an optional `label`, `time`, or `timestamp`. Candle backtests use a conservative adverse-first path: long signals mark low, high, then close; short signals mark high, low, then close. If a candle could have hit both a stop and a target, this favors the protective stop outcome rather than assuming the profitable target filled first. Each returned mark includes cumulative `mfe` and `mae` percentages from entry.
 
@@ -555,11 +587,11 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/backtest/signal -Conte
 }'
 ```
 
-`POST /market/price/preview` returns the paper exits that would trigger at a hypothetical mark without mutating orders, positions, audit history, daily P&L, or exposure. Use it before applying a mark when testing bracket and trailing-stop behavior.
+`POST /market/price/preview` returns the paper exits that would trigger at a hypothetical mark without mutating orders, positions, audit history, daily P&L, or exposure. It also returns `preview_active_exits` and `preview_positions`, which are sandbox snapshots after the hypothetical mark, so operators can see whether an activation-gated trailing stop would arm or ratchet before applying the mark.
 
 `POST /market/price` applies the mark, returns any triggered exits, refreshes account open notional through the trading engine, and returns the current `active_exits` snapshot, including ratcheted trailing-stop trigger prices, percentage or amount trail distance, activation state, activation price, trigger distance, and water marks.
 
-`GET /brackets` returns active synthetic paper brackets grouped by signal, including a summary of remaining notional, nearest protective trigger, worst-case stop loss, and first-target reward/risk when available. `GET /brackets/{signal_id}` returns the same summary plus active synthetic paper exit legs for one signal. `POST /brackets/{signal_id}/preview` previews only that bracket against a mark without mutating active state. `POST /brackets/{signal_id}/stop` tightens a paper stop without loosening risk, persists an amendment order, and records audit context. `POST /brackets/{signal_id}/trailing-stop` tightens a paper trailing trigger without loosening risk, persists an amendment order, and records audit context. `POST /brackets/{signal_id}/breakeven` moves open protective exits to entry when it tightens risk, persists an amendment order, and records audit context. `POST /brackets/{signal_id}/close` closes or partially reduces the selected synthetic paper bracket at the supplied mark, persists a reduce-only close or reduce order, records realized paper P&L, and cancels remaining exits only when the bracket is fully closed. `POST /brackets/{signal_id}/cancel` removes those synthetic exits, persists a cancellation order, and records audit context without closing the position.
+`GET /brackets` returns active synthetic paper brackets grouped by signal, including a summary of remaining notional, nearest protective trigger, worst-case stop loss, and first-target reward/risk when available. `GET /brackets/{signal_id}` returns the same summary plus active synthetic paper exit legs for one signal. `POST /brackets/{signal_id}/preview` previews only that bracket against a mark without mutating active state and returns both the current `active_exits` and sandboxed `preview_active_exits` after the hypothetical mark. `POST /brackets/{signal_id}/stop` tightens a paper stop without loosening risk, persists an amendment order, and records audit context. `POST /brackets/{signal_id}/trailing-stop` tightens a paper trailing trigger without loosening risk, persists an amendment order, and records audit context. `POST /brackets/{signal_id}/breakeven` moves open protective exits to entry when it tightens risk, persists an amendment order, and records audit context. `POST /brackets/{signal_id}/close` closes or partially reduces the selected synthetic paper bracket at the supplied mark, persists a reduce-only close or reduce order, records realized paper P&L, and cancels remaining exits only when the bracket is fully closed. `POST /brackets/{signal_id}/cancel` removes those synthetic exits, persists a cancellation order, and records audit context without closing the position.
 
 Bracket summaries now include `protective_distance_pct`, `protective_locked_pnl`, `total_target_reward`, and `total_target_reward_risk_ratio`. A negative protective distance means the stop/trailing trigger has moved beyond entry and the paper bracket has locked in profit if that protective exit fires at the trigger. `worst_case_loss` floors at zero once the protective exit is at or beyond breakeven. For staged exits, total target reward is weighted by each target's `close_pct`, so operators can compare the whole bracket plan instead of only the nearest target.
 

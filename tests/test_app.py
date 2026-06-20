@@ -390,6 +390,7 @@ def test_backtest_candles_use_conservative_adverse_first_path_and_report_excursi
     assert body["marks"][0]["mfe"] == "12.00"
     assert body["marks"][0]["mae"] == "-6.00"
     assert body["final_daily_pnl"] == "-6"
+    assert body["risk_summary"] == {"max_drawdown": "6", "max_runup": "0"}
     assert positions_after.json()["positions"] == []
 
 

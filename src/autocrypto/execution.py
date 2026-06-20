@@ -359,23 +359,32 @@ class PaperExchange:
         """Return paper exits that would trigger at price without mutating state."""
         return deepcopy(self).update_price(symbol, price)
 
+    def preview_price_exchange(self, symbol: str, price: Decimal) -> PaperExchange:
+        """Return a sandbox exchange after applying a hypothetical mark."""
+        sandbox = deepcopy(self)
+        sandbox.update_price(symbol, price)
+        return sandbox
+
     def preview_bracket(self, signal_id: str, price: Decimal) -> list[dict]:
         """Return exits that would trigger for one paper bracket without mutating state."""
         sandbox = deepcopy(self)
-        target_lots = [
-            lot
-            for lot in sandbox.lots
-            if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
-        ]
+        target_lots = _target_preview_lots(sandbox, signal_id)
         if not target_lots:
             return []
         symbol = target_lots[0].symbol
-        sandbox.lots = [
-            lot
-            for lot in sandbox.lots
-            if lot.signal_id == signal_id or lot.symbol != symbol
-        ]
+        sandbox.lots = _preview_lots_for_signal(sandbox, signal_id, symbol)
         return sandbox.update_price(symbol, price)
+
+    def preview_bracket_exchange(self, signal_id: str, price: Decimal) -> PaperExchange | None:
+        """Return a sandbox exchange containing only one bracket after a hypothetical mark."""
+        sandbox = deepcopy(self)
+        target_lots = _target_preview_lots(sandbox, signal_id)
+        if not target_lots:
+            return None
+        symbol = target_lots[0].symbol
+        sandbox.lots = _preview_lots_for_signal(sandbox, signal_id, symbol)
+        sandbox.update_price(symbol, price)
+        return sandbox
 
     def cancel_bracket(self, signal_id: str, *, reason: str = "") -> PaperOrder | None:
         """Cancel open synthetic bracket exits for a paper lot without closing exposure."""
@@ -1470,6 +1479,22 @@ def _bracket_close_quantity(
             return None
         return min(total_remaining, base_amount)
     return total_remaining
+
+
+def _target_preview_lots(exchange: PaperExchange, signal_id: str) -> list[PaperLot]:
+    return [
+        lot
+        for lot in exchange.lots
+        if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
+    ]
+
+
+def _preview_lots_for_signal(exchange: PaperExchange, signal_id: str, symbol: str) -> list[PaperLot]:
+    return [
+        lot
+        for lot in exchange.lots
+        if lot.signal_id == signal_id or lot.symbol != symbol
+    ]
 
 
 def _nearest_protective_exit(lot: PaperLot) -> ExitOrder | None:

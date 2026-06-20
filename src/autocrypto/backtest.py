@@ -31,6 +31,8 @@ class BacktestSummary:
     final_open_notional: Decimal
     final_positions: list[dict]
     total_triggers: int
+    max_drawdown: Decimal = Decimal("0")
+    max_runup: Decimal = Decimal("0")
     fee_bps: Decimal = Decimal("0")
     slippage_bps: Decimal = Decimal("0")
 
@@ -56,6 +58,10 @@ class BacktestSummary:
             "final_open_notional": str(self.final_open_notional),
             "final_positions": self.final_positions,
             "total_triggers": self.total_triggers,
+            "risk_summary": {
+                "max_drawdown": str(self.max_drawdown),
+                "max_runup": str(self.max_runup),
+            },
             "costs": {
                 "fee_bps": str(self.fee_bps),
                 "slippage_bps": str(self.slippage_bps),
@@ -152,6 +158,8 @@ def _run_backtest_path(
         final_open_notional=sandbox.account_state.open_notional,
         final_positions=sandbox.exchange.list_positions(),
         total_triggers=sum(len(mark.triggered) for mark in marks),
+        max_drawdown=_max_drawdown([mark.daily_pnl for mark in marks]),
+        max_runup=_max_runup([mark.daily_pnl for mark in marks]),
         fee_bps=costs.fee_bps,
         slippage_bps=costs.slippage_bps,
     )
@@ -222,3 +230,21 @@ def _active_exits_snapshot(lots: list) -> list[dict]:
         if lot.remaining_quantity > 0
         for exit_order in lot.exit_orders
     ]
+
+
+def _max_drawdown(values: list[Decimal]) -> Decimal:
+    peak = Decimal("0")
+    drawdown = Decimal("0")
+    for value in values:
+        peak = max(peak, value)
+        drawdown = max(drawdown, peak - value)
+    return drawdown
+
+
+def _max_runup(values: list[Decimal]) -> Decimal:
+    trough = Decimal("0")
+    runup = Decimal("0")
+    for value in values:
+        trough = min(trough, value)
+        runup = max(runup, value - trough)
+    return runup

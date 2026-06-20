@@ -141,6 +141,44 @@ def test_market_price_preview_reports_trigger_without_mutating_paper_state(tmp_p
     assert state_after_preview["active_exits"]
 
 
+def test_market_price_preview_reports_simulated_trailing_ratchet_without_mutating_state(tmp_path):
+    repo = SQLiteRepository(tmp_path / "market_preview_trailing.sqlite3")
+    app = create_app(repository=repo)
+    client = TestClient(app)
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "preview-trail-entry",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "20",
+            "trailing_stop_pct": "5",
+        },
+    )
+
+    preview = client.post("/market/price/preview", json={"symbol": "BTCUSDT", "price": "110"})
+    state_after_preview = client.get("/ui/state").json()
+
+    assert preview.status_code == 200
+    body = preview.json()
+    live_trailing = next(exit_order for exit_order in body["active_exits"] if exit_order["kind"] == "trailing_stop")
+    preview_trailing = next(
+        exit_order for exit_order in body["preview_active_exits"] if exit_order["kind"] == "trailing_stop"
+    )
+    state_trailing = next(
+        exit_order for exit_order in state_after_preview["active_exits"] if exit_order["kind"] == "trailing_stop"
+    )
+    assert body["would_trigger"] == []
+    assert live_trailing["trigger_price"] == "95.00"
+    assert preview_trailing["trigger_price"] == "104.50"
+    assert preview_trailing["high_water_mark"] == "110"
+    assert state_trailing["trigger_price"] == "95.00"
+    assert len(state_after_preview["orders"]) == 1
+
+
 def test_bracket_preview_reports_one_signal_trigger_distance_without_mutating_state(tmp_path):
     repo = SQLiteRepository(tmp_path / "bracket_preview.sqlite3")
     app = create_app(repository=repo)
@@ -175,6 +213,46 @@ def test_bracket_preview_reports_one_signal_trigger_distance_without_mutating_st
     assert trailing_exit["trailing_activation_price"] == "102.00"
     assert state_after_preview["positions"][0]["quantity"] == "2.00000000"
     assert len(state_after_preview["orders"]) == 2
+
+
+def test_bracket_preview_reports_simulated_activation_snapshot_without_mutating_state(tmp_path):
+    repo = SQLiteRepository(tmp_path / "bracket_preview_activation.sqlite3")
+    app = create_app(repository=repo)
+    client = TestClient(app)
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "preview-activation",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "20",
+            "trailing_stop_pct": "3",
+            "trailing_activation_pct": "2",
+        },
+    )
+
+    preview = client.post("/brackets/preview-activation/preview", json={"price": "103"})
+    state_after_preview = client.get("/ui/state").json()
+
+    assert preview.status_code == 200
+    body = preview.json()
+    live_trailing = next(exit_order for exit_order in body["active_exits"] if exit_order["kind"] == "trailing_stop")
+    preview_trailing = next(
+        exit_order for exit_order in body["preview_active_exits"] if exit_order["kind"] == "trailing_stop"
+    )
+    state_trailing = next(
+        exit_order for exit_order in state_after_preview["active_exits"] if exit_order["kind"] == "trailing_stop"
+    )
+    assert body["would_trigger"] == []
+    assert live_trailing["status"] == "pending_activation"
+    assert live_trailing["computed_trailing_activation_price"] == "102.00"
+    assert preview_trailing["status"] == "open"
+    assert preview_trailing["trigger_price"] == "99.91"
+    assert preview_trailing["trailing_activated"] == "true"
+    assert state_trailing["status"] == "pending_activation"
 
 
 def test_bracket_list_includes_remaining_risk_summary(tmp_path):

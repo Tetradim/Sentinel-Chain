@@ -311,12 +311,15 @@ def create_app(
     @app.post("/market/price/preview")
     async def market_price_preview(request: Request) -> dict[str, Any]:
         symbol, price = await _market_price_payload(request)
+        preview_exchange = engine.exchange.preview_price_exchange(symbol, price)
         return {
             "symbol": symbol,
             "price": str(price),
             "would_trigger": engine.exchange.preview_price(symbol, price),
             "active_exits": _active_exits_to_dict(engine.exchange.lots, mark_price=price),
+            "preview_active_exits": _active_exits_to_dict(preview_exchange.lots, mark_price=price),
             "positions": engine.exchange.list_positions(),
+            "preview_positions": preview_exchange.list_positions(),
             "account": _account_state_to_dict(engine.account_state),
         }
 
@@ -376,12 +379,19 @@ def create_app(
         if not lots:
             raise HTTPException(status_code=404, detail="active bracket not found")
         symbol = lots[0].symbol
+        preview_exchange = engine.exchange.preview_bracket_exchange(signal_id, price)
         return {
             "signal_id": signal_id,
             "symbol": symbol,
             "price": str(price),
             "would_trigger": engine.exchange.preview_bracket(signal_id, price),
             "active_exits": _active_exits_to_dict(lots, signal_id=signal_id, mark_price=price),
+            "preview_active_exits": _active_exits_to_dict(
+                preview_exchange.lots if preview_exchange is not None else [],
+                signal_id=signal_id,
+                mark_price=price,
+            ),
+            "preview_positions": preview_exchange.list_positions() if preview_exchange is not None else [],
             "positions": engine.exchange.list_positions(),
             "account": _account_state_to_dict(engine.account_state),
         }
@@ -1236,10 +1246,13 @@ def _active_exit_to_dict(lot: Any, exit_order: Any, *, mark_price: Decimal | Non
         "trailing_activation_pct": str(lot.trailing_activation_pct)
         if exit_order.kind == "trailing_stop" and lot.trailing_activation_pct
         else None,
-        "trailing_activation_price": str(lot.trailing_activation_price)
+        "configured_trailing_activation_price": str(lot.trailing_activation_price)
         if exit_order.kind == "trailing_stop" and lot.trailing_activation_price
         else None,
         "trailing_activation_price": str(trailing_activation_price) if trailing_activation_price is not None else None,
+        "computed_trailing_activation_price": str(trailing_activation_price)
+        if trailing_activation_price is not None
+        else None,
         "trailing_activated": str(lot.trailing_activated).lower() if exit_order.kind == "trailing_stop" else None,
         "high_water_mark": str(lot.high_water_mark) if exit_order.kind == "trailing_stop" and lot.high_water_mark else None,
         "low_water_mark": str(lot.low_water_mark) if exit_order.kind == "trailing_stop" and lot.low_water_mark else None,
