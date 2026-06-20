@@ -218,6 +218,9 @@ def test_trailing_stop_ratcheted_up_then_triggers_on_pullback():
     assert second == [
         {"symbol": "BTC/USDT", "kind": "trailing_stop", "price": "104.50000000", "quantity": "1.00000000"}
     ]
+    assert exchange.orders[-1].reduce_only is True
+    assert exchange.orders[-1].exit_orders[0].kind == "trailing_stop"
+    assert exchange.orders[-1].exit_orders[0].status == "filled"
     assert exchange.list_positions()[0]["quantity"] == "0.00000000"
     assert exchange.list_positions()[0]["realized_pnl"] == "4.50000000"
 
@@ -242,13 +245,18 @@ def test_trailing_stop_activation_waits_for_favorable_move_before_arming():
     engine.process_signal(signal)
 
     before_activation = exchange.update_price("BTC/USDT", Decimal("96"))
+    dormant_trailing_exit = next(
+        exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "trailing_stop"
+    )
     activation_mark = exchange.update_price("BTC/USDT", Decimal("104"))
     assert exchange.lots[0].trailing_activated is True
     trailing_exit = next(exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "trailing_stop")
     pullback = exchange.update_price("BTC/USDT", Decimal("98.80"))
 
     assert before_activation == []
+    assert dormant_trailing_exit.status == "pending_activation"
     assert activation_mark == []
+    assert trailing_exit.status == "open"
     assert trailing_exit.trigger_price == Decimal("98.80")
     assert pullback == [
         {"symbol": "BTC/USDT", "kind": "trailing_stop", "price": "98.80000000", "quantity": "1.00000000"}
@@ -380,6 +388,10 @@ def test_final_bracket_exit_records_canceled_oca_siblings():
         {"symbol": "BTC/USDT", "kind": "take_profit", "price": "110.00000000", "quantity": "1.00000000"}
     ]
     assert exchange.orders[-1].exit_kind == "take_profit"
+    assert exchange.orders[-1].reduce_only is True
+    assert [(order.kind, order.status) for order in exchange.orders[-1].exit_orders] == [
+        ("take_profit", "filled"),
+    ]
     assert [(order.kind, order.status, order.oca_group) for order in exchange.orders[-1].canceled_exit_orders] == [
         ("stop_loss", "canceled", "oca-oca-final-close"),
         ("trailing_stop", "canceled", "oca-oca-final-close"),
@@ -596,19 +608,25 @@ def test_short_trailing_stop_ratcheted_down_then_triggers_on_bounce():
     engine.process_signal(signal)
 
     before_activation = exchange.update_price("ETH/USDT", Decimal("97"))
+    dormant_trailing_exit = next(
+        exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "trailing_stop"
+    )
     activation_mark = exchange.update_price("ETH/USDT", Decimal("96"))
     trailing_activated = exchange.lots[0].trailing_activated
     trailing_exit = next(exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "trailing_stop")
     pullback = exchange.update_price("ETH/USDT", Decimal("100.80"))
 
     assert before_activation == []
+    assert dormant_trailing_exit.status == "pending_activation"
     assert activation_mark == []
     assert trailing_activated is True
+    assert trailing_exit.status == "open"
     assert trailing_exit.trigger_price == Decimal("100.80")
     assert pullback == [
         {"symbol": "ETH/USDT", "kind": "trailing_stop", "price": "100.80000000", "quantity": "1.00000000"}
     ]
     assert exchange.orders[-1].side == "buy"
+    assert exchange.orders[-1].reduce_only is True
 
 
 def test_short_open_notional_counts_against_exposure_cap():

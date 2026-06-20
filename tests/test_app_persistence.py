@@ -87,7 +87,10 @@ def test_app_rehydrates_paper_positions_and_brackets_from_order_history(tmp_path
     assert triggered.json()["triggered"] == [
         {"symbol": "SOL/USDT", "kind": "take_profit", "price": "105.00000000", "quantity": "1.00000000"}
     ]
-    assert SQLiteRepository(db_path).list_orders()[-1]["side"] == "sell"
+    exit_order = SQLiteRepository(db_path).list_orders()[-1]
+    assert exit_order["side"] == "sell"
+    assert exit_order["reduce_only"] is True
+    assert exit_order["exit_orders"][0]["status"] == "filled"
 
 
 def test_app_rehydrates_open_notional_for_risk_after_restart(tmp_path):

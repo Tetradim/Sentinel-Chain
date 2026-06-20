@@ -259,8 +259,10 @@ class PaperExchange:
                     side=exit_side,
                     notional=notional,
                     price=price,
+                    exit_orders=[_filled_exit(exit_order)],
                     exit_kind=exit_order.kind,
                     canceled_exit_orders=canceled_exit_orders,
+                    reduce_only=True,
                 )
                 self.orders.append(order)
                 triggered.append(
@@ -546,7 +548,7 @@ class PaperExchange:
                 trigger_price=max(exit_order.trigger_price, trigger),
                 close_pct=exit_order.close_pct,
                 oca_group=exit_order.oca_group,
-                status=exit_order.status,
+                status="open",
             )
             if exit_order.kind == "trailing_stop"
             else exit_order
@@ -574,7 +576,7 @@ class PaperExchange:
                 trigger_price=min(exit_order.trigger_price, trigger),
                 close_pct=exit_order.close_pct,
                 oca_group=exit_order.oca_group,
-                status=exit_order.status,
+                status="open",
             )
             if exit_order.kind == "trailing_stop"
             else exit_order
@@ -752,7 +754,8 @@ def build_exit_orders(signal: CryptoSignal) -> list[ExitOrder]:
     if signal.trailing_stop_pct is not None:
         trail_direction = Decimal("-1") if signal.side == "buy" else Decimal("1")
         trigger = signal.price * (Decimal("1") + trail_direction * signal.trailing_stop_pct / Decimal("100"))
-        exits.append(ExitOrder(kind="trailing_stop", trigger_price=_money(trigger), oca_group=oca_group))
+        status = "pending_activation" if signal.trailing_activation_pct is not None else "open"
+        exits.append(ExitOrder(kind="trailing_stop", trigger_price=_money(trigger), oca_group=oca_group, status=status))
     return exits
 
 
@@ -793,6 +796,16 @@ def _replace_or_append_stop(exit_orders: list[ExitOrder], amended_stop: ExitOrde
     if not replaced:
         updated.insert(0, amended_stop)
     return updated
+
+
+def _filled_exit(exit_order: ExitOrder) -> ExitOrder:
+    return ExitOrder(
+        kind=exit_order.kind,
+        trigger_price=exit_order.trigger_price,
+        close_pct=exit_order.close_pct,
+        oca_group=exit_order.oca_group,
+        status="filled",
+    )
 
 
 def _money(value: Decimal) -> Decimal:

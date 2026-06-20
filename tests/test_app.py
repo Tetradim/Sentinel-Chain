@@ -52,6 +52,7 @@ def test_market_price_response_includes_updated_active_exits():
     assert body["triggered"] == []
     assert stop_exit["status"] == "open"
     assert stop_exit["oca_group"]
+    assert trailing_exit["status"] == "open"
     assert trailing_exit["trigger_price"] == "104.50"
     assert trailing_exit["high_water_mark"] == "110"
 
@@ -87,6 +88,7 @@ def test_signal_preview_includes_synthetic_bracket_plan_for_short_trailing_order
         ("take_profit", "90.00"),
         ("trailing_stop", "103.00"),
     ]
+    assert body["bracket_plan"]["exits"][2]["status"] == "pending_activation"
 
 
 def test_signal_preview_reports_risk_sized_bracket_metrics():

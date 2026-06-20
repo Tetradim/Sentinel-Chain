@@ -43,7 +43,11 @@ def test_engine_executes_approved_signal_in_paper_with_bracket_exits():
     assert result.order.exit_orders[1].trigger_price == Decimal("52000.00")
     assert result.order.exit_orders[2].trigger_price == Decimal("48500.00")
     assert {exit_order.oca_group for exit_order in result.order.exit_orders} == {f"oca-{signal.signal_id}"}
-    assert all(exit_order.status == "open" for exit_order in result.order.exit_orders)
+    assert [exit_order.status for exit_order in result.order.exit_orders] == [
+        "open",
+        "open",
+        "pending_activation",
+    ]
     assert result.order.trailing_stop_pct == Decimal("3")
     assert result.order.trailing_activation_pct == Decimal("1.5")
     assert result.order.breakeven_trigger_pct == Decimal("2")
