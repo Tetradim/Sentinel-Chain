@@ -10,9 +10,12 @@ from .signals import CryptoSignal
 class RiskConfig:
     max_order_notional: Decimal = Decimal("1000")
     max_open_notional: Decimal = Decimal("0")
+    max_position_equity_pct: Decimal = Decimal("0")
     max_leverage: Decimal = Decimal("1")
     max_daily_loss: Decimal = Decimal("500")
     require_stop_loss: bool = True
+    max_stop_loss_pct: Decimal = Decimal("0")
+    min_reward_risk_ratio: Decimal = Decimal("0")
     max_slippage_bps: int = 100
     allowed_exchanges: set[str] = field(default_factory=lambda: {"paper"})
     allowed_symbols: set[str] = field(default_factory=set)
@@ -58,10 +61,26 @@ def evaluate_signal(
         and account_state.open_notional + order_notional > config.max_open_notional
     ):
         reasons.append("max_open_notional_exceeded")
+    if (
+        order_notional is not None
+        and config.max_position_equity_pct > 0
+        and account_state.equity > 0
+        and order_notional > account_state.equity * config.max_position_equity_pct / Decimal("100")
+    ):
+        reasons.append("max_position_equity_pct_exceeded")
     if config.max_leverage > 0 and signal.leverage > config.max_leverage:
         reasons.append("max_leverage_exceeded")
     if config.max_daily_loss > 0 and account_state.daily_pnl <= -config.max_daily_loss:
         reasons.append("daily_loss_limit_exceeded")
+    if signal.stop_loss_pct is not None and config.max_stop_loss_pct > 0 and signal.stop_loss_pct > config.max_stop_loss_pct:
+        reasons.append("max_stop_loss_pct_exceeded")
+    if (
+        signal.stop_loss_pct is not None
+        and signal.take_profit_pct is not None
+        and config.min_reward_risk_ratio > 0
+        and signal.take_profit_pct / signal.stop_loss_pct < config.min_reward_risk_ratio
+    ):
+        reasons.append("min_reward_risk_ratio_not_met")
     if signal.max_slippage_bps > config.max_slippage_bps:
         reasons.append("max_slippage_exceeded")
 

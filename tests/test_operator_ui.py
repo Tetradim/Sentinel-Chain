@@ -130,6 +130,9 @@ def test_operator_ui_is_served_from_backend():
     assert "refreshInFlight" in script.text
     assert "copyTicketAlert" in script.text
     assert "copyTicketJson" in script.text
+    assert "renderExecutionMode" in script.text
+    assert "Queue for Approval" in script.text
+    assert "Queue Approval" in script.text
 
 
 def test_ui_state_returns_dashboard_contract(tmp_path):
@@ -142,7 +145,11 @@ def test_ui_state_returns_dashboard_contract(tmp_path):
     body = response.json()
     assert body["health"]["status"] == "ok"
     assert body["control"] == {"halted": False, "reason": ""}
+    assert body["execution"] == {"require_approval": False, "submit_intent": "paper_order"}
     assert body["risk"]["allowed_exchanges"] == ["paper"]
+    assert "max_position_equity_pct" in body["risk"]
+    assert "max_stop_loss_pct" in body["risk"]
+    assert "min_reward_risk_ratio" in body["risk"]
     assert body["orders"] == []
     assert body["positions"] == []
     assert body["approvals"] == []
@@ -182,7 +189,9 @@ def test_operator_text_submit_can_queue_for_approval(tmp_path):
 
     assert response.status_code == 200
     assert response.json()["status"] == "approval_required"
-    assert client.get("/ui/state").json()["approvals"][0]["symbol"] == "ETH/USDT"
+    state = client.get("/ui/state").json()
+    assert state["execution"] == {"require_approval": True, "submit_intent": "queue_for_approval"}
+    assert state["approvals"][0]["symbol"] == "ETH/USDT"
 
 
 def test_operator_text_preview_reports_risk_without_ordering(tmp_path):

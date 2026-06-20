@@ -109,6 +109,10 @@ def create_app(
                 "halt_reason": engine.halt_reason,
             },
             "control": {"halted": engine.halted, "reason": engine.halt_reason},
+            "execution": {
+                "require_approval": require_approval,
+                "submit_intent": "queue_for_approval" if require_approval else "paper_order",
+            },
             "risk": _risk_config_to_dict(engine.risk_config),
             "account": _account_state_to_dict(engine.account_state),
             "orders": orders_payload,
@@ -153,6 +157,7 @@ def create_app(
         )
         result = apply_edge_action(event=event, engine=engine, repository=repository)
         return {"status": "accepted", "event": event.model_dump(mode="json"), "result": result}
+
     @app.post("/control/halt")
     async def halt(request: Request) -> dict[str, Any]:
         payload = await request.json()
@@ -462,9 +467,12 @@ def _risk_config_to_dict(config: RiskConfig) -> dict[str, Any]:
     return {
         "max_order_notional": str(config.max_order_notional),
         "max_open_notional": str(config.max_open_notional),
+        "max_position_equity_pct": str(config.max_position_equity_pct),
         "max_leverage": str(config.max_leverage),
         "max_daily_loss": str(config.max_daily_loss),
         "require_stop_loss": config.require_stop_loss,
+        "max_stop_loss_pct": str(config.max_stop_loss_pct),
+        "min_reward_risk_ratio": str(config.min_reward_risk_ratio),
         "max_slippage_bps": config.max_slippage_bps,
         "allowed_exchanges": sorted(config.allowed_exchanges),
         "allowed_symbols": sorted(config.allowed_symbols),

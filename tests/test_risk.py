@@ -118,3 +118,50 @@ def test_risk_rejects_buy_that_would_exceed_max_open_notional():
 
     assert decision.approved is False
     assert "max_open_notional_exceeded" in decision.reason_codes
+
+
+def test_risk_rejects_position_above_equity_percentage_cap():
+    signal = normalize_signal(
+        {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "600",
+            "price": "50000",
+            "stop_loss_pct": "2",
+            "take_profit_pct": "6",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(
+        signal,
+        RiskConfig(max_position_equity_pct=Decimal("5")),
+        AccountState(equity=Decimal("10000")),
+    )
+
+    assert decision.approved is False
+    assert "max_position_equity_pct_exceeded" in decision.reason_codes
+
+
+def test_risk_rejects_wide_stop_or_weak_reward_risk():
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "3000",
+            "stop_loss_pct": "8",
+            "take_profit_pct": "10",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(
+        signal,
+        RiskConfig(max_stop_loss_pct=Decimal("5"), min_reward_risk_ratio=Decimal("2")),
+        AccountState(),
+    )
+
+    assert decision.approved is False
+    assert "max_stop_loss_pct_exceeded" in decision.reason_codes
+    assert "min_reward_risk_ratio_not_met" in decision.reason_codes

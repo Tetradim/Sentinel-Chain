@@ -34,9 +34,12 @@ def load_settings() -> AppSettings:
         risk=RiskConfig(
             max_order_notional=Decimal(os.getenv("AUTO_CRYPTO_MAX_ORDER_NOTIONAL", "1000")),
             max_open_notional=Decimal(os.getenv("AUTO_CRYPTO_MAX_OPEN_NOTIONAL", "0")),
+            max_position_equity_pct=Decimal(os.getenv("AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT", "0")),
             max_leverage=Decimal(os.getenv("AUTO_CRYPTO_MAX_LEVERAGE", "1")),
             max_daily_loss=Decimal(os.getenv("AUTO_CRYPTO_MAX_DAILY_LOSS", "500")),
             require_stop_loss=_bool(os.getenv("AUTO_CRYPTO_REQUIRE_STOP_LOSS", "true")),
+            max_stop_loss_pct=Decimal(os.getenv("AUTO_CRYPTO_MAX_STOP_LOSS_PCT", "0")),
+            min_reward_risk_ratio=Decimal(os.getenv("AUTO_CRYPTO_MIN_REWARD_RISK_RATIO", "0")),
             max_slippage_bps=int(os.getenv("AUTO_CRYPTO_MAX_SLIPPAGE_BPS", "100")),
             allowed_exchanges=_csv_set(os.getenv("AUTO_CRYPTO_ALLOWED_EXCHANGES", "paper")),
         ),

@@ -12,7 +12,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Parses text alerts without ordering at `POST /signals/parse-text`
 - Normalizes crypto pairs such as `BTCUSDT`, `BTC/USDT`, `ETH-USDC`, and `SOL_USDT`
 - Blocks duplicate signal IDs across restarts with SQLite-backed idempotency
-- Applies pre-trade risk checks for stop loss, max order notional, max open notional, leverage, slippage, allowed exchanges, blocked symbols, and daily loss
+- Applies pre-trade risk checks for stop loss, maximum stop width, minimum reward/risk, max order notional, max open notional, equity-percent position size, leverage, slippage, allowed exchanges, blocked symbols, and daily loss
 - Supports approval-required mode with persisted pending approvals
 - Records paper orders, paper positions, realized PnL, active bracket lots, and audit events
 - Rehydrates paper positions, bracket lots, and exposure risk state from SQLite after restart
@@ -93,6 +93,24 @@ Install optional CCXT support for venue discovery:
 
 ```powershell
 python -m pip install -e ".[exchange]"
+```
+
+## Operator UI Smoke Test
+
+Run the full browser-driven operator workflow after UI changes:
+
+```powershell
+python -m pip install -e ".[dev]"
+python scripts/operator_ui_smoke.py
+```
+
+The smoke test starts a temporary approval-mode API with an isolated SQLite database, opens the production UI in a real browser, exercises every tab and core control path, exports JSON/CSV files, and fails on page errors, JavaScript console errors, or blank required canvases.
+
+If Playwright's bundled browser is not installed, point the smoke test at an existing Chrome or Edge executable:
+
+```powershell
+$env:AUTO_CRYPTO_BROWSER_PATH="C:\Program Files\Google\Chrome\Application\chrome.exe"
+python scripts/operator_ui_smoke.py
 ```
 
 ## Core Crypto Workflow
@@ -189,15 +207,18 @@ Risk checks run before paper execution:
 - `stop_loss_required`
 - `max_order_notional_exceeded`
 - `max_open_notional_exceeded`
+- `max_position_equity_pct_exceeded`
 - `max_leverage_exceeded`
 - `max_slippage_exceeded`
+- `max_stop_loss_pct_exceeded`
+- `min_reward_risk_ratio_not_met`
 - `exchange_not_allowed`
 - `symbol_not_allowed`
 - `symbol_blocked`
 - `daily_loss_limit_exceeded`
 - `price_required_for_base_amount`
 
-Set `AUTO_CRYPTO_MAX_OPEN_NOTIONAL` above `0` to cap cumulative open buy exposure. SQLite-backed paper state restores open exposure after restart, and triggered paper exits release exposure for later risk checks.
+Set `AUTO_CRYPTO_MAX_OPEN_NOTIONAL` above `0` to cap cumulative open buy exposure. Set `AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT` above `0` to limit a single ticket to a percentage of account equity. Set `AUTO_CRYPTO_MAX_STOP_LOSS_PCT` and `AUTO_CRYPTO_MIN_REWARD_RISK_RATIO` above `0` to reject alerts whose stop is too wide or whose take-profit does not justify the stop risk. SQLite-backed paper state restores open exposure after restart, and triggered paper exits release exposure for later risk checks.
 
 ## Environment Variables
 
@@ -212,10 +233,13 @@ AUTO_CRYPTO_WEBHOOK_TOLERANCE_SECONDS=300
 
 AUTO_CRYPTO_MAX_ORDER_NOTIONAL=1000
 AUTO_CRYPTO_MAX_OPEN_NOTIONAL=0
+AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT=0
 AUTO_CRYPTO_MAX_LEVERAGE=1
 AUTO_CRYPTO_MAX_DAILY_LOSS=500
 AUTO_CRYPTO_MAX_SLIPPAGE_BPS=100
 AUTO_CRYPTO_REQUIRE_STOP_LOSS=true
+AUTO_CRYPTO_MAX_STOP_LOSS_PCT=0
+AUTO_CRYPTO_MIN_REWARD_RISK_RATIO=0
 
 AUTO_CRYPTO_DEFAULT_EXCHANGE=paper
 AUTO_CRYPTO_ALLOWED_EXCHANGES=paper

@@ -146,6 +146,20 @@ function renderAll() {
   drawAllCharts();
 }
 
+function approvalModeEnabled() {
+  return Boolean(appState.data?.execution?.require_approval);
+}
+
+function renderExecutionMode() {
+  const approvalCount = (appState.data?.approvals || []).length;
+  const requiresApproval = approvalModeEnabled();
+  $("#approvalPill").textContent = requiresApproval
+    ? `Approval gate on | ${approvalCount} queued`
+    : `Approval gate off | ${approvalCount} queued`;
+  $("#submitSignalButton").textContent = requiresApproval ? "Queue for Approval" : "Submit Paper Signal";
+  $("#submitTicketButton").textContent = requiresApproval ? "Queue Approval" : "Submit";
+}
+
 function renderShell() {
   const data = appState.data || {};
   const halted = Boolean(data.control?.halted);
@@ -158,7 +172,7 @@ function renderShell() {
   $("#haltButton").disabled = halted;
   $("#resumeButton").disabled = !halted;
   $("#webhookPill").textContent = halted ? "Webhook intake halted" : "Webhook intake live";
-  $("#approvalPill").textContent = `${(data.approvals || []).length} approvals`;
+  renderExecutionMode();
 }
 
 function renderMarketStrip() {
@@ -200,6 +214,9 @@ function renderDashboard() {
   $("#riskMetrics").innerHTML = [
     ["Open notional", `${money(openNotional)} / ${money(maxOpen)}`],
     ["Max order", money(data.risk?.max_order_notional || 0)],
+    ["Max equity %", `${data.risk?.max_position_equity_pct || "0"}%`],
+    ["Max SL", `${data.risk?.max_stop_loss_pct || "0"}%`],
+    ["Min R/R", data.risk?.min_reward_risk_ratio || "0"],
     ["Daily loss cap", money(data.risk?.max_daily_loss || 0)],
     ["Allowed venues", (data.risk?.allowed_exchanges || []).join(", ") || "none"],
   ]
