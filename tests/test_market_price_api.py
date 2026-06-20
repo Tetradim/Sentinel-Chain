@@ -139,3 +139,64 @@ def test_market_price_preview_reports_trigger_without_mutating_paper_state(tmp_p
     assert state_after_preview["positions"][0]["quantity"] == "1.00000000"
     assert len(state_after_preview["orders"]) == 1
     assert state_after_preview["active_exits"]
+
+
+def test_bracket_cancel_endpoint_cancels_exits_and_records_audit(tmp_path):
+    repo = SQLiteRepository(tmp_path / "bracket_cancel.sqlite3")
+    app = create_app(repository=repo)
+    client = TestClient(app)
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "api-cancel-bracket",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "3",
+            "take_profit_pct": "5",
+            "trailing_stop_pct": "2",
+        },
+    )
+
+    status_before = client.get("/brackets/api-cancel-bracket")
+    cancel = client.post("/brackets/api-cancel-bracket/cancel", json={"reason": "operator tightened manually"})
+    exit_attempt = client.post("/market/price", json={"symbol": "BTCUSDT", "price": "90"})
+    state_after = client.get("/ui/state").json()
+
+    assert status_before.status_code == 200
+    assert len(status_before.json()["active_exits"]) == 3
+    assert cancel.status_code == 200
+    assert cancel.json()["status"] == "canceled"
+    assert cancel.json()["order"]["exit_kind"] == "bracket_cancel"
+    assert cancel.json()["order"]["canceled_exit_orders"][0]["status"] == "canceled"
+    assert exit_attempt.json()["triggered"] == []
+    assert state_after["positions"][0]["quantity"] == "1.00000000"
+    assert state_after["active_exits"] == []
+    assert [event["event_type"] for event in client.get("/audit").json()["events"]][-1] == "bracket.canceled"
+
+
+def test_bracket_cancel_replays_from_persisted_order_history(tmp_path):
+    db_path = tmp_path / "bracket_cancel_replay.sqlite3"
+    repo = SQLiteRepository(db_path)
+    app = create_app(repository=repo)
+    client = TestClient(app)
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "replay-cancel-bracket",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "3",
+            "take_profit_pct": "5",
+        },
+    )
+    client.post("/brackets/replay-cancel-bracket/cancel", json={"reason": "operator cancel"})
+
+    restarted_client = TestClient(create_app(repository=SQLiteRepository(db_path)))
+
+    assert restarted_client.get("/brackets/replay-cancel-bracket").status_code == 404
+    assert restarted_client.post("/market/price", json={"symbol": "BTCUSDT", "price": "90"}).json()["triggered"] == []
+    assert restarted_client.get("/ui/state").json()["positions"][0]["quantity"] == "1.00000000"

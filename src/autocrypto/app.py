@@ -344,6 +344,49 @@ def create_app(
             "positions": engine.exchange.list_positions(),
         }
 
+    @app.get("/brackets/{signal_id}")
+    def bracket_status(signal_id: str) -> dict[str, Any]:
+        exits = _active_exits_to_dict(engine.exchange.lots, signal_id=signal_id)
+        if not exits:
+            raise HTTPException(status_code=404, detail="active bracket not found")
+        return {"signal_id": signal_id, "active_exits": exits}
+
+    @app.post("/brackets/{signal_id}/cancel")
+    async def cancel_bracket(signal_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        reason = str(payload.get("reason") or "manual bracket cancel")
+        order = engine.exchange.cancel_bracket(signal_id, reason=reason)
+        if order is None:
+            raise HTTPException(status_code=404, detail="active bracket not found")
+        engine.account_state.open_notional = engine.exchange.open_notional()
+        if repository:
+            repository.save_order(order)
+            repository.record_audit(
+                "bracket.canceled",
+                {
+                    "signal_id": signal_id,
+                    "reason": reason,
+                    "canceled_exit_orders": [
+                        {
+                            "kind": exit_order.kind,
+                            "trigger_price": str(exit_order.trigger_price),
+                            "close_pct": str(exit_order.close_pct),
+                            "oca_group": exit_order.oca_group,
+                            "status": exit_order.status,
+                        }
+                        for exit_order in order.canceled_exit_orders
+                    ],
+                },
+            )
+        return {
+            "status": "canceled",
+            "signal_id": signal_id,
+            "order": order.to_dict(),
+            "active_exits": _active_exits_to_dict(engine.exchange.lots),
+            "positions": engine.exchange.list_positions(),
+            "account": _account_state_to_dict(engine.account_state),
+        }
+
     @app.get("/approvals")
     def list_approvals() -> dict[str, Any]:
         return {"pending": intake.list_approvals()}
@@ -584,7 +627,7 @@ def _signal_preview(
     }
 
 
-def _active_exits_to_dict(lots: list[Any]) -> list[dict[str, str]]:
+def _active_exits_to_dict(lots: list[Any], *, signal_id: str | None = None) -> list[dict[str, str]]:
     return [
         {
             "symbol": lot.symbol,
@@ -608,6 +651,6 @@ def _active_exits_to_dict(lots: list[Any]) -> list[dict[str, str]]:
             "entry_price": str(lot.entry_price),
         }
         for lot in sorted(lots, key=lambda item: (item.symbol, item.signal_id))
-        if lot.remaining_quantity > 0
+        if lot.remaining_quantity > 0 and (signal_id is None or lot.signal_id == signal_id)
         for exit_order in lot.exit_orders
     ]

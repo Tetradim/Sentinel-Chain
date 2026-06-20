@@ -282,6 +282,49 @@ class PaperExchange:
         """Return paper exits that would trigger at price without mutating state."""
         return deepcopy(self).update_price(symbol, price)
 
+    def cancel_bracket(self, signal_id: str, *, reason: str = "") -> PaperOrder | None:
+        """Cancel open synthetic bracket exits for a paper lot without closing exposure."""
+        target_lots = [
+            lot
+            for lot in self.lots
+            if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
+        ]
+        if not target_lots:
+            return None
+
+        canceled: list[ExitOrder] = []
+        for lot in target_lots:
+            canceled.extend(
+                ExitOrder(
+                    kind=exit_order.kind,
+                    trigger_price=exit_order.trigger_price,
+                    close_pct=exit_order.close_pct,
+                    oca_group=exit_order.oca_group,
+                    status="canceled",
+                )
+                for exit_order in lot.exit_orders
+                if exit_order.status == "open"
+            )
+            lot.exit_orders = []
+
+        first_lot = target_lots[0]
+        order = PaperOrder(
+            order_id=f"paper-cancel-{_order_fragment(signal_id)}-{len(self.orders) + 1}",
+            signal_id=signal_id,
+            mode="paper",
+            exchange="paper",
+            symbol=first_lot.symbol,
+            side="cancel",
+            notional=Decimal("0"),
+            price=None,
+            exit_kind="bracket_cancel",
+            canceled_exit_orders=canceled,
+            status="canceled",
+        )
+        self.orders.append(order)
+        self._refresh_active_exits(first_lot.symbol)
+        return order
+
     def _fill_quantity(self, signal: CryptoSignal, notional: Decimal) -> Decimal:
         if signal.price is None:
             return Decimal("0")
@@ -340,6 +383,9 @@ class PaperExchange:
 
     def _replay_order(self, order: PaperOrder) -> None:
         self.orders.append(order)
+        if order.exit_kind == "bracket_cancel":
+            self._replay_bracket_cancel(order)
+            return
         if order.price is None:
             return
         quantity = order.notional / order.price
@@ -390,6 +436,12 @@ class PaperExchange:
             )
         elif order.side == "sell":
             self._sell_quantity(order.symbol, quantity, order.price)
+        self._refresh_active_exits(order.symbol)
+
+    def _replay_bracket_cancel(self, order: PaperOrder) -> None:
+        for lot in self.lots:
+            if lot.signal_id == order.signal_id and lot.remaining_quantity > 0:
+                lot.exit_orders = []
         self._refresh_active_exits(order.symbol)
 
     def _triggered_exit(self, lot: PaperLot, price: Decimal) -> ExitOrder | None:

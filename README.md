@@ -18,6 +18,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Rehydrates paper positions, bracket lots, and exposure risk state from SQLite after restart
 - Triggers paper long and short stop-loss, single or staged take-profit, activation-gated trailing-stop, and break-even exits from `POST /market/price`
 - Links paper bracket exit legs with OCA-style groups and records which sibling stop, take-profit, or trailing legs are canceled when a final paper exit closes the lot
+- Cancels active synthetic paper bracket exits by signal ID while leaving the underlying paper position open for separate manual management
 - Previews hypothetical market-price marks and bracket/trailing exits without mutating paper orders or positions
 - Previews server-side risk decisions from the operator UI without placing orders
 - Shows persisted signal history with one-click reload into the Trading Desk
@@ -168,6 +169,18 @@ For buy brackets, `stop_loss_pct` creates a fixed protective sell below entry, `
 For short brackets, send `side: "sell"` or `side: "short"` with at least one exit field such as `stop_loss_pct`, `stop_loss_price`, `take_profit_pct`, `take_profit_price`, or `trailing_stop_pct`. Paper stop-loss and trailing-stop triggers sit above entry, paper take-profit triggers sit below entry, and exit orders buy back paper quantity. Short trailing stops track a low-water price and ratchet downward only after favorable price movement; `trailing_activation_pct` delays arming until price falls by that percent. A plain `SELL` without bracket fields remains a manual long close. Send `side: "close_short"` or `reduce_only: true` with `side: "buy"` to buy back paper short quantity without opening a new paper long.
 
 Every paper bracket leg now carries an `oca_group` and `status` in order JSON and active-exit snapshots. When a stop-loss, trailing-stop, or final take-profit closes the remaining paper lot, the synthetic exit order includes `exit_kind` plus `canceled_exit_orders` so tests and operators can see which sibling legs would have been canceled in one-cancels-other behavior. This is still paper accounting only; no live OCO or exchange-native bracket order is submitted.
+
+Operators can inspect and cancel active paper brackets by signal ID:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8004/brackets/btc-breakout-001
+
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/brackets/btc-breakout-001/cancel -ContentType "application/json" -Body '{
+  "reason": "operator replaced exit plan manually"
+}'
+```
+
+Bracket cancellation records a synthetic `bracket_cancel` paper order plus a `bracket.canceled` audit event when SQLite persistence is configured. It removes the active stop-loss, take-profit, and trailing-stop legs for that paper lot, but it does not close the open paper exposure. The operator must submit a separate reduce-only or manual close order when the position itself should be closed.
 
 Use `take_profit_targets` for staged exits. Each target accepts either `pct` or `trigger_price` plus `close_pct`, and the total `close_pct` cannot exceed `100`. For example, `[{ "pct": "3", "close_pct": "50" }, { "trigger_price": "53000", "close_pct": "50" }]` sells half of the original paper lot at 3% profit and the remaining half at the exact trigger price. If the first target fills and price later falls to the stop, the remaining paper quantity exits through the stop-loss or trailing-stop leg. If `take_profit_targets` is omitted, `take_profit_pct` or `take_profit_price` still creates one full-size take-profit target.
 
@@ -349,10 +362,14 @@ Paper market updates:
 
 - `POST /market/price`
 - `POST /market/price/preview`
+- `GET /brackets/{signal_id}`
+- `POST /brackets/{signal_id}/cancel`
 
 `POST /market/price/preview` returns the paper exits that would trigger at a hypothetical mark without mutating orders, positions, audit history, daily P&L, or exposure. Use it before applying a mark when testing bracket and trailing-stop behavior.
 
 `POST /market/price` applies the mark, returns any triggered exits, refreshes account open notional through the trading engine, and returns the current `active_exits` snapshot, including ratcheted trailing-stop trigger prices, activation state, and water marks.
+
+`GET /brackets/{signal_id}` returns active synthetic paper exit legs for one signal. `POST /brackets/{signal_id}/cancel` removes those synthetic exits, persists a cancellation order, and records audit context without closing the position.
 
 Operator controls:
 
@@ -462,6 +479,7 @@ When SQLite is enabled:
 - Pending approvals persist across restarts.
 - Paper orders are replayed at startup to restore positions, active bracket lots, and open exposure.
 - Paper price exits are saved as synthetic sell orders.
+- Paper bracket cancellation orders are replayed at startup so removed synthetic exits do not reappear after restart.
 
 ## Safety Notes
 

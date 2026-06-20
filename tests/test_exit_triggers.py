@@ -386,6 +386,42 @@ def test_final_bracket_exit_records_canceled_oca_siblings():
     ]
 
 
+def test_cancel_bracket_removes_exits_without_closing_position():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "cancel-bracket-entry",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+            "trailing_stop_pct": "4",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    cancel_order = exchange.cancel_bracket("cancel-bracket-entry", reason="operator override")
+    triggered = exchange.update_price("BTC/USDT", Decimal("90"))
+    position = exchange.list_positions()[0]
+
+    assert cancel_order is not None
+    assert cancel_order.side == "cancel"
+    assert cancel_order.exit_kind == "bracket_cancel"
+    assert cancel_order.status == "canceled"
+    assert [(order.kind, order.status) for order in cancel_order.canceled_exit_orders] == [
+        ("stop_loss", "canceled"),
+        ("take_profit", "canceled"),
+        ("trailing_stop", "canceled"),
+    ]
+    assert triggered == []
+    assert position["quantity"] == "1.00000000"
+    assert exchange.active_exits == {}
+
+
 def test_short_bracket_take_profit_closes_with_buy_exit():
     exchange = PaperExchange()
     engine = TradingEngine(exchange=exchange)
