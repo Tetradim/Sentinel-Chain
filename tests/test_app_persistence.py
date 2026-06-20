@@ -227,6 +227,53 @@ def test_app_replays_trailing_stop_amendment_after_restart(tmp_path):
     assert any(event.event_type == "bracket.trailing_stop_amended" for event in repo.list_audit())
 
 
+def test_app_replays_take_profit_amendment_after_restart(tmp_path):
+    db_path = tmp_path / "take_profit_amend_replay.sqlite3"
+    first_client = TestClient(create_app(repository=SQLiteRepository(db_path)))
+    first_client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "replay-tp-amend",
+            "symbol": "SOLUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_targets": [
+                {"pct": "5", "close_pct": "50"},
+                {"pct": "10", "close_pct": "50"},
+            ],
+        },
+    )
+    reduced_reward = first_client.post(
+        "/brackets/replay-tp-amend/take-profit",
+        json={"trigger_price": "108", "target_index": 1},
+    )
+    amended = first_client.post(
+        "/brackets/replay-tp-amend/take-profit",
+        json={"trigger_price": "115", "target_index": 1, "reason": "operator raised target"},
+    )
+
+    second_client = TestClient(create_app(repository=SQLiteRepository(db_path)))
+    bracket = second_client.get("/brackets/replay-tp-amend").json()
+    target_exits = [exit_order for exit_order in bracket["active_exits"] if exit_order["kind"] == "take_profit"]
+    triggered = second_client.post("/market/price", json={"symbol": "SOLUSDT", "price": "115"})
+    repo = SQLiteRepository(db_path)
+
+    assert reduced_reward.status_code == 409
+    assert amended.status_code == 200
+    assert amended.json()["order"]["exit_kind"] == "bracket_take_profit_amend"
+    assert amended.json()["order"]["amend_target_index"] == 1
+    assert [target["trigger_price"] for target in target_exits] == ["105.00", "115.00"]
+    assert triggered.json()["triggered"] == [
+        {"symbol": "SOL/USDT", "kind": "take_profit", "price": "115.00000000", "quantity": "0.50000000"},
+        {"symbol": "SOL/USDT", "kind": "take_profit", "price": "115.00000000", "quantity": "0.50000000"},
+    ]
+    assert repo.list_orders()[1]["exit_kind"] == "bracket_take_profit_amend"
+    assert repo.list_orders()[1]["amend_target_index"] == 1
+    assert any(event.event_type == "bracket.take_profit_amended" for event in repo.list_audit())
+
+
 def test_app_replays_exact_initial_trailing_stop_price_after_restart(tmp_path):
     db_path = tmp_path / "auto_crypto.sqlite3"
     repo = SQLiteRepository(db_path)
@@ -325,6 +372,38 @@ def test_app_closes_bracket_with_audit_and_replays_after_restart(tmp_path):
     assert positions[0]["realized_pnl"] == "6.00000000"
     assert repo.list_orders()[-1]["exit_kind"] == "bracket_manual_close"
     assert repo.list_audit()[-1].event_type == "bracket.closed"
+
+
+def test_app_closes_bracket_at_protective_exit_with_audit(tmp_path):
+    db_path = tmp_path / "bracket_protective_close.sqlite3"
+    client = TestClient(create_app(repository=SQLiteRepository(db_path)))
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "protective-api-close",
+            "symbol": "SOLUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "10",
+            "take_profit_pct": "20",
+            "trailing_stop_pct": "5",
+        },
+    )
+    client.post("/market/price", json={"symbol": "SOLUSDT", "price": "110"})
+
+    closed = client.post(
+        "/brackets/protective-api-close/close-protective",
+        json={"reason": "operator accepts current protective exit"},
+    )
+    repo = SQLiteRepository(db_path)
+
+    assert closed.status_code == 200
+    assert closed.json()["order"]["price"] == "104.50"
+    assert closed.json()["order"]["exit_kind"] == "bracket_manual_close"
+    assert closed.json()["realized_pnl_delta"] == "4.50"
+    assert repo.list_orders()[-1]["exit_kind"] == "bracket_manual_close"
+    assert repo.list_audit()[-1].event_type == "bracket.protective_closed"
 
 
 def test_app_partially_closes_bracket_and_replays_remaining_exits_after_restart(tmp_path):

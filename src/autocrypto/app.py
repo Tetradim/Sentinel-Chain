@@ -468,6 +468,57 @@ def create_app(
             "account": _account_state_to_dict(engine.account_state),
         }
 
+    @app.post("/brackets/{signal_id}/take-profit")
+    async def amend_bracket_take_profit(signal_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        try:
+            trigger_price = _positive_decimal(payload.get("trigger_price") or payload.get("take_profit_price"))
+            target_index = _non_negative_int(payload.get("target_index"), default=0)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        reason = str(payload.get("reason") or "manual take-profit amend")
+        order = engine.exchange.amend_bracket_take_profit(
+            signal_id,
+            trigger_price,
+            target_index=target_index,
+            reason=reason,
+        )
+        if order is None:
+            raise HTTPException(
+                status_code=409,
+                detail="active take-profit target not found or amendment would reduce projected reward",
+            )
+        engine.account_state.open_notional = engine.exchange.open_notional()
+        if repository:
+            repository.save_order(order)
+            repository.record_audit(
+                "bracket.take_profit_amended",
+                {
+                    "signal_id": signal_id,
+                    "reason": reason,
+                    "trigger_price": str(trigger_price),
+                    "target_index": target_index,
+                    "exit_orders": [
+                        {
+                            "kind": exit_order.kind,
+                            "trigger_price": str(exit_order.trigger_price),
+                            "close_pct": str(exit_order.close_pct),
+                            "oca_group": exit_order.oca_group,
+                            "status": exit_order.status,
+                        }
+                        for exit_order in order.exit_orders
+                    ],
+                },
+            )
+        return {
+            "status": "amended",
+            "signal_id": signal_id,
+            "order": order.to_dict(),
+            "active_exits": _active_exits_to_dict(engine.exchange.lots, signal_id=signal_id),
+            "positions": engine.exchange.list_positions(),
+            "account": _account_state_to_dict(engine.account_state),
+        }
+
     @app.post("/brackets/{signal_id}/breakeven")
     async def move_bracket_to_breakeven(signal_id: str, request: Request) -> dict[str, Any]:
         payload = await request.json()
@@ -589,6 +640,74 @@ def create_app(
                     "signal_id": signal_id,
                     "reason": reason,
                     "price": str(price),
+                    "close_pct": str(close_pct) if close_pct is not None else None,
+                    "base_amount": str(base_amount) if base_amount is not None else None,
+                    "realized_pnl_delta": str(realized_pnl_delta),
+                    "canceled_exit_orders": [
+                        {
+                            "kind": exit_order.kind,
+                            "trigger_price": str(exit_order.trigger_price),
+                            "close_pct": str(exit_order.close_pct),
+                            "oca_group": exit_order.oca_group,
+                            "status": exit_order.status,
+                        }
+                        for exit_order in order.canceled_exit_orders
+                    ],
+                },
+            )
+        return {
+            "status": "closed",
+            "signal_id": signal_id,
+            "order": order.to_dict(),
+            "active_exits": _active_exits_to_dict(engine.exchange.lots),
+            "realized_pnl_delta": str(realized_pnl_delta),
+            "positions": engine.exchange.list_positions(),
+            "account": _account_state_to_dict(engine.account_state),
+        }
+
+    @app.post("/brackets/{signal_id}/close-protective")
+    async def close_bracket_at_protective_exit(signal_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        try:
+            close_pct = _optional_positive_decimal(payload.get("close_pct"))
+            base_amount = _optional_positive_decimal(payload.get("base_amount") or payload.get("quantity") or payload.get("qty"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if close_pct is not None and close_pct > 100:
+            raise HTTPException(status_code=400, detail="close_pct cannot exceed 100")
+        if close_pct is not None and base_amount is not None:
+            raise HTTPException(status_code=400, detail="send close_pct or base_amount, not both")
+        reason = str(payload.get("reason") or "manual paper bracket protective close")
+        lots = [
+            lot
+            for lot in engine.exchange.lots
+            if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
+        ]
+        realized_before = _position_realized_pnl(engine.exchange, lots[0].symbol) if lots else Decimal("0")
+        order = engine.exchange.close_bracket_at_protective_exit(
+            signal_id,
+            close_pct=close_pct,
+            base_amount=base_amount,
+            reason=reason,
+        )
+        if order is None:
+            raise HTTPException(status_code=404, detail="active bracket with protective exit not found")
+        realized_pnl_delta = _position_realized_pnl(engine.exchange, order.symbol) - realized_before
+        if realized_pnl_delta:
+            engine.account_state.daily_pnl += realized_pnl_delta
+            if realized_pnl_delta < 0:
+                engine.account_state.consecutive_losses += 1
+            elif realized_pnl_delta > 0:
+                engine.account_state.consecutive_losses = 0
+        engine.account_state.open_notional = engine.exchange.open_notional()
+        if repository:
+            repository.save_order(order)
+            repository.record_audit(
+                "bracket.protective_closed",
+                {
+                    "signal_id": signal_id,
+                    "reason": reason,
+                    "price": str(order.price),
                     "close_pct": str(close_pct) if close_pct is not None else None,
                     "base_amount": str(base_amount) if base_amount is not None else None,
                     "realized_pnl_delta": str(realized_pnl_delta),
@@ -749,6 +868,18 @@ def _optional_positive_decimal(value: Any) -> Decimal | None:
         raise ValueError(f"invalid decimal: {value}") from exc
     if parsed <= 0:
         raise ValueError("decimal value must be positive")
+    return parsed
+
+
+def _non_negative_int(value: Any, *, default: int) -> int:
+    if value is None or value == "":
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid integer: {value}") from exc
+    if parsed < 0:
+        raise ValueError("integer value must be non-negative")
     return parsed
 
 

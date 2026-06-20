@@ -127,6 +127,7 @@ class PaperOrder:
     breakeven_trigger_pct: Decimal | None = None
     breakeven_after_take_profit: bool = False
     exit_kind: str | None = None
+    amend_target_index: int | None = None
     canceled_exit_orders: list[ExitOrder] = field(default_factory=list)
     reduce_only: bool = False
     fee: Decimal = Decimal("0")
@@ -171,6 +172,7 @@ class PaperOrder:
             else None,
             "breakeven_after_take_profit": self.breakeven_after_take_profit,
             "exit_kind": self.exit_kind,
+            "amend_target_index": self.amend_target_index,
             "canceled_exit_orders": [
                 {
                     "kind": exit_order.kind,
@@ -501,6 +503,33 @@ class PaperExchange:
         self._refresh_active_exits(first_lot.symbol)
         return order
 
+    def close_bracket_at_protective_exit(
+        self,
+        signal_id: str,
+        *,
+        close_pct: Decimal | None = None,
+        base_amount: Decimal | None = None,
+        reason: str = "",
+    ) -> PaperOrder | None:
+        """Close or reduce a bracket at its current nearest paper protective trigger."""
+        target_lots = [
+            lot
+            for lot in self.lots
+            if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
+        ]
+        if not target_lots:
+            return None
+        protective_exit = _nearest_protective_exit(target_lots[0])
+        if protective_exit is None:
+            return None
+        return self.close_bracket(
+            signal_id,
+            protective_exit.trigger_price,
+            close_pct=close_pct,
+            base_amount=base_amount,
+            reason=reason,
+        )
+
     def amend_bracket_stop(self, signal_id: str, trigger_price: Decimal, *, reason: str = "") -> PaperOrder | None:
         """Move a paper bracket stop in the protective direction only."""
         target_lots = [
@@ -574,6 +603,50 @@ class PaperExchange:
             price=_money(trigger_price),
             exit_orders=amended_trails,
             exit_kind="bracket_trailing_stop_amend",
+            status="amended",
+        )
+        self.orders.append(order)
+        self._refresh_active_exits(first_lot.symbol)
+        return order
+
+    def amend_bracket_take_profit(
+        self,
+        signal_id: str,
+        trigger_price: Decimal,
+        *,
+        target_index: int = 0,
+        reason: str = "",
+    ) -> PaperOrder | None:
+        """Move a paper take-profit target farther into profit only."""
+        target_lots = [
+            lot
+            for lot in self.lots
+            if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
+        ]
+        if not target_lots:
+            return None
+
+        amended_targets: list[ExitOrder] = []
+        for lot in target_lots:
+            amended_target = _take_profit_amendment(lot, _money(trigger_price), target_index=target_index)
+            if amended_target is None:
+                return None
+            lot.exit_orders = _replace_take_profit(lot.exit_orders, amended_target, target_index=target_index)
+            amended_targets.append(amended_target)
+
+        first_lot = target_lots[0]
+        order = PaperOrder(
+            order_id=f"paper-amend-tp-{_order_fragment(signal_id)}-{len(self.orders) + 1}",
+            signal_id=signal_id,
+            mode="paper",
+            exchange="paper",
+            symbol=first_lot.symbol,
+            side="amend",
+            notional=Decimal("0"),
+            price=_money(trigger_price),
+            exit_orders=amended_targets,
+            exit_kind="bracket_take_profit_amend",
+            amend_target_index=target_index,
             status="amended",
         )
         self.orders.append(order)
@@ -724,6 +797,9 @@ class PaperExchange:
         if order.exit_kind == "bracket_trailing_stop_amend":
             self._replay_bracket_trailing_stop_amend(order)
             return
+        if order.exit_kind == "bracket_take_profit_amend":
+            self._replay_bracket_take_profit_amend(order)
+            return
         if order.exit_kind == "bracket_breakeven":
             self._replay_bracket_breakeven(order)
             return
@@ -822,6 +898,25 @@ class PaperExchange:
                 if amended_trail is not None:
                     lot.exit_orders = _replace_or_append_trailing_stop(lot.exit_orders, amended_trail)
                     _sync_trailing_water_mark(lot, amended_trail.trigger_price)
+        self._refresh_active_exits(order.symbol)
+
+    def _replay_bracket_take_profit_amend(self, order: PaperOrder) -> None:
+        if not order.exit_orders:
+            return
+        target_index = order.amend_target_index or 0
+        for lot in self.lots:
+            if lot.signal_id == order.signal_id and lot.remaining_quantity > 0:
+                amended_target = _take_profit_amendment(
+                    lot,
+                    order.exit_orders[0].trigger_price,
+                    target_index=target_index,
+                )
+                if amended_target is not None:
+                    lot.exit_orders = _replace_take_profit(
+                        lot.exit_orders,
+                        amended_target,
+                        target_index=target_index,
+                    )
         self._refresh_active_exits(order.symbol)
 
     def _replay_bracket_breakeven(self, order: PaperOrder) -> None:
@@ -1242,6 +1337,45 @@ def _replace_or_append_trailing_stop(exit_orders: list[ExitOrder], amended_trail
     return updated
 
 
+def _take_profit_amendment(lot: PaperLot, trigger_price: Decimal, *, target_index: int) -> ExitOrder | None:
+    targets = [exit_order for exit_order in lot.exit_orders if exit_order.kind == "take_profit"]
+    if target_index < 0 or target_index >= len(targets):
+        return None
+    existing_target = targets[target_index]
+    if lot.direction == "long":
+        if trigger_price <= lot.entry_price or trigger_price <= existing_target.trigger_price:
+            return None
+    elif trigger_price >= lot.entry_price or trigger_price >= existing_target.trigger_price:
+        return None
+    return ExitOrder(
+        kind="take_profit",
+        trigger_price=trigger_price,
+        close_pct=existing_target.close_pct,
+        oca_group=existing_target.oca_group,
+        status="open",
+    )
+
+
+def _replace_take_profit(
+    exit_orders: list[ExitOrder],
+    amended_target: ExitOrder,
+    *,
+    target_index: int,
+) -> list[ExitOrder]:
+    seen_targets = 0
+    updated: list[ExitOrder] = []
+    for exit_order in exit_orders:
+        if exit_order.kind != "take_profit":
+            updated.append(exit_order)
+            continue
+        if seen_targets == target_index:
+            updated.append(amended_target)
+        else:
+            updated.append(exit_order)
+        seen_targets += 1
+    return updated
+
+
 def _breakeven_exit_amendments(lot: PaperLot) -> tuple[list[ExitOrder], list[ExitOrder]]:
     breakeven_price = _money(lot.entry_price)
     amendments: list[ExitOrder] = []
@@ -1309,6 +1443,17 @@ def _bracket_close_quantity(
             return None
         return min(total_remaining, base_amount)
     return total_remaining
+
+
+def _nearest_protective_exit(lot: PaperLot) -> ExitOrder | None:
+    protective_exits = [
+        exit_order
+        for exit_order in lot.exit_orders
+        if exit_order.kind in {"stop_loss", "trailing_stop"} and exit_order.status != "canceled"
+    ]
+    if lot.direction == "long":
+        return max(protective_exits, key=lambda item: item.trigger_price, default=None)
+    return min(protective_exits, key=lambda item: item.trigger_price, default=None)
 
 
 def _trailing_starts_activated(
@@ -1426,6 +1571,9 @@ def _paper_order_from_dict(payload: dict) -> PaperOrder:
         else None,
         breakeven_after_take_profit=_bool_from_payload(payload.get("breakeven_after_take_profit")),
         exit_kind=payload.get("exit_kind"),
+        amend_target_index=int(payload["amend_target_index"])
+        if payload.get("amend_target_index") is not None
+        else None,
         canceled_exit_orders=[
             _exit_order_from_dict(exit_order, default_status="canceled")
             for exit_order in payload.get("canceled_exit_orders", [])

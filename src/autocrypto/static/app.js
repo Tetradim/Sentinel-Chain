@@ -707,6 +707,12 @@ function renderPortfolio() {
         const trailingAction = exit.kind === "trailing_stop"
           ? `<button type="button" data-action="amend-bracket-trailing-stop" data-signal-id="${escapeHtml(exit.signal_id)}" data-price="${escapeHtml(exit.trigger_price)}">Tighten Trail</button>`
           : "";
+        const takeProfitAction = exit.kind === "take_profit"
+          ? `<button type="button" data-action="amend-bracket-take-profit" data-signal-id="${escapeHtml(exit.signal_id)}" data-price="${escapeHtml(exit.trigger_price)}">Raise TP</button>`
+          : "";
+        const protectiveCloseAction = (exit.kind === "stop_loss" || exit.kind === "trailing_stop")
+          ? `<button type="button" data-action="close-bracket-protective" data-signal-id="${escapeHtml(exit.signal_id)}">Close at Protective</button>`
+          : "";
         return `
           <tr>
             <td>${escapeHtml(exit.symbol)}</td>
@@ -723,6 +729,8 @@ function renderPortfolio() {
                 <button type="button" data-action="amend-bracket-stop" data-signal-id="${escapeHtml(exit.signal_id)}" data-price="${escapeHtml(exit.trigger_price)}">Tighten Stop</button>
                 <button type="button" data-action="breakeven-bracket" data-signal-id="${escapeHtml(exit.signal_id)}">Breakeven</button>
                 ${trailingAction}
+                ${takeProfitAction}
+                ${protectiveCloseAction}
                 <button type="button" data-action="cancel-bracket" data-signal-id="${escapeHtml(exit.signal_id)}">Cancel Bracket</button>
               </div>
             </td>
@@ -1135,6 +1143,21 @@ async function amendBracketTrailingStop(signalId, currentPrice) {
   await loadState(false);
 }
 
+async function amendBracketTakeProfit(signalId, currentPrice) {
+  const triggerPrice = window.prompt("New take-profit trigger price", currentPrice || "");
+  if (!triggerPrice) {
+    setStatus("Take-profit amendment canceled.", "warn");
+    return;
+  }
+  const result = await api(`/brackets/${encodeURIComponent(signalId)}/take-profit`, {
+    method: "POST",
+    body: { trigger_price: triggerPrice, reason: "operator UI take-profit amend" },
+  });
+  appState.lastPayload = result;
+  setStatus(`Amended ${signalId} take-profit to ${triggerPrice}.`, "ok");
+  await loadState(false);
+}
+
 async function moveBracketToBreakeven(signalId) {
   if (!window.confirm(`Move protective exits for ${signalId} to breakeven?`)) {
     setStatus("Breakeven amendment aborted.", "warn");
@@ -1146,6 +1169,20 @@ async function moveBracketToBreakeven(signalId) {
   });
   appState.lastPayload = result;
   setStatus(`Moved ${signalId} protective exits to breakeven.`, "ok");
+  await loadState(false);
+}
+
+async function closeBracketAtProtectiveExit(signalId) {
+  if (!window.confirm(`Close ${signalId} at its current protective trigger?`)) {
+    setStatus("Protective close aborted.", "warn");
+    return;
+  }
+  const result = await api(`/brackets/${encodeURIComponent(signalId)}/close-protective`, {
+    method: "POST",
+    body: { reason: "operator UI protective close" },
+  });
+  appState.lastPayload = result;
+  setStatus(`Closed ${signalId} at ${result.order.price}.`, "warn");
   await loadState(false);
 }
 
@@ -1797,8 +1834,16 @@ function bindEvents() {
       amendBracketTrailingStop(target.dataset.signalId, target.dataset.price)
         .catch((error) => setStatus(error.message, "error"));
     }
+    if (action === "amend-bracket-take-profit") {
+      amendBracketTakeProfit(target.dataset.signalId, target.dataset.price)
+        .catch((error) => setStatus(error.message, "error"));
+    }
     if (action === "breakeven-bracket") {
       moveBracketToBreakeven(target.dataset.signalId)
+        .catch((error) => setStatus(error.message, "error"));
+    }
+    if (action === "close-bracket-protective") {
+      closeBracketAtProtectiveExit(target.dataset.signalId)
         .catch((error) => setStatus(error.message, "error"));
     }
     if (action === "cancel-bracket") {

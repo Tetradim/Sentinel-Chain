@@ -1115,6 +1115,97 @@ def test_amend_short_trailing_stop_tightens_downward():
     ]
 
 
+def test_amend_long_take_profit_only_moves_farther_into_profit():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "raise-long-target",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    reduced_reward = exchange.amend_bracket_take_profit("raise-long-target", Decimal("108"))
+    amended = exchange.amend_bracket_take_profit("raise-long-target", Decimal("112"))
+    target_exit = next(exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "take_profit")
+    triggered = exchange.update_price("BTC/USDT", Decimal("112"))
+
+    assert reduced_reward is None
+    assert amended is not None
+    assert amended.exit_kind == "bracket_take_profit_amend"
+    assert amended.status == "amended"
+    assert target_exit.trigger_price == Decimal("112.00")
+    assert triggered == [
+        {"symbol": "BTC/USDT", "kind": "take_profit", "price": "112.00000000", "quantity": "1.00000000"}
+    ]
+
+
+def test_amend_short_take_profit_only_moves_farther_downward():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "lower-short-target",
+            "symbol": "ETH/USDT",
+            "side": "short",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    reduced_reward = exchange.amend_bracket_take_profit("lower-short-target", Decimal("92"))
+    amended = exchange.amend_bracket_take_profit("lower-short-target", Decimal("88"))
+    target_exit = next(exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "take_profit")
+    triggered = exchange.update_price("ETH/USDT", Decimal("88"))
+
+    assert reduced_reward is None
+    assert amended is not None
+    assert target_exit.trigger_price == Decimal("88.00")
+    assert triggered == [
+        {"symbol": "ETH/USDT", "kind": "take_profit", "price": "88.00000000", "quantity": "1.00000000"}
+    ]
+
+
+def test_close_bracket_at_protective_exit_uses_nearest_stop_or_trail():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "protective-close",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "10",
+            "take_profit_pct": "20",
+            "trailing_stop_pct": "5",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+    exchange.update_price("BTC/USDT", Decimal("110"))
+
+    order = exchange.close_bracket_at_protective_exit("protective-close")
+
+    assert order is not None
+    assert order.price == Decimal("104.50")
+    assert order.exit_kind == "bracket_manual_close"
+    assert order.reduce_only is True
+    assert exchange.list_positions()[0]["quantity"] == "0.00000000"
+    assert exchange.list_positions()[0]["realized_pnl"] == "4.50000000"
+
+
 def test_short_open_notional_counts_against_exposure_cap():
     exchange = PaperExchange()
     engine = TradingEngine(exchange=exchange)
