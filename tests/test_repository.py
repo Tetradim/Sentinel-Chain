@@ -106,12 +106,15 @@ def test_sqlite_repository_persists_and_pops_pending_approval(tmp_path):
             "base_amount": None,
             "price": "3000",
             "stop_loss_pct": "2",
+            "stop_loss_price": None,
             "take_profit_pct": "4",
-            "take_profit_targets": [{"pct": "4", "close_pct": "100"}],
+            "take_profit_price": None,
+            "take_profit_targets": [{"pct": "4", "trigger_price": None, "close_pct": "100"}],
             "trailing_stop_pct": "3",
             "trailing_activation_pct": None,
             "breakeven_trigger_pct": "2",
             "strategy_id": "manual",
+            "reduce_only": False,
             "created_at": pending[0]["created_at"],
         }
     ]

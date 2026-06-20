@@ -31,6 +31,38 @@ def test_paper_take_profit_trigger_closes_position_and_records_exit_order():
     assert exchange.orders[-1].side == "sell"
 
 
+def test_absolute_bracket_prices_trigger_long_exit_orders():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_price": "95",
+            "take_profit_targets": [
+                {"trigger_price": "104", "close_pct": "50"},
+                {"trigger_price": "108", "close_pct": "50"},
+            ],
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    first = exchange.update_price("BTC/USDT", Decimal("104"))
+    second = exchange.update_price("BTC/USDT", Decimal("94"))
+
+    assert first == [
+        {"symbol": "BTC/USDT", "kind": "take_profit", "price": "104.00000000", "quantity": "0.50000000"}
+    ]
+    assert second == [
+        {"symbol": "BTC/USDT", "kind": "stop_loss", "price": "94.00000000", "quantity": "0.50000000"}
+    ]
+    assert exchange.list_positions()[0]["quantity"] == "0.00000000"
+    assert exchange.orders[-1].side == "sell"
+
+
 def test_paper_stop_loss_trigger_closes_position_once():
     exchange = PaperExchange()
     engine = TradingEngine(exchange=exchange)
@@ -350,6 +382,70 @@ def test_short_bracket_take_profit_closes_with_buy_exit():
         {"symbol": "ETH/USDT", "kind": "take_profit", "price": "90.00000000", "quantity": "1.00000000"}
     ]
     assert exchange.orders[-1].side == "buy"
+
+
+def test_absolute_bracket_prices_trigger_short_buy_exit_orders():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "absolute-short",
+            "symbol": "ETH/USDT",
+            "side": "short",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_price": "106",
+            "take_profit_price": "92",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    triggered = exchange.update_price("ETH/USDT", Decimal("92"))
+
+    assert triggered == [
+        {"symbol": "ETH/USDT", "kind": "take_profit", "price": "92.00000000", "quantity": "1.00000000"}
+    ]
+    assert exchange.list_positions()[0]["quantity"] == "0.00000000"
+    assert exchange.list_positions()[0]["realized_pnl"] == "8.00000000"
+    assert exchange.orders[-1].side == "buy"
+
+
+def test_reduce_only_buy_closes_open_short_without_opening_long():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    short_signal = normalize_signal(
+        {
+            "signal_id": "short-to-close",
+            "symbol": "ETH/USDT",
+            "side": "short",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+        },
+        source="test",
+    )
+    close_signal = normalize_signal(
+        {
+            "signal_id": "reduce-only-short-close",
+            "symbol": "ETH/USDT",
+            "side": "close_short",
+            "base_amount": "0.4",
+            "price": "90",
+        },
+        source="test",
+    )
+
+    engine.process_signal(short_signal)
+    engine.process_signal(close_signal)
+
+    position = exchange.list_positions()[0]
+    assert exchange.orders[-1].side == "buy"
+    assert exchange.orders[-1].reduce_only is True
+    assert position["quantity"] == "-0.60000000"
+    assert position["avg_entry"] == "100.00000000"
+    assert position["realized_pnl"] == "4.00000000"
 
 
 def test_short_trailing_stop_ratcheted_down_then_triggers_on_bounce():

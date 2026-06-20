@@ -60,6 +60,31 @@ def test_normalizes_staged_take_profit_targets():
     ]
 
 
+def test_normalizes_absolute_bracket_prices_and_reduce_only_close_short():
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "close_short",
+            "base_amount": "1",
+            "price": "95",
+            "stop_loss_price": "105",
+            "take_profit_targets": [
+                {"trigger_price": "90", "close_pct": "50"},
+                {"price": "85", "close_pct": "50"},
+            ],
+        },
+        source="test",
+    )
+
+    assert signal.side == "buy"
+    assert signal.reduce_only is True
+    assert signal.stop_loss_price == Decimal("105")
+    assert [(target.trigger_price, target.close_pct) for target in signal.take_profit_targets] == [
+        (Decimal("85"), Decimal("50")),
+        (Decimal("90"), Decimal("50")),
+    ]
+
+
 @pytest.mark.parametrize(
     "payload",
     [
@@ -72,6 +97,12 @@ def test_normalizes_staged_take_profit_targets():
             "side": "buy",
             "quote_amount": "100",
             "take_profit_targets": [{"pct": "2", "close_pct": "60"}, {"pct": "4", "close_pct": "60"}],
+        },
+        {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "take_profit_targets": [{"close_pct": "100"}],
         },
     ],
 )

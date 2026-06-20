@@ -13,7 +13,8 @@ class SignalValidationError(ValueError):
 
 @dataclass(frozen=True)
 class TakeProfitTarget:
-    pct: Decimal
+    pct: Decimal | None = None
+    trigger_price: Decimal | None = None
     close_pct: Decimal = Decimal("100")
 
 
@@ -29,13 +30,16 @@ class CryptoSignal:
     base_amount: Decimal | None = None
     price: Decimal | None = None
     stop_loss_pct: Decimal | None = None
+    stop_loss_price: Decimal | None = None
     take_profit_pct: Decimal | None = None
+    take_profit_price: Decimal | None = None
     take_profit_targets: tuple[TakeProfitTarget, ...] = ()
     trailing_stop_pct: Decimal | None = None
     trailing_activation_pct: Decimal | None = None
     breakeven_trigger_pct: Decimal | None = None
     leverage: Decimal = Decimal("1")
     max_slippage_bps: int = 100
+    reduce_only: bool = False
     strategy_id: str = "manual"
     raw_payload: dict[str, Any] = field(default_factory=dict)
 
@@ -49,6 +53,7 @@ SIDE_ALIASES = {
     "short": "sell",
     "close": "sell",
     "close_long": "sell",
+    "close_short": "buy",
 }
 
 QUOTE_SUFFIXES = ("USDT", "USDC", "USD", "BTC", "ETH", "EUR")
@@ -59,7 +64,9 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
     if not isinstance(payload, dict):
         raise SignalValidationError("signal payload must be an object")
 
-    side = _normalize_side(payload.get("side") or payload.get("action"))
+    raw_side = payload.get("side") or payload.get("action")
+    side = _normalize_side(raw_side)
+    reduce_only = _bool(payload.get("reduce_only"), default=False) or _is_close_side(raw_side)
     symbol = normalize_symbol(payload.get("symbol") or payload.get("ticker") or payload.get("pair"))
     quote_amount = _optional_positive_decimal(payload.get("quote_amount") or payload.get("notional"))
     base_amount = _optional_positive_decimal(payload.get("base_amount") or payload.get("quantity") or payload.get("qty"))
@@ -69,8 +76,13 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
 
     price = _optional_positive_decimal(payload.get("price") or payload.get("entry_price") or payload.get("limit_price"))
     stop_loss_pct = _optional_positive_decimal(payload.get("stop_loss_pct"))
+    stop_loss_price = _optional_positive_decimal(payload.get("stop_loss_price") or payload.get("stop_price"))
     take_profit_pct = _optional_positive_decimal(payload.get("take_profit_pct"))
-    take_profit_targets = _take_profit_targets(payload.get("take_profit_targets"), take_profit_pct)
+    take_profit_price = _optional_positive_decimal(
+        payload.get("take_profit_price") or payload.get("target_price")
+    )
+    take_profit_targets = _take_profit_targets(payload.get("take_profit_targets"), take_profit_pct, take_profit_price)
+    take_profit_targets = _sort_take_profit_targets(take_profit_targets, side=side)
     if take_profit_pct is None and take_profit_targets:
         take_profit_pct = take_profit_targets[0].pct
     trailing_stop_pct = _optional_positive_decimal(payload.get("trailing_stop_pct"))
@@ -94,9 +106,15 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         "base_amount": str(base_amount) if base_amount is not None else None,
         "price": str(price) if price is not None else None,
         "stop_loss_pct": str(stop_loss_pct) if stop_loss_pct is not None else None,
+        "stop_loss_price": str(stop_loss_price) if stop_loss_price is not None else None,
         "take_profit_pct": str(take_profit_pct) if take_profit_pct is not None else None,
+        "take_profit_price": str(take_profit_price) if take_profit_price is not None else None,
         "take_profit_targets": [
-            {"pct": str(target.pct), "close_pct": str(target.close_pct)}
+            {
+                "pct": str(target.pct) if target.pct is not None else None,
+                "trigger_price": str(target.trigger_price) if target.trigger_price is not None else None,
+                "close_pct": str(target.close_pct),
+            }
             for target in take_profit_targets
         ],
         "trailing_stop_pct": str(trailing_stop_pct) if trailing_stop_pct is not None else None,
@@ -104,6 +122,7 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         "breakeven_trigger_pct": str(breakeven_trigger_pct) if breakeven_trigger_pct is not None else None,
         "leverage": str(leverage),
         "max_slippage_bps": max_slippage_bps,
+        "reduce_only": reduce_only,
         "strategy_id": strategy_id,
     }
     signal_id = str(payload.get("signal_id") or _fingerprint(canonical))
@@ -119,13 +138,16 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         base_amount=base_amount,
         price=price,
         stop_loss_pct=stop_loss_pct,
+        stop_loss_price=stop_loss_price,
         take_profit_pct=take_profit_pct,
+        take_profit_price=take_profit_price,
         take_profit_targets=take_profit_targets,
         trailing_stop_pct=trailing_stop_pct,
         trailing_activation_pct=trailing_activation_pct,
         breakeven_trigger_pct=breakeven_trigger_pct,
         leverage=leverage,
         max_slippage_bps=max_slippage_bps,
+        reduce_only=reduce_only,
         strategy_id=strategy_id,
         raw_payload=dict(payload),
     )
@@ -140,6 +162,12 @@ def _normalize_side(value: Any) -> str:
     if side not in SIDE_ALIASES:
         raise SignalValidationError(f"unsupported side: {side}")
     return SIDE_ALIASES[side]
+
+
+def _is_close_side(value: Any) -> bool:
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"close", "close_long", "close_short"}
 
 
 def normalize_symbol(value: Any) -> str:
@@ -180,11 +208,23 @@ def _non_negative_int(value: Any, *, default: int) -> int:
     return parsed
 
 
-def _take_profit_targets(value: Any, fallback_pct: Decimal | None) -> tuple[TakeProfitTarget, ...]:
+def _bool(value: Any, *, default: bool) -> bool:
     if value is None or value == "":
-        if fallback_pct is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _take_profit_targets(
+    value: Any,
+    fallback_pct: Decimal | None,
+    fallback_price: Decimal | None,
+) -> tuple[TakeProfitTarget, ...]:
+    if value is None or value == "":
+        if fallback_pct is None and fallback_price is None:
             return ()
-        return (TakeProfitTarget(pct=fallback_pct),)
+        return (TakeProfitTarget(pct=fallback_pct, trigger_price=fallback_price),)
     if not isinstance(value, list):
         raise SignalValidationError("take_profit_targets must be a list")
 
@@ -194,19 +234,33 @@ def _take_profit_targets(value: Any, fallback_pct: Decimal | None) -> tuple[Take
         if not isinstance(item, dict):
             raise SignalValidationError("take_profit_targets entries must be objects")
         pct = _optional_positive_decimal(item.get("pct") or item.get("take_profit_pct"))
+        trigger_price = _optional_positive_decimal(
+            item.get("trigger_price") or item.get("price") or item.get("take_profit_price")
+        )
         close_pct = _optional_positive_decimal(item.get("close_pct") or item.get("size_pct")) or Decimal("100")
-        if pct is None:
-            raise SignalValidationError("take_profit_targets entries require pct")
+        if pct is None and trigger_price is None:
+            raise SignalValidationError("take_profit_targets entries require pct or trigger_price")
         if close_pct > Decimal("100"):
             raise SignalValidationError("take_profit_targets close_pct cannot exceed 100")
-        targets.append(TakeProfitTarget(pct=pct, close_pct=close_pct))
+        targets.append(TakeProfitTarget(pct=pct, trigger_price=trigger_price, close_pct=close_pct))
         total_close_pct += close_pct
 
     if not targets:
         return ()
     if total_close_pct > Decimal("100"):
         raise SignalValidationError("take_profit_targets close_pct total cannot exceed 100")
-    return tuple(sorted(targets, key=lambda target: target.pct))
+    return tuple(targets)
+
+
+def _sort_take_profit_targets(targets: tuple[TakeProfitTarget, ...], *, side: str) -> tuple[TakeProfitTarget, ...]:
+    def sort_key(target: TakeProfitTarget) -> Decimal:
+        if target.pct is not None:
+            return target.pct
+        if target.trigger_price is not None:
+            return target.trigger_price if side == "buy" else -target.trigger_price
+        return Decimal("0")
+
+    return tuple(sorted(targets, key=sort_key))
 
 
 def _fingerprint(payload: dict[str, Any]) -> str:

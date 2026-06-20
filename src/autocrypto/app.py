@@ -513,9 +513,15 @@ def _signal_to_dict(signal: CryptoSignal) -> dict[str, Any]:
         "base_amount": str(signal.base_amount) if signal.base_amount is not None else None,
         "price": str(signal.price) if signal.price is not None else None,
         "stop_loss_pct": str(signal.stop_loss_pct) if signal.stop_loss_pct is not None else None,
+        "stop_loss_price": str(signal.stop_loss_price) if signal.stop_loss_price is not None else None,
         "take_profit_pct": str(signal.take_profit_pct) if signal.take_profit_pct is not None else None,
+        "take_profit_price": str(signal.take_profit_price) if signal.take_profit_price is not None else None,
         "take_profit_targets": [
-            {"pct": str(target.pct), "close_pct": str(target.close_pct)}
+            {
+                "pct": str(target.pct) if target.pct is not None else None,
+                "trigger_price": str(target.trigger_price) if target.trigger_price is not None else None,
+                "close_pct": str(target.close_pct),
+            }
             for target in signal.take_profit_targets
         ],
         "trailing_stop_pct": str(signal.trailing_stop_pct) if signal.trailing_stop_pct is not None else None,
@@ -527,6 +533,7 @@ def _signal_to_dict(signal: CryptoSignal) -> dict[str, Any]:
         else None,
         "leverage": str(signal.leverage),
         "max_slippage_bps": signal.max_slippage_bps,
+        "reduce_only": signal.reduce_only,
         "strategy_id": signal.strategy_id,
     }
 

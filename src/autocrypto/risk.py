@@ -54,7 +54,13 @@ def evaluate_signal(
     if config.allowed_exchanges and signal.exchange not in config.allowed_exchanges:
         reasons.append("exchange_not_allowed")
     opens_position = _opens_position(signal)
-    if config.require_stop_loss and opens_position and signal.stop_loss_pct is None:
+    if signal.reduce_only:
+        stop_loss_pct = None
+        take_profit_pct = None
+    else:
+        stop_loss_pct = _stop_loss_pct(signal, reasons)
+        take_profit_pct = _take_profit_pct(signal, reasons)
+    if config.require_stop_loss and opens_position and stop_loss_pct is None:
         reasons.append("stop_loss_required")
     if order_notional is not None and config.max_order_notional > 0 and order_notional > config.max_order_notional:
         reasons.append("max_order_notional_exceeded")
@@ -78,7 +84,7 @@ def evaluate_signal(
         reasons.append("daily_loss_limit_exceeded")
     if config.max_consecutive_losses > 0 and account_state.consecutive_losses >= config.max_consecutive_losses:
         reasons.append("consecutive_loss_limit_exceeded")
-    if signal.stop_loss_pct is not None and config.max_stop_loss_pct > 0 and signal.stop_loss_pct > config.max_stop_loss_pct:
+    if stop_loss_pct is not None and config.max_stop_loss_pct > 0 and stop_loss_pct > config.max_stop_loss_pct:
         reasons.append("max_stop_loss_pct_exceeded")
     if (
         signal.trailing_stop_pct is not None
@@ -89,10 +95,10 @@ def evaluate_signal(
     if signal.trailing_activation_pct is not None and signal.trailing_stop_pct is None:
         reasons.append("trailing_stop_required_for_activation")
     if (
-        signal.stop_loss_pct is not None
-        and signal.take_profit_pct is not None
+        stop_loss_pct is not None
+        and take_profit_pct is not None
         and config.min_reward_risk_ratio > 0
-        and signal.take_profit_pct / signal.stop_loss_pct < config.min_reward_risk_ratio
+        and take_profit_pct / stop_loss_pct < config.min_reward_risk_ratio
     ):
         reasons.append("min_reward_risk_ratio_not_met")
     if signal.max_slippage_bps > config.max_slippage_bps:
@@ -114,11 +120,56 @@ def _order_notional(signal: CryptoSignal, reasons: list[str]) -> Decimal | None:
 
 
 def _opens_position(signal: CryptoSignal) -> bool:
+    if signal.reduce_only:
+        return False
     if signal.side == "buy":
         return True
     return signal.side == "sell" and (
         signal.stop_loss_pct is not None
+        or signal.stop_loss_price is not None
         or bool(signal.take_profit_targets)
+        or signal.take_profit_price is not None
         or signal.trailing_stop_pct is not None
         or signal.breakeven_trigger_pct is not None
     )
+
+
+def _stop_loss_pct(signal: CryptoSignal, reasons: list[str]) -> Decimal | None:
+    if signal.stop_loss_pct is not None:
+        return signal.stop_loss_pct
+    if signal.stop_loss_price is None:
+        return None
+    if signal.price is None:
+        reasons.append("price_required_for_stop_loss_price")
+        return None
+    if signal.side == "buy":
+        if signal.stop_loss_price >= signal.price:
+            reasons.append("invalid_stop_loss_price")
+            return None
+        return (signal.price - signal.stop_loss_price) / signal.price * Decimal("100")
+    if signal.stop_loss_price <= signal.price:
+        reasons.append("invalid_stop_loss_price")
+        return None
+    return (signal.stop_loss_price - signal.price) / signal.price * Decimal("100")
+
+
+def _take_profit_pct(signal: CryptoSignal, reasons: list[str]) -> Decimal | None:
+    if signal.take_profit_pct is not None:
+        return signal.take_profit_pct
+    target_price = signal.take_profit_price
+    if target_price is None and signal.take_profit_targets:
+        target_price = signal.take_profit_targets[0].trigger_price
+    if target_price is None:
+        return None
+    if signal.price is None:
+        reasons.append("price_required_for_take_profit_price")
+        return None
+    if signal.side == "buy":
+        if target_price <= signal.price:
+            reasons.append("invalid_take_profit_price")
+            return None
+        return (target_price - signal.price) / signal.price * Decimal("100")
+    if target_price >= signal.price:
+        reasons.append("invalid_take_profit_price")
+        return None
+    return (signal.price - target_price) / signal.price * Decimal("100")

@@ -94,6 +94,7 @@ class PaperOrder:
     trailing_stop_pct: Decimal | None = None
     trailing_activation_pct: Decimal | None = None
     breakeven_trigger_pct: Decimal | None = None
+    reduce_only: bool = False
     status: str = "accepted"
 
     def to_dict(self) -> dict:
@@ -122,6 +123,7 @@ class PaperOrder:
             "breakeven_trigger_pct": str(self.breakeven_trigger_pct)
             if self.breakeven_trigger_pct is not None
             else None,
+            "reduce_only": self.reduce_only,
         }
 
 
@@ -183,6 +185,7 @@ class PaperExchange:
             trailing_stop_pct=signal.trailing_stop_pct,
             trailing_activation_pct=signal.trailing_activation_pct,
             breakeven_trigger_pct=signal.breakeven_trigger_pct,
+            reduce_only=signal.reduce_only,
         )
         self.orders.append(order)
         if quantity is not None:
@@ -261,7 +264,9 @@ class PaperExchange:
         if signal.price is None:
             return
         position = self.positions.setdefault(signal.symbol, PaperPosition(symbol=signal.symbol))
-        if signal.side == "buy":
+        if signal.side == "buy" and signal.reduce_only:
+            self._buy_quantity(signal.symbol, quantity, signal.price)
+        elif signal.side == "buy":
             position.buy(quantity, signal.price)
             self.lots.append(
                 PaperLot(
@@ -281,6 +286,8 @@ class PaperExchange:
                     breakeven_trigger_pct=signal.breakeven_trigger_pct,
                 )
             )
+        elif signal.side == "sell" and signal.reduce_only:
+            self._sell_quantity(signal.symbol, quantity, signal.price)
         elif signal.side == "sell" and exit_orders:
             position.sell_short(quantity, signal.price)
             self.lots.append(
@@ -310,7 +317,9 @@ class PaperExchange:
             return
         quantity = order.notional / order.price
         position = self.positions.setdefault(order.symbol, PaperPosition(symbol=order.symbol))
-        if order.side == "buy":
+        if order.side == "buy" and order.reduce_only:
+            self._buy_quantity(order.symbol, quantity, order.price)
+        elif order.side == "buy":
             position.buy(quantity, order.price)
             self.lots.append(
                 PaperLot(
@@ -330,6 +339,8 @@ class PaperExchange:
                     breakeven_trigger_pct=order.breakeven_trigger_pct,
                 )
             )
+        elif order.side == "sell" and order.reduce_only:
+            self._sell_quantity(order.symbol, quantity, order.price)
         elif order.side == "sell" and order.exit_orders:
             position.sell_short(quantity, order.price)
             self.lots.append(
@@ -501,6 +512,24 @@ class PaperExchange:
         else:
             self._refresh_position_average(symbol)
 
+    def _buy_quantity(self, symbol: str, quantity: Decimal, price: Decimal) -> None:
+        position = self.positions.setdefault(symbol, PaperPosition(symbol=symbol))
+        remaining = quantity
+        for lot in self.lots:
+            if remaining <= 0 or lot.symbol != symbol or lot.direction != "short" or lot.remaining_quantity <= 0:
+                continue
+            reduction = min(lot.remaining_quantity, remaining)
+            position.realized_pnl += (lot.entry_price - price) * reduction
+            position.quantity += reduction
+            lot.remaining_quantity -= reduction
+            remaining -= reduction
+        self.lots = [lot for lot in self.lots if lot.remaining_quantity > 0]
+        if position.quantity == 0:
+            position.quantity = Decimal("0")
+            position.avg_entry = Decimal("0")
+        else:
+            self._refresh_position_average(symbol)
+
     def _refresh_position_average(self, symbol: str) -> None:
         position = self.positions.get(symbol)
         if position is None or position.quantity == 0:
@@ -534,18 +563,25 @@ class PaperExchange:
 def build_exit_orders(signal: CryptoSignal) -> list[ExitOrder]:
     if signal.price is None or signal.side not in {"buy", "sell"}:
         return []
+    if signal.reduce_only:
+        return []
     if signal.side == "sell" and not _has_exit_plan(signal):
         return []
 
     exits: list[ExitOrder] = []
-    if signal.stop_loss_pct is not None:
+    if signal.stop_loss_price is not None:
+        exits.append(ExitOrder(kind="stop_loss", trigger_price=_money(signal.stop_loss_price)))
+    elif signal.stop_loss_pct is not None:
         stop_direction = Decimal("-1") if signal.side == "buy" else Decimal("1")
         trigger = signal.price * (Decimal("1") + stop_direction * signal.stop_loss_pct / Decimal("100"))
         exits.append(ExitOrder(kind="stop_loss", trigger_price=_money(trigger)))
     if signal.take_profit_targets:
         for target in signal.take_profit_targets:
-            profit_direction = Decimal("1") if signal.side == "buy" else Decimal("-1")
-            trigger = signal.price * (Decimal("1") + profit_direction * target.pct / Decimal("100"))
+            if target.trigger_price is not None:
+                trigger = target.trigger_price
+            else:
+                profit_direction = Decimal("1") if signal.side == "buy" else Decimal("-1")
+                trigger = signal.price * (Decimal("1") + profit_direction * (target.pct or Decimal("0")) / Decimal("100"))
             exits.append(
                 ExitOrder(
                     kind="take_profit",
@@ -563,7 +599,9 @@ def build_exit_orders(signal: CryptoSignal) -> list[ExitOrder]:
 def _has_exit_plan(signal: CryptoSignal) -> bool:
     return (
         signal.stop_loss_pct is not None
+        or signal.stop_loss_price is not None
         or bool(signal.take_profit_targets)
+        or signal.take_profit_price is not None
         or signal.trailing_stop_pct is not None
         or signal.breakeven_trigger_pct is not None
     )
@@ -610,5 +648,6 @@ def _paper_order_from_dict(payload: dict) -> PaperOrder:
         breakeven_trigger_pct=Decimal(str(payload["breakeven_trigger_pct"]))
         if payload.get("breakeven_trigger_pct") is not None
         else None,
+        reduce_only=bool(payload.get("reduce_only", False)),
         status=str(payload.get("status") or "accepted"),
     )

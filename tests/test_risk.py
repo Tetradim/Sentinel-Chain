@@ -190,6 +190,90 @@ def test_risk_rejects_wide_stop_or_weak_reward_risk():
     assert "min_reward_risk_ratio_not_met" in decision.reason_codes
 
 
+def test_risk_applies_stop_width_and_reward_ratio_to_absolute_bracket_prices():
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_price": "94",
+            "take_profit_price": "108",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(
+        signal,
+        RiskConfig(max_stop_loss_pct=Decimal("5"), min_reward_risk_ratio=Decimal("2")),
+        AccountState(),
+    )
+
+    assert decision.approved is False
+    assert "max_stop_loss_pct_exceeded" in decision.reason_codes
+    assert "min_reward_risk_ratio_not_met" in decision.reason_codes
+
+
+def test_risk_rejects_inverted_absolute_bracket_prices():
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "sell",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_price": "95",
+            "take_profit_price": "105",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(signal, RiskConfig(require_stop_loss=True), AccountState())
+
+    assert decision.approved is False
+    assert "invalid_stop_loss_price" in decision.reason_codes
+    assert "invalid_take_profit_price" in decision.reason_codes
+
+
+def test_risk_treats_reduce_only_close_as_non_opening_even_without_stop_loss():
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "close_short",
+            "base_amount": "1",
+            "price": "95",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(
+        signal,
+        RiskConfig(require_stop_loss=True, max_open_notional=Decimal("100")),
+        AccountState(open_notional=Decimal("100")),
+    )
+
+    assert decision.approved is True
+    assert decision.reason_codes == []
+
+
+def test_risk_ignores_bracket_fields_on_reduce_only_close():
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "close_short",
+            "base_amount": "1",
+            "price": "95",
+            "stop_loss_price": "105",
+            "take_profit_price": "90",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(signal, RiskConfig(require_stop_loss=True), AccountState())
+
+    assert decision.approved is True
+    assert decision.reason_codes == []
+
+
 def test_risk_rejects_wide_trailing_stop_or_activation_without_trailing_stop():
     wide_trailing_signal = normalize_signal(
         {
