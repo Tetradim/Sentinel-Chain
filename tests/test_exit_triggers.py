@@ -225,6 +225,43 @@ def test_trailing_stop_ratcheted_up_then_triggers_on_pullback():
     assert exchange.list_positions()[0]["realized_pnl"] == "4.50000000"
 
 
+def test_partial_trailing_stop_reduces_long_lot_and_keeps_other_exits():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "partial-trailing-entry",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "10",
+            "take_profit_pct": "20",
+            "trailing_stop_pct": "5",
+            "trailing_stop_close_pct": "40",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    exchange.update_price("BTC/USDT", Decimal("110"))
+    triggered = exchange.update_price("BTC/USDT", Decimal("104.50"))
+    remaining_exits = [exit_order.kind for exit_order in exchange.lots[0].exit_orders]
+    after_partial = exchange.list_positions()[0]
+    final = exchange.update_price("BTC/USDT", Decimal("120"))
+
+    assert triggered == [
+        {"symbol": "BTC/USDT", "kind": "trailing_stop", "price": "104.50000000", "quantity": "0.40000000"}
+    ]
+    assert exchange.orders[-2].exit_orders[0].close_pct == Decimal("40")
+    assert remaining_exits == ["stop_loss", "take_profit"]
+    assert after_partial["quantity"] == "0.60000000"
+    assert final == [
+        {"symbol": "BTC/USDT", "kind": "take_profit", "price": "120.00000000", "quantity": "0.60000000"}
+    ]
+    assert exchange.list_positions()[0]["realized_pnl"] == "13.80000000"
+
+
 def test_paper_bracket_time_exit_closes_after_max_hold_marks():
     exchange = PaperExchange()
     engine = TradingEngine(exchange=exchange)
@@ -1060,6 +1097,42 @@ def test_short_trailing_stop_ratcheted_down_then_triggers_on_bounce():
     ]
     assert exchange.orders[-1].side == "buy"
     assert exchange.orders[-1].reduce_only is True
+
+
+def test_partial_trailing_stop_reduces_short_lot_and_keeps_other_exits():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "partial-short-trail",
+            "symbol": "ETH/USDT",
+            "side": "short",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "10",
+            "take_profit_pct": "20",
+            "trailing_stop_pct": "5",
+            "trailing_stop_close_pct": "25",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    exchange.update_price("ETH/USDT", Decimal("90"))
+    triggered = exchange.update_price("ETH/USDT", Decimal("94.50"))
+    remaining_exits = [exit_order.kind for exit_order in exchange.lots[0].exit_orders]
+    after_partial = exchange.list_positions()[0]
+    final = exchange.update_price("ETH/USDT", Decimal("80"))
+
+    assert triggered == [
+        {"symbol": "ETH/USDT", "kind": "trailing_stop", "price": "94.50000000", "quantity": "0.25000000"}
+    ]
+    assert remaining_exits == ["stop_loss", "take_profit"]
+    assert after_partial["quantity"] == "-0.75000000"
+    assert final == [
+        {"symbol": "ETH/USDT", "kind": "take_profit", "price": "80.00000000", "quantity": "0.75000000"}
+    ]
+    assert exchange.list_positions()[0]["realized_pnl"] == "16.37500000"
 
 
 def test_amend_long_trailing_stop_tightens_and_arms_pending_trail():

@@ -314,6 +314,8 @@ class PaperExchange:
                     breakeven_amended = self._apply_take_profit_breakeven(lot)
                 else:
                     breakeven_amended = False
+                if exit_order.kind == "trailing_stop" and lot.remaining_quantity > 0:
+                    lot.exit_orders = [order for order in lot.exit_orders if order is not exit_order]
                 canceled_exit_orders = self._canceled_sibling_exits(lot, exit_order)
                 if lot.remaining_quantity <= 0:
                     lot.exit_orders = []
@@ -1097,7 +1099,7 @@ class PaperExchange:
         return True
 
     def _exit_quantity(self, lot: PaperLot, exit_order: ExitOrder) -> Decimal:
-        if exit_order.kind != "take_profit":
+        if exit_order.kind not in {"take_profit", "trailing_stop"}:
             return lot.remaining_quantity
         target_quantity = lot.original_quantity * exit_order.close_pct / Decimal("100")
         return min(target_quantity, lot.remaining_quantity)
@@ -1286,7 +1288,15 @@ def build_exit_orders(signal: CryptoSignal) -> list[ExitOrder]:
             if signal.trailing_activation_pct is not None or signal.trailing_activation_price is not None
             else "open"
         )
-        exits.append(ExitOrder(kind="trailing_stop", trigger_price=_money(trigger), oca_group=oca_group, status=status))
+        exits.append(
+            ExitOrder(
+                kind="trailing_stop",
+                trigger_price=_money(trigger),
+                close_pct=signal.trailing_stop_close_pct,
+                oca_group=oca_group,
+                status=status,
+            )
+        )
     if signal.max_hold_marks is not None:
         exits.append(
             ExitOrder(

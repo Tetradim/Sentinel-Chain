@@ -24,6 +24,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Links paper bracket exit legs with OCA-style groups and records which sibling stop, take-profit, or trailing legs are canceled when a final paper exit closes the lot
 - Marks activation-gated trailing stops as `pending_activation` until price movement arms them, then records triggered paper exits as `filled` reduce-only close orders
 - Supports paper trailing stops by percentage callback or fixed quote-distance amount, plus either percentage or absolute-price activation gates
+- Supports partial paper trailing-stop reductions with `trailing_stop_close_pct`, leaving the remaining simulated lot under its other bracket exits
 - Supports paper trailing-step controls so trailing stops only ratchet after a minimum trigger improvement instead of every favorable tick
 - Supports optional paper breakeven-after-take-profit brackets so the remaining stop/trailing legs lock at entry after a staged target fills
 - Supports paper time-stop exits with `max_hold_marks`/`time_stop_marks` so a bracket can close after a fixed number of market-price marks when no price exit fired
@@ -190,6 +191,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/webhooks/tradingview -
   ],
   "trailing_stop_pct": "2.5",
   "trailing_stop_price": "48750",
+  "trailing_stop_close_pct": "40",
   "trailing_activation_price": "50750",
   "breakeven_trigger_pct": "2",
   "strategy_id": "breakout"
@@ -211,11 +213,11 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/market/price -ContentT
 }'
 ```
 
-For buy brackets, `stop_loss_pct` creates a fixed protective sell below entry, `take_profit_pct` creates a fixed profit-taking sell above entry, and `trailing_stop_pct` creates a sell stop that starts below entry and ratchets upward when `POST /market/price` marks a new high-water price. Use `trailing_stop_amount` or `trail_amount` when the trail should stay a fixed quote-currency distance behind the high-water mark instead of a percentage. Use `stop_loss_price`, `take_profit_price`, and `trailing_stop_price` when the alert source already calculated exact initial trigger prices. `trailing_stop_price` sets only the starting paper trigger; `trailing_stop_pct` or `trailing_stop_amount` still controls the ratchet distance after favorable marks. The trailing stop never moves lower. Add `trailing_step_pct`, `trail_step_pct`, `trailing_step_amount`, or `trail_step_amount` to require the next synthetic trailing trigger to improve by at least that percentage or quote-currency distance before the paper stop ratchets. Add `trailing_activation_pct` to keep the trailing leg dormant until price has moved favorably by that percent, or `trailing_activation_price`, `trail_activation_price`, or `activation_price` to arm it at an exact favorable mark. Add `breakeven_trigger_pct` to move protective stop exits up to the entry price after a favorable move. Add `breakeven_after_take_profit: true` when staged take-profit fills should automatically move remaining protective stop-loss and trailing-stop legs to the paper entry price. Add `max_hold_marks` or `time_stop_marks` to close the paper bracket at the current mark after that many `POST /market/price` updates if stop-loss, take-profit, and trailing-stop exits have not already closed it.
+For buy brackets, `stop_loss_pct` creates a fixed protective sell below entry, `take_profit_pct` creates a fixed profit-taking sell above entry, and `trailing_stop_pct` creates a sell stop that starts below entry and ratchets upward when `POST /market/price` marks a new high-water price. Use `trailing_stop_amount` or `trail_amount` when the trail should stay a fixed quote-currency distance behind the high-water mark instead of a percentage. Use `stop_loss_price`, `take_profit_price`, and `trailing_stop_price` when the alert source already calculated exact initial trigger prices. `trailing_stop_price` sets only the starting paper trigger; `trailing_stop_pct` or `trailing_stop_amount` still controls the ratchet distance after favorable marks. The trailing stop never moves lower. Add `trailing_stop_close_pct` or `trail_close_pct` below `100` when the trailing leg should reduce only part of the original paper lot; after that simulated partial fill, the remaining quantity keeps its other open stop-loss and take-profit exits. Add `trailing_step_pct`, `trail_step_pct`, `trailing_step_amount`, or `trail_step_amount` to require the next synthetic trailing trigger to improve by at least that percentage or quote-currency distance before the paper stop ratchets. Add `trailing_activation_pct` to keep the trailing leg dormant until price has moved favorably by that percent, or `trailing_activation_price`, `trail_activation_price`, or `activation_price` to arm it at an exact favorable mark. Add `breakeven_trigger_pct` to move protective stop exits up to the entry price after a favorable move. Add `breakeven_after_take_profit: true` when staged take-profit fills should automatically move remaining protective stop-loss and trailing-stop legs to the paper entry price. Add `max_hold_marks` or `time_stop_marks` to close the paper bracket at the current mark after that many `POST /market/price` updates if stop-loss, take-profit, and trailing-stop exits have not already closed it.
 
-For short brackets, send `side: "sell"` or `side: "short"` with at least one exit field such as `stop_loss_pct`, `stop_loss_price`, `take_profit_pct`, `take_profit_price`, `trailing_stop_pct`, `trailing_stop_amount`, or `max_hold_marks`. Paper stop-loss and trailing-stop triggers sit above entry, paper take-profit triggers sit below entry, time stops close at the current paper mark, and exit orders buy back paper quantity. Short trailing stops track a low-water price and ratchet downward only after favorable price movement; `trailing_activation_pct` delays arming until price falls by that percent, while `trailing_activation_price` arms at an exact lower mark. A plain `SELL` without bracket fields remains a manual long close. Send `side: "close_short"` or `reduce_only: true` with `side: "buy"` to buy back paper short quantity without opening a new paper long.
+For short brackets, send `side: "sell"` or `side: "short"` with at least one exit field such as `stop_loss_pct`, `stop_loss_price`, `take_profit_pct`, `take_profit_price`, `trailing_stop_pct`, `trailing_stop_amount`, or `max_hold_marks`. Paper stop-loss and trailing-stop triggers sit above entry, paper take-profit triggers sit below entry, time stops close at the current paper mark, and exit orders buy back paper quantity. Short trailing stops track a low-water price and ratchet downward only after favorable price movement; `trailing_stop_close_pct` partially buys back the simulated short lot, `trailing_activation_pct` delays arming until price falls by that percent, and `trailing_activation_price` arms at an exact lower mark. A plain `SELL` without bracket fields remains a manual long close. Send `side: "close_short"` or `reduce_only: true` with `side: "buy"` to buy back paper short quantity without opening a new paper long.
 
-Every paper bracket leg now carries an `oca_group` and `status` in order JSON and active-exit snapshots. Activation-gated trailing stops start as `pending_activation`, move to `open` when the favorable activation mark is reached, and are recorded as `filled` on the synthetic paper exit order that closes quantity. When a stop-loss, trailing-stop, or final take-profit closes the remaining paper lot, the synthetic exit order is marked `reduce_only: true` and includes `exit_kind`, the filled exit leg, plus `canceled_exit_orders` so tests and operators can see which sibling legs would have been canceled in one-cancels-other behavior. This is still paper accounting only; no live OCO or exchange-native bracket order is submitted.
+Every paper bracket leg now carries an `oca_group` and `status` in order JSON and active-exit snapshots. Activation-gated trailing stops start as `pending_activation`, move to `open` when the favorable activation mark is reached, and are recorded as `filled` on the synthetic paper exit order that closes quantity. A partial trailing stop records its configured `close_pct`, removes that triggered trailing leg from the remaining lot, and leaves sibling synthetic exits active. When a stop-loss, full trailing-stop, or final take-profit closes the remaining paper lot, the synthetic exit order is marked `reduce_only: true` and includes `exit_kind`, the filled exit leg, plus `canceled_exit_orders` so tests and operators can see which sibling legs would have been canceled in one-cancels-other behavior. This is still paper accounting only; no live OCO or exchange-native bracket order is submitted.
 
 Paper time stops appear as `time_exit` legs with `status: "waiting"` in previews, bracket listings, and backtest snapshots. Active snapshots include `max_hold_marks`, `marks_seen`, and `marks_remaining`. When the count reaches zero, Auto-Crypto records a reduce-only `time_exit` close order at the supplied mark and cancels sibling synthetic exits in the same paper OCA group. This is intended for backtesting and operator review of stale-entry rules; it does not schedule a wall-clock order or submit live exchange instructions.
 
@@ -298,6 +300,7 @@ Bracket fields may be sent at the top level or grouped under `bracket`, `bracket
     "stop_loss_pct": "5",
     "take_profit_pct": "10",
     "trailing_stop_amount": "4",
+    "trailing_stop_close_pct": "50",
     "trailing_activation_price": "96",
     "breakeven_trigger_pct": "1.5",
     "breakeven_after_take_profit": true
@@ -361,6 +364,7 @@ Recommended fields:
 - `trailing_stop_pct`
 - `trailing_stop_amount` or `trail_amount` to trail by a fixed quote-currency distance instead of a percent
 - `trailing_stop_price` or `trail_price` to set the exact initial paper trailing trigger while `trailing_stop_pct` or `trailing_stop_amount` controls later ratchets
+- `trailing_stop_close_pct` or `trail_close_pct` to make the paper trailing leg reduce only part of the original bracket quantity
 - `trailing_step_pct`, `trail_step_pct`, `trailing_step_amount`, or `trail_step_amount` to reduce trailing-stop churn by requiring a minimum trigger improvement before ratcheting
 - `trailing_activation_pct` or `trail_activation_pct`
 - `trailing_activation_price`, `trail_activation_price`, or `activation_price`
@@ -392,7 +396,9 @@ Risk checks run before paper execution:
 - `max_trailing_stop_pct_exceeded`
 - `trailing_stop_required_for_activation`
 - `trailing_stop_required_for_step`
+- `trailing_stop_required_for_close_pct`
 - `trailing_stop_pct_required_for_price`
+- `invalid_trailing_stop_close_pct`
 - `invalid_trailing_stop_price`
 - `price_required_for_trailing_stop_price`
 - `invalid_trailing_activation_price`

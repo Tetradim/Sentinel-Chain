@@ -39,6 +39,7 @@ class CryptoSignal:
     trailing_stop_pct: Decimal | None = None
     trailing_stop_amount: Decimal | None = None
     trailing_stop_price: Decimal | None = None
+    trailing_stop_close_pct: Decimal = Decimal("100")
     trailing_step_pct: Decimal | None = None
     trailing_step_amount: Decimal | None = None
     trailing_activation_pct: Decimal | None = None
@@ -104,6 +105,10 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
     trailing_stop_price = _optional_positive_decimal(
         _field(payload, bracket, "trailing_stop_price", "trail_price")
     )
+    trailing_stop_close_pct = (
+        _optional_positive_decimal(_field(payload, bracket, "trailing_stop_close_pct", "trail_close_pct"))
+        or Decimal("100")
+    )
     trailing_step_pct = _optional_positive_decimal(_field(payload, bracket, "trailing_step_pct", "trail_step_pct"))
     trailing_step_amount = _optional_positive_decimal(
         _field(payload, bracket, "trailing_step_amount", "trail_step_amount")
@@ -152,6 +157,7 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         "trailing_stop_pct": str(trailing_stop_pct) if trailing_stop_pct is not None else None,
         "trailing_stop_amount": str(trailing_stop_amount) if trailing_stop_amount is not None else None,
         "trailing_stop_price": str(trailing_stop_price) if trailing_stop_price is not None else None,
+        "trailing_stop_close_pct": str(trailing_stop_close_pct),
         "trailing_step_pct": str(trailing_step_pct) if trailing_step_pct is not None else None,
         "trailing_step_amount": str(trailing_step_amount) if trailing_step_amount is not None else None,
         "trailing_activation_pct": str(trailing_activation_pct) if trailing_activation_pct is not None else None,
@@ -188,6 +194,7 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         trailing_stop_pct=trailing_stop_pct,
         trailing_stop_amount=trailing_stop_amount,
         trailing_stop_price=trailing_stop_price,
+        trailing_stop_close_pct=trailing_stop_close_pct,
         trailing_step_pct=trailing_step_pct,
         trailing_step_amount=trailing_step_amount,
         trailing_activation_pct=trailing_activation_pct,

@@ -182,6 +182,25 @@ def test_normalizes_trailing_step_controls_from_nested_bracket():
     assert signal.trailing_step_amount == Decimal("0.50")
 
 
+def test_normalizes_trailing_stop_close_pct_from_nested_bracket():
+    signal = normalize_signal(
+        {
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "bracket": {
+                "stop_loss_pct": "5",
+                "trailing_stop_pct": "4",
+                "trail_close_pct": "50",
+            },
+        },
+        source="test",
+    )
+
+    assert signal.trailing_stop_close_pct == Decimal("50")
+
+
 @pytest.mark.parametrize(
     "payload",
     [
