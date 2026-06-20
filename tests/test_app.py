@@ -568,3 +568,79 @@ def test_bracket_risk_summary_aggregates_long_short_and_trailing_counts():
         "total_target_reward": "30.00",
     }
     assert [row["symbol"] for row in summary["by_symbol"]] == ["BTC/USDT", "ETH/USDT"]
+
+
+def test_bracket_exit_ladder_reports_staged_and_partial_trailing_quantities():
+    app = create_app()
+    client = TestClient(app)
+
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "ladder-long",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_targets": [
+                {"pct": "5", "close_pct": "50"},
+                {"pct": "10", "close_pct": "50"},
+            ],
+            "trailing_stop_pct": "4",
+            "trailing_stop_close_pct": "25",
+        },
+    )
+
+    response = client.get("/brackets/ladder-long/exit-ladder?mark_price=101")
+
+    assert response.status_code == 200
+    body = response.json()
+    ladder = body["ladders"][0]
+    assert ladder["remaining_notional"] == "100"
+    assert ladder["full_close_count"] == 1
+    assert ladder["partial_close_count"] == 3
+    assert [(row["kind"], row["trigger_price"], row["estimated_exit_quantity"]) for row in ladder["rows"]] == [
+        ("stop_loss", "95.00", "1"),
+        ("trailing_stop", "96.00", "0.25"),
+        ("take_profit", "105.00", "0.5"),
+        ("take_profit", "110.00", "0.5"),
+    ]
+    assert ladder["rows"][0]["intent"] == "protective_exit"
+    assert ladder["rows"][0]["estimated_pnl"] == "-5.00"
+    assert ladder["rows"][2]["intent"] == "profit_exit"
+    assert ladder["rows"][2]["estimated_pnl"] == "2.500"
+    assert ladder["rows"][2]["distance_to_trigger"] == "4.00"
+
+
+def test_short_bracket_exit_ladder_uses_buyback_pnl_direction():
+    app = create_app()
+    client = TestClient(app)
+
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "ladder-short",
+            "symbol": "ETHUSDT",
+            "side": "short",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+            "max_hold_marks": 2,
+        },
+    )
+
+    response = client.get("/brackets/ladder-short/exit-ladder?mark_price=98")
+
+    assert response.status_code == 200
+    rows = response.json()["ladders"][0]["rows"]
+    assert [(row["kind"], row["trigger_price"], row["intent"]) for row in rows] == [
+        ("stop_loss", "105.00", "protective_exit"),
+        ("take_profit", "90.00", "profit_exit"),
+        ("time_exit", "100.00", "staleness_exit"),
+    ]
+    assert rows[0]["estimated_pnl"] == "-5.00"
+    assert rows[1]["estimated_pnl"] == "10.00"
+    assert rows[1]["distance_to_trigger"] == "8.00"
+    assert rows[2]["marks_remaining"] == 2

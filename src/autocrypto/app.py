@@ -369,6 +369,29 @@ def create_app(
             raise HTTPException(status_code=404, detail="active bracket not found")
         return {"signal_id": signal_id, "summary": _bracket_summary(lots[0]), "active_exits": exits}
 
+    @app.get("/brackets/{signal_id}/exit-ladder")
+    def bracket_exit_ladder(signal_id: str, mark_price: str | None = None) -> dict[str, Any]:
+        lots = [
+            lot
+            for lot in engine.exchange.lots
+            if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
+        ]
+        if not lots:
+            raise HTTPException(status_code=404, detail="active bracket not found")
+        parsed_mark_price: Decimal | None = None
+        if mark_price not in (None, ""):
+            try:
+                parsed_mark_price = _positive_decimal(mark_price)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            "signal_id": signal_id,
+            "symbol": lots[0].symbol,
+            "direction": lots[0].direction,
+            "mark_price": str(parsed_mark_price) if parsed_mark_price is not None else None,
+            "ladders": [_bracket_exit_ladder_to_dict(lot, mark_price=parsed_mark_price) for lot in lots],
+        }
+
     @app.post("/brackets/{signal_id}/preview")
     async def bracket_preview(signal_id: str, request: Request) -> dict[str, Any]:
         payload = await request.json()
@@ -1393,6 +1416,95 @@ def _active_brackets_to_dict(lots: list[Any]) -> list[dict[str, Any]]:
             }
         )
     return brackets
+
+
+def _bracket_exit_ladder_to_dict(lot: Any, *, mark_price: Decimal | None = None) -> dict[str, Any]:
+    ordered_exits = sorted(lot.exit_orders, key=lambda exit_order: _exit_ladder_sort_key(lot, exit_order))
+    rows = [
+        _exit_ladder_row(lot, exit_order, trigger_order=index + 1, mark_price=mark_price)
+        for index, exit_order in enumerate(ordered_exits)
+    ]
+    return {
+        "signal_id": lot.signal_id,
+        "symbol": lot.symbol,
+        "direction": lot.direction,
+        "entry_price": str(lot.entry_price),
+        "remaining_quantity": str(lot.remaining_quantity),
+        "remaining_notional": _decimal_to_plain(lot.remaining_quantity * lot.entry_price),
+        "exit_count": len(rows),
+        "full_close_count": sum(1 for row in rows if row["would_close_remaining"]),
+        "partial_close_count": sum(1 for row in rows if not row["would_close_remaining"]),
+        "rows": rows,
+    }
+
+
+def _exit_ladder_row(
+    lot: Any,
+    exit_order: Any,
+    *,
+    trigger_order: int,
+    mark_price: Decimal | None,
+) -> dict[str, Any]:
+    quantity = _exit_ladder_quantity(lot, exit_order)
+    estimated_notional = quantity * exit_order.trigger_price
+    estimated_pnl = _exit_ladder_pnl(lot, exit_order, quantity)
+    distance = _exit_distance(lot, exit_order, mark_price) if mark_price is not None else None
+    return {
+        "trigger_order": trigger_order,
+        "kind": exit_order.kind,
+        "intent": _exit_ladder_intent(exit_order),
+        "status": exit_order.status,
+        "trigger_price": str(exit_order.trigger_price),
+        "close_pct": str(exit_order.close_pct),
+        "estimated_exit_quantity": _decimal_to_plain(quantity),
+        "estimated_exit_notional": _decimal_to_plain(estimated_notional),
+        "estimated_pnl": _decimal_to_plain(estimated_pnl),
+        "estimated_pnl_pct": _decimal_to_plain(estimated_pnl / (quantity * lot.entry_price) * Decimal("100"))
+        if quantity > 0 and lot.entry_price > 0
+        else None,
+        "would_close_remaining": quantity >= lot.remaining_quantity,
+        "oca_group": exit_order.oca_group,
+        "distance_to_trigger": str(distance) if distance is not None else None,
+        "distance_to_trigger_pct": str(distance / mark_price * Decimal("100"))
+        if distance is not None and mark_price is not None and mark_price > 0
+        else None,
+        "trailing_activation_price": str(_lot_trailing_activation_price(lot))
+        if exit_order.kind == "trailing_stop" and _lot_trailing_activation_price(lot) is not None
+        else None,
+        "marks_remaining": max(lot.max_hold_marks - lot.marks_seen, 0)
+        if exit_order.kind == "time_exit" and lot.max_hold_marks is not None
+        else None,
+    }
+
+
+def _exit_ladder_quantity(lot: Any, exit_order: Any) -> Decimal:
+    if exit_order.kind not in {"take_profit", "trailing_stop"}:
+        return lot.remaining_quantity
+    target_quantity = lot.original_quantity * exit_order.close_pct / Decimal("100")
+    return min(target_quantity, lot.remaining_quantity)
+
+
+def _exit_ladder_pnl(lot: Any, exit_order: Any, quantity: Decimal) -> Decimal:
+    if lot.direction == "long":
+        return (exit_order.trigger_price - lot.entry_price) * quantity
+    return (lot.entry_price - exit_order.trigger_price) * quantity
+
+
+def _exit_ladder_intent(exit_order: Any) -> str:
+    if exit_order.kind in {"stop_loss", "trailing_stop"}:
+        return "protective_exit"
+    if exit_order.kind == "take_profit":
+        return "profit_exit"
+    if exit_order.kind == "time_exit":
+        return "staleness_exit"
+    return "conditional_exit"
+
+
+def _exit_ladder_sort_key(lot: Any, exit_order: Any) -> tuple[int, Decimal, str]:
+    if exit_order.kind == "time_exit":
+        return (1, Decimal("0"), exit_order.kind)
+    price_key = exit_order.trigger_price if lot.direction == "long" else -exit_order.trigger_price
+    return (0, price_key, exit_order.kind)
 
 
 def _bracket_risk_summary(lots: list[Any]) -> dict[str, Any]:

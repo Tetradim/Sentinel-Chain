@@ -32,6 +32,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Supports protective stop, trailing-stop, take-profit, and manual breakeven amendments; protective exits only tighten risk and take-profit targets only move farther into profit
 - Supports paper-only bracket close-by-signal controls that flatten or partially reduce the selected simulated bracket at an operator-supplied mark or at the current nearest protective trigger
 - Previews one active bracket by signal ID at a hypothetical mark, including trigger distance and trailing activation context
+- Shows a paper bracket exit ladder by signal ID with trigger order, estimated close quantity, estimated notional, estimated P&L, and optional mark-distance math for each stop, trailing, take-profit, or time-stop leg
 - Cancels active synthetic paper bracket exits by signal ID while leaving the underlying paper position open for separate manual management
 - Previews hypothetical market-price marks and bracket/trailing exits without mutating paper orders or positions, including simulated post-mark trailing-stop ratchets
 - Previews server-side risk decisions from the operator UI without placing orders
@@ -229,6 +230,8 @@ Invoke-RestMethod http://127.0.0.1:8004/brackets
 
 Invoke-RestMethod http://127.0.0.1:8004/brackets/btc-breakout-001
 
+Invoke-RestMethod "http://127.0.0.1:8004/brackets/btc-breakout-001/exit-ladder?mark_price=50600"
+
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/brackets/btc-breakout-001/preview -ContentType "application/json" -Body '{
   "price": "50600"
 }'
@@ -268,6 +271,8 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/brackets/btc-breakout-
 ```
 
 `POST /brackets/{signal_id}/preview` is signal-specific and paper-only. It runs the hypothetical mark against a deep copy of the selected paper bracket, returns only exits that would trigger for that bracket, and includes `distance_to_trigger`, `distance_to_trigger_pct`, and `trailing_activation_price` in the active-exit snapshot. It does not create orders, update P&L, record audit events, or mutate trailing stops on the active engine.
+
+`GET /brackets/{signal_id}/exit-ladder` is also signal-specific and paper-only. It lists the bracket's synthetic exits in the direction they would be encountered by price, including each leg's intent, status, `close_pct`, estimated close quantity, estimated trigger notional, estimated P&L, and whether that leg would close the remaining paper lot. Add `?mark_price=...` to include current distance-to-trigger values without mutating trailing stops or recording any order.
 
 Stop amendments are paper-only bracket maintenance events. A long bracket stop can only move upward, and a short bracket stop can only move downward. Attempts to loosen the stop return `409` and leave the bracket unchanged. Successful amendments record a synthetic `bracket_stop_amend` paper order plus a `bracket.stop_amended` audit event when SQLite persistence is configured, and those amendments replay after restart.
 
