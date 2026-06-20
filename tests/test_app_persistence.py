@@ -286,3 +286,42 @@ def test_app_replays_breakeven_amendment_after_restart(tmp_path):
     assert triggered.json()["triggered"] == [
         {"symbol": "SOL/USDT", "kind": "stop_loss", "price": "100.00000000", "quantity": "1.00000000"}
     ]
+
+
+def test_app_closes_bracket_with_audit_and_replays_after_restart(tmp_path):
+    db_path = tmp_path / "bracket_close_replay.sqlite3"
+    first_client = TestClient(create_app(repository=SQLiteRepository(db_path)))
+    first_client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "replay-close-bracket",
+            "symbol": "SOLUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+            "trailing_stop_pct": "4",
+        },
+    )
+
+    closed = first_client.post(
+        "/brackets/replay-close-bracket/close",
+        json={"price": "106", "reason": "operator flattened risk"},
+    )
+    second_client = TestClient(create_app(repository=SQLiteRepository(db_path)))
+    brackets = second_client.get("/brackets").json()["brackets"]
+    positions = second_client.get("/positions").json()["positions"]
+    repo = SQLiteRepository(db_path)
+
+    assert closed.status_code == 200
+    assert closed.json()["status"] == "closed"
+    assert closed.json()["order"]["side"] == "sell"
+    assert closed.json()["order"]["reduce_only"] is True
+    assert closed.json()["order"]["exit_kind"] == "bracket_manual_close"
+    assert closed.json()["realized_pnl_delta"] == "6"
+    assert brackets == []
+    assert positions[0]["quantity"] == "0.00000000"
+    assert positions[0]["realized_pnl"] == "6.00000000"
+    assert repo.list_orders()[-1]["exit_kind"] == "bracket_manual_close"
+    assert repo.list_audit()[-1].event_type == "bracket.closed"

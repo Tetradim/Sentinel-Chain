@@ -534,6 +534,73 @@ def test_cancel_bracket_removes_exits_without_closing_position():
     assert exchange.active_exits == {}
 
 
+def test_close_bracket_closes_long_lot_and_cancels_synthetic_exits():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "close-long-bracket",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+            "trailing_stop_pct": "4",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    order = exchange.close_bracket("close-long-bracket", Decimal("107"), reason="operator close")
+    triggered = exchange.update_price("BTC/USDT", Decimal("110"))
+    position = exchange.list_positions()[0]
+
+    assert order is not None
+    assert order.side == "sell"
+    assert order.reduce_only is True
+    assert order.exit_kind == "bracket_manual_close"
+    assert order.exit_orders[0].kind == "manual_close"
+    assert order.exit_orders[0].status == "filled"
+    assert [(exit_order.kind, exit_order.status) for exit_order in order.canceled_exit_orders] == [
+        ("stop_loss", "canceled"),
+        ("take_profit", "canceled"),
+        ("trailing_stop", "canceled"),
+    ]
+    assert triggered == []
+    assert position["quantity"] == "0.00000000"
+    assert position["realized_pnl"] == "7.00000000"
+    assert exchange.active_exits == {}
+
+
+def test_close_bracket_closes_short_lot_with_buy_reduce_only_order():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "close-short-bracket",
+            "symbol": "ETH/USDT",
+            "side": "short",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    order = exchange.close_bracket("close-short-bracket", Decimal("94"), reason="operator close")
+    position = exchange.list_positions()[0]
+
+    assert order is not None
+    assert order.side == "buy"
+    assert order.reduce_only is True
+    assert order.notional == Decimal("94")
+    assert position["quantity"] == "0.00000000"
+    assert position["realized_pnl"] == "6.00000000"
+
+
 def test_amend_long_bracket_stop_tightens_but_does_not_loosen():
     exchange = PaperExchange()
     engine = TradingEngine(exchange=exchange)

@@ -395,6 +395,74 @@ class PaperExchange:
         self._refresh_active_exits(first_lot.symbol)
         return order
 
+    def close_bracket(self, signal_id: str, price: Decimal, *, reason: str = "") -> PaperOrder | None:
+        """Close a paper bracket lot at the supplied mark and cancel remaining synthetic exits."""
+        target_lots = [
+            lot
+            for lot in self.lots
+            if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
+        ]
+        if not target_lots:
+            return None
+
+        first_lot = target_lots[0]
+        if any(lot.symbol != first_lot.symbol or lot.direction != first_lot.direction for lot in target_lots):
+            return None
+
+        exit_side = "sell" if first_lot.direction == "long" else "buy"
+        fill_price = self._fill_price(exit_side, price)
+        if fill_price is None:
+            return None
+
+        closed_quantity = Decimal("0")
+        exit_fee_total = Decimal("0")
+        oca_group = first_lot.exit_orders[0].oca_group if first_lot.exit_orders else None
+        canceled_exit_orders: list[ExitOrder] = []
+        for lot in target_lots:
+            exit_quantity = lot.remaining_quantity
+            exit_fee = self._fill_fee(exit_quantity, fill_price)
+            closed_quantity += exit_quantity
+            exit_fee_total += exit_fee
+            manual_exit = ExitOrder(
+                kind="manual_close",
+                trigger_price=_money(fill_price),
+                close_pct=Decimal("100"),
+                oca_group=lot.exit_orders[0].oca_group if lot.exit_orders else None,
+            )
+            self._close_lot(lot, fill_price, exit_quantity, exit_fee)
+            canceled_exit_orders.extend(self._canceled_sibling_exits(lot, manual_exit))
+            lot.exit_orders = []
+
+        self.lots = [lot for lot in self.lots if lot.remaining_quantity > 0]
+        order = PaperOrder(
+            order_id=f"paper-close-{_order_fragment(signal_id)}-{len(self.orders) + 1}",
+            signal_id=signal_id,
+            mode="paper",
+            exchange="paper",
+            symbol=first_lot.symbol,
+            side=exit_side,
+            notional=closed_quantity * fill_price,
+            price=fill_price,
+            exit_orders=[
+                ExitOrder(
+                    kind="manual_close",
+                    trigger_price=_money(fill_price),
+                    close_pct=Decimal("100"),
+                    oca_group=oca_group,
+                    status="filled",
+                )
+            ],
+            exit_kind="bracket_manual_close",
+            canceled_exit_orders=canceled_exit_orders,
+            reduce_only=True,
+            fee=exit_fee_total,
+            fee_bps=self.costs.fee_bps,
+            slippage_bps=self.costs.slippage_bps,
+        )
+        self.orders.append(order)
+        self._refresh_active_exits(first_lot.symbol)
+        return order
+
     def amend_bracket_stop(self, signal_id: str, trigger_price: Decimal, *, reason: str = "") -> PaperOrder | None:
         """Move a paper bracket stop in the protective direction only."""
         target_lots = [
@@ -881,7 +949,7 @@ class PaperExchange:
                 status="canceled",
             )
             for exit_order in lot.exit_orders
-            if exit_order is not triggered_exit and exit_order.status == "open"
+            if exit_order is not triggered_exit and exit_order.status not in {"canceled", "filled"}
         ]
 
     def _sell_quantity(

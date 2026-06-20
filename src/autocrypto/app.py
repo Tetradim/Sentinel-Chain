@@ -544,6 +544,62 @@ def create_app(
             "account": _account_state_to_dict(engine.account_state),
         }
 
+    @app.post("/brackets/{signal_id}/close")
+    async def close_bracket(signal_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        try:
+            price = _positive_decimal(payload.get("price") or payload.get("mark_price"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        reason = str(payload.get("reason") or "manual paper bracket close")
+        lots = [
+            lot
+            for lot in engine.exchange.lots
+            if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
+        ]
+        realized_before = _position_realized_pnl(engine.exchange, lots[0].symbol) if lots else Decimal("0")
+        order = engine.exchange.close_bracket(signal_id, price, reason=reason)
+        if order is None:
+            raise HTTPException(status_code=404, detail="active bracket not found")
+        realized_pnl_delta = _position_realized_pnl(engine.exchange, order.symbol) - realized_before
+        if realized_pnl_delta:
+            engine.account_state.daily_pnl += realized_pnl_delta
+            if realized_pnl_delta < 0:
+                engine.account_state.consecutive_losses += 1
+            elif realized_pnl_delta > 0:
+                engine.account_state.consecutive_losses = 0
+        engine.account_state.open_notional = engine.exchange.open_notional()
+        if repository:
+            repository.save_order(order)
+            repository.record_audit(
+                "bracket.closed",
+                {
+                    "signal_id": signal_id,
+                    "reason": reason,
+                    "price": str(price),
+                    "realized_pnl_delta": str(realized_pnl_delta),
+                    "canceled_exit_orders": [
+                        {
+                            "kind": exit_order.kind,
+                            "trigger_price": str(exit_order.trigger_price),
+                            "close_pct": str(exit_order.close_pct),
+                            "oca_group": exit_order.oca_group,
+                            "status": exit_order.status,
+                        }
+                        for exit_order in order.canceled_exit_orders
+                    ],
+                },
+            )
+        return {
+            "status": "closed",
+            "signal_id": signal_id,
+            "order": order.to_dict(),
+            "active_exits": _active_exits_to_dict(engine.exchange.lots),
+            "realized_pnl_delta": str(realized_pnl_delta),
+            "positions": engine.exchange.list_positions(),
+            "account": _account_state_to_dict(engine.account_state),
+        }
+
     @app.get("/approvals")
     def list_approvals() -> dict[str, Any]:
         return {"pending": intake.list_approvals()}
@@ -927,6 +983,11 @@ def _target_reward(signal: CryptoSignal, notional: Decimal | None, target_exit: 
         return None
     target_notional = notional * target_exit.close_pct / Decimal("100")
     return target_notional * target_distance / signal.price
+
+
+def _position_realized_pnl(exchange: PaperExchange, symbol: str) -> Decimal:
+    position = exchange.positions.get(symbol)
+    return position.realized_pnl if position else Decimal("0")
 
 
 def _planned_trailing_activation_price(signal: CryptoSignal) -> Decimal | None:

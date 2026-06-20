@@ -26,6 +26,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Supports paper trailing stops by percentage callback or fixed quote-distance amount, plus either percentage or absolute-price activation gates
 - Lists all active synthetic paper brackets with remaining-notional, worst-case stop-loss, and first-target reward summaries
 - Supports protective stop, trailing-stop, and manual breakeven amendments that only tighten risk
+- Supports paper-only bracket close-by-signal controls that flatten the selected simulated bracket at an operator-supplied mark and cancel remaining synthetic exits
 - Previews one active bracket by signal ID at a hypothetical mark, including trigger distance and trailing activation context
 - Cancels active synthetic paper bracket exits by signal ID while leaving the underlying paper position open for separate manual management
 - Previews hypothetical market-price marks and bracket/trailing exits without mutating paper orders or positions
@@ -183,7 +184,7 @@ For short brackets, send `side: "sell"` or `side: "short"` with at least one exi
 
 Every paper bracket leg now carries an `oca_group` and `status` in order JSON and active-exit snapshots. Activation-gated trailing stops start as `pending_activation`, move to `open` when the favorable activation mark is reached, and are recorded as `filled` on the synthetic paper exit order that closes quantity. When a stop-loss, trailing-stop, or final take-profit closes the remaining paper lot, the synthetic exit order is marked `reduce_only: true` and includes `exit_kind`, the filled exit leg, plus `canceled_exit_orders` so tests and operators can see which sibling legs would have been canceled in one-cancels-other behavior. This is still paper accounting only; no live OCO or exchange-native bracket order is submitted.
 
-Operators can inspect active paper brackets, tighten protective stops or trailing-stop triggers, move protective exits to breakeven, and cancel active paper brackets by signal ID:
+Operators can inspect active paper brackets, tighten protective stops or trailing-stop triggers, move protective exits to breakeven, close a bracket at an operator-supplied paper mark, and cancel active paper brackets by signal ID:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8004/brackets
@@ -208,6 +209,11 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/brackets/btc-breakout-
   "reason": "operator locked remaining paper risk at entry"
 }'
 
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/brackets/btc-breakout-001/close -ContentType "application/json" -Body '{
+  "price": "52400",
+  "reason": "operator flattened paper bracket before event risk"
+}'
+
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/brackets/btc-breakout-001/cancel -ContentType "application/json" -Body '{
   "reason": "operator replaced exit plan manually"
 }'
@@ -222,6 +228,8 @@ Trailing-stop amendments are also paper-only bracket maintenance events. A long 
 Breakeven amendments are paper-only bracket maintenance events. `POST /brackets/{signal_id}/breakeven` moves open stop-loss and trailing-stop legs to the entry price when doing so tightens risk, records a synthetic `bracket_breakeven` order plus `bracket.breakeven_amended` audit event when SQLite persistence is configured, and replays after restart. If the protective exits are already at or beyond breakeven, the API returns `409` and leaves the bracket unchanged.
 
 Bracket cancellation records a synthetic `bracket_cancel` paper order plus a `bracket.canceled` audit event when SQLite persistence is configured. It removes the active stop-loss, take-profit, and trailing-stop legs for that paper lot, but it does not close the open paper exposure. The operator must submit a separate reduce-only or manual close order when the position itself should be closed.
+
+Bracket close records a synthetic `bracket_manual_close` paper order plus a `bracket.closed` audit event when SQLite persistence is configured. `POST /brackets/{signal_id}/close` requires `price` or `mark_price`, closes the remaining paper quantity for that bracket using the existing reduce-only long/short lot accounting, updates daily paper P&L and exposure, cancels remaining synthetic exits, and replays after restart. This is still a simulated close at an operator-supplied mark; it does not submit a live market order.
 
 The Portfolio Sentinel `Bracket Ledger` exposes those same paper-only controls in the UI. `Preview` calls `POST /brackets/{signal_id}/preview` at the selected exit trigger, `Tighten Stop` prompts for a new protective stop and calls `POST /brackets/{signal_id}/stop`, `Breakeven` calls `POST /brackets/{signal_id}/breakeven`, `Cancel Bracket` removes synthetic exits without closing the paper position, and `Trigger` still applies the mark through `POST /market/price`. These controls are operator maintenance tools for simulated brackets; they do not place live exchange orders.
 
@@ -356,10 +364,12 @@ When `quote_amount` and `base_amount` are omitted, JSON signals may set `risk_am
 Current bot work is guided by paper-first risk controls and exchange order behavior:
 
 - Binance documents spot trailing stops as dynamic contingent orders that track favorable price movement and trigger after a configured reversal delta; it also allows an optional stop price before tracking begins, which maps to Auto-Crypto's paper `trailing_activation_pct` and `trailing_activation_price`: <https://developers.binance.com/docs/binance-spot-api-docs/faqs/trailing-stop-faq>
+- Binance Futures describes trailing stop orders as requiring both an activation condition and a callback-rate reversal condition before a market order is issued, matching Auto-Crypto's paper activation-plus-ratchet model: <https://www.binance.com/en/support/faq/detail/360042299292>
 - Binance.US currently describes trailing stops as stops whose trigger price follows favorable market movement and fires when the market moves against the position, matching Auto-Crypto's high-water and low-water paper trailing logic: <https://support.binance.us/en/articles/9842886-trailing-stop-orders-what-they-are-and-how-to-use-them>
 - Binance order payloads expose trailing-stop fields such as `trailingDelta` and `trailingTime`, which is useful when mapping paper behavior to future live adapters: <https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints>
 - Coinbase describes bracket and TP/SL orders as linked exits where only the triggered side executes and the other side is turned off, which is the behavior Auto-Crypto mirrors in paper bracket lots: <https://help.coinbase.com/en/coinbase/trading-and-funding/advanced-trade/order-types>
 - Coinbase Advanced Trade API attached TP/SL order examples use explicit stop and limit trigger prices, so Auto-Crypto accepts `stop_loss_price`, `take_profit_price`, and staged `trigger_price` values in addition to percentage offsets: <https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/guides/orders>
+- Freqtrade documents keeping a static stop until a favorable offset is reached and then trailing the stop, while ignoring stop changes that would loosen risk; Auto-Crypto mirrors that with `trailing_activation_pct`, `trailing_activation_price`, and protective-only amendments: <https://www.freqtrade.io/en/stable/stoploss/>
 - Kraken Pro documents TP/SL bracket orders for spot markets but notes they are not available with trailing stop order types, reinforcing why Auto-Crypto keeps bracket/trailing combinations as explicit paper simulation until venue-specific live capabilities are mapped: <https://support.kraken.com/articles/bracket-orders-on-kraken-pro>
 - Interactive Brokers describes bracket orders as an entry plus opposite-side profit-taking and stop-loss children where the unfilled child is canceled after one side triggers; Auto-Crypto's synthetic OCA metadata follows that paper-first model: <https://www.interactivebrokers.com/campus/trading-lessons/bracket-orders-for-tws-mosaic-2/>
 - Binance documents that OCO orders can include a trailing-stop contingent leg and that triggering it cancels the paired limit leg, which is why Auto-Crypto now stores OCA grouping and canceled sibling metadata in paper exit orders before any live adapter work: <https://developers.binance.com/docs/binance-spot-api-docs/faqs/trailing-stop-faq>
@@ -374,6 +384,7 @@ Current bot work is guided by paper-first risk controls and exchange order behav
 - Recent crypto-bot risk guidance highlights fixed-fraction sizing, commonly around 1-2% per trade, plus stop-loss and drawdown limits before live automation; Auto-Crypto's `risk_pct` sizing stays paper-only and can be capped with `AUTO_CRYPTO_MAX_RISK_PER_TRADE_PCT`: <https://cryptorobot.ai/blog/essential-tips-managing-risks-crypto-trading-bots>
 - Current crypto backtesting guidance emphasizes testing strategies on historical or simulated price paths before launch; Auto-Crypto's `/backtest/signal` endpoint applies that idea to bracket and trailing-stop paper logic without mutating active state: <https://bitsgap.com/blog/crypto-backtesting-guide-2025-tools-tips-and-how-bitsgap-helps>
 - Current crypto-bot backtesting guidance warns that clean historical fills can hide slippage, fees, latency, and stressed-market liquidity; Auto-Crypto's backtest-only `fee_bps` and `slippage_bps` inputs make those assumptions explicit while keeping live execution disabled: <https://bitsgap.com/blog/crypto-bot-backtesting-in-2026-what-it-shows-and-what-it-cannot-predict>
+- Backtrader's slippage documentation notes that real-market conditions can miss requested prices and exposes configurable percentage/fixed slippage in simulation; Auto-Crypto uses the same idea in isolated paper backtest and paper-exchange cost knobs: <https://www.backtrader.com/docu/slippage/slippage/>
 - Interactive Brokers' current walk-forward analysis guidance describes rolling in-sample/out-of-sample testing as a closer simulation of real trading conditions than one fixed historical backtest, which is why Auto-Crypto now supports labeled candle batches suitable for chunked walk-forward checks: <https://www.interactivebrokers.com/campus/ibkr-quant-news/the-future-of-backtesting-a-deep-dive-into-walk-forward-analysis/>
 - Recent crypto backtesting guidance warns that out-of-sample and walk-forward checks help expose curve fitting; Auto-Crypto's conservative candle mode keeps same-bar stop/target ambiguity from overstating bracket performance: <https://stoic.ai/blog/backtesting-trading-strategies/>
 - Current bot-launch guidance recommends out-of-sample validation, walk-forward testing, demo exchange testing, and gradual rollout before live exchange API use; Auto-Crypto keeps these additions in isolated paper backtests and active bracket snapshots only: <https://skyrexio.com/blog/no-code-crypto-trading-bot-how-to-build-an-algorithmic-strategy-backtest-it-and-launch-via-exchange-api/>
@@ -460,6 +471,7 @@ Paper market updates:
 - `POST /brackets/{signal_id}/stop`
 - `POST /brackets/{signal_id}/trailing-stop`
 - `POST /brackets/{signal_id}/breakeven`
+- `POST /brackets/{signal_id}/close`
 - `POST /brackets/{signal_id}/cancel`
 
 `POST /signals/preview` and `POST /signals/preview-text` return a `bracket_plan` object with the synthetic entry side, exit side, OCA group, trailing arming state, trailing activation price, stop/take-profit/trailing triggers, estimated notional and quantity, worst-case stop loss, equity risk percent, and first-target reward/risk estimate that would apply if the signal were submitted. The preview echoes both percentage and fixed-amount trail fields in the normalized signal payload.
@@ -510,7 +522,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/backtest/signal -Conte
 
 `POST /market/price` applies the mark, returns any triggered exits, refreshes account open notional through the trading engine, and returns the current `active_exits` snapshot, including ratcheted trailing-stop trigger prices, percentage or amount trail distance, activation state, activation price, trigger distance, and water marks.
 
-`GET /brackets` returns active synthetic paper brackets grouped by signal, including a summary of remaining notional, nearest protective trigger, worst-case stop loss, and first-target reward/risk when available. `GET /brackets/{signal_id}` returns the same summary plus active synthetic paper exit legs for one signal. `POST /brackets/{signal_id}/preview` previews only that bracket against a mark without mutating active state. `POST /brackets/{signal_id}/stop` tightens a paper stop without loosening risk, persists an amendment order, and records audit context. `POST /brackets/{signal_id}/trailing-stop` tightens a paper trailing trigger without loosening risk, persists an amendment order, and records audit context. `POST /brackets/{signal_id}/breakeven` moves open protective exits to entry when it tightens risk, persists an amendment order, and records audit context. `POST /brackets/{signal_id}/cancel` removes those synthetic exits, persists a cancellation order, and records audit context without closing the position.
+`GET /brackets` returns active synthetic paper brackets grouped by signal, including a summary of remaining notional, nearest protective trigger, worst-case stop loss, and first-target reward/risk when available. `GET /brackets/{signal_id}` returns the same summary plus active synthetic paper exit legs for one signal. `POST /brackets/{signal_id}/preview` previews only that bracket against a mark without mutating active state. `POST /brackets/{signal_id}/stop` tightens a paper stop without loosening risk, persists an amendment order, and records audit context. `POST /brackets/{signal_id}/trailing-stop` tightens a paper trailing trigger without loosening risk, persists an amendment order, and records audit context. `POST /brackets/{signal_id}/breakeven` moves open protective exits to entry when it tightens risk, persists an amendment order, and records audit context. `POST /brackets/{signal_id}/close` closes the selected synthetic paper bracket at the supplied mark, persists a reduce-only close order, records realized paper P&L, and cancels remaining exits. `POST /brackets/{signal_id}/cancel` removes those synthetic exits, persists a cancellation order, and records audit context without closing the position.
 
 Bracket summaries now include `protective_distance_pct` and `protective_locked_pnl`. A negative protective distance means the stop/trailing trigger has moved beyond entry and the paper bracket has locked in profit if that protective exit fires at the trigger. `worst_case_loss` floors at zero once the protective exit is at or beyond breakeven.
 
