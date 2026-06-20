@@ -21,6 +21,7 @@ class PlannedOrderLeg:
     reduce_only: bool = False
     activation_status: str = "open"
     partial_close: bool = False
+    exchange_order_family: str = "single"
     params: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -35,6 +36,7 @@ class PlannedOrderLeg:
             "reduce_only": self.reduce_only,
             "activation_status": self.activation_status,
             "partial_close": self.partial_close,
+            "exchange_order_family": self.exchange_order_family,
             "params": self.params,
         }
 
@@ -47,6 +49,7 @@ class BracketExecutionPlan:
     entry: PlannedOrderLeg
     exits: tuple[PlannedOrderLeg, ...]
     summary: dict[str, Any] = field(default_factory=dict)
+    execution_sequence: tuple[dict[str, Any], ...] = ()
     warnings: tuple[str, ...] = ()
     notes: tuple[str, ...] = ()
 
@@ -58,6 +61,7 @@ class BracketExecutionPlan:
             "entry": self.entry.to_dict(),
             "exits": [exit_leg.to_dict() for exit_leg in self.exits],
             "summary": self.summary,
+            "execution_sequence": list(self.execution_sequence),
             "warnings": list(self.warnings),
             "notes": list(self.notes),
         }
@@ -77,7 +81,7 @@ def plan_bracket_execution(signal: CryptoSignal, capabilities: ExchangeCapabilit
         params=_entry_params(signal),
     )
     exits = tuple(
-        _planned_exit(exit_order, signal=signal, side=exit_side, capabilities=capabilities)
+        _planned_exit(exit_order, signal=signal, side=exit_side, capabilities=capabilities, exit_orders=exit_orders)
         for exit_order in exit_orders
     )
     warnings = _plan_warnings(exit_orders, capabilities)
@@ -88,6 +92,8 @@ def plan_bracket_execution(signal: CryptoSignal, capabilities: ExchangeCapabilit
     elif capabilities.exchange_id == "paper":
         strategy = "paper_synthetic_bracket"
         notes = ("Paper exchange tracks synthetic OCA exits and trailing movement without live order submission.",)
+    elif _has_non_portable_exit_shape(exit_orders):
+        strategy = "paper_required_for_staged_or_partial_bracket"
     elif _has_stop_and_take_profit(exit_orders) and _has_trailing(exit_orders):
         if capabilities.attached_stop_loss_take_profit and capabilities.trailing_order:
             strategy = "attached_bracket_with_trailing"
@@ -119,6 +125,7 @@ def plan_bracket_execution(signal: CryptoSignal, capabilities: ExchangeCapabilit
         entry=entry,
         exits=exits,
         summary=_plan_summary(exit_orders),
+        execution_sequence=tuple(_execution_sequence(strategy, signal, exit_orders, capabilities)),
         warnings=tuple(warnings),
         notes=tuple(notes),
     )
@@ -130,6 +137,7 @@ def _planned_exit(
     signal: CryptoSignal,
     side: str,
     capabilities: ExchangeCapabilities,
+    exit_orders: list[ExitOrder],
 ) -> PlannedOrderLeg:
     params: dict[str, Any] = {"oca_group": exit_order.oca_group}
     if capabilities.reduce_only:
@@ -138,21 +146,26 @@ def _planned_exit(
         params["stopLoss"] = {"triggerPrice": str(exit_order.trigger_price)}
         order_type = "stop"
         intent = "protective_exit"
+        exchange_order_family = _exit_order_family(exit_order, exit_orders, capabilities)
     elif exit_order.kind == "take_profit":
         params["takeProfit"] = {"triggerPrice": str(exit_order.trigger_price)}
         order_type = "take_profit"
         intent = "profit_exit"
+        exchange_order_family = _exit_order_family(exit_order, exit_orders, capabilities)
     elif exit_order.kind == "trailing_stop":
         params["trailing"] = _trailing_params(signal, exit_order)
         order_type = "trailing_stop"
         intent = "protective_exit"
+        exchange_order_family = _exit_order_family(exit_order, exit_orders, capabilities)
     elif exit_order.kind == "time_exit":
         params["timeStop"] = {"maxHoldMarks": signal.max_hold_marks}
         order_type = "time_exit"
         intent = "staleness_exit"
+        exchange_order_family = "paper_time_stop"
     else:
         order_type = exit_order.kind
         intent = "conditional_exit"
+        exchange_order_family = "conditional"
     return PlannedOrderLeg(
         role=exit_order.kind,
         side=side,
@@ -163,6 +176,7 @@ def _planned_exit(
         reduce_only=True,
         activation_status=exit_order.status,
         partial_close=exit_order.close_pct < Decimal("100"),
+        exchange_order_family=exchange_order_family,
         params=params,
     )
 
@@ -192,6 +206,10 @@ def _plan_warnings(exit_orders: list[ExitOrder], capabilities: ExchangeCapabilit
         warnings.append("create_order_not_advertised")
     if any(exit_order.kind == "trailing_stop" and exit_order.status == "pending_activation" for exit_order in exit_orders):
         warnings.append("trailing_stop_starts_pending_activation")
+    if _has_non_portable_exit_shape(exit_orders) and capabilities.exchange_id != "paper":
+        warnings.append("staged_or_partial_exits_require_paper_or_custom_native_mapping")
+    if any(exit_order.kind == "time_exit" for exit_order in exit_orders) and capabilities.exchange_id != "paper":
+        warnings.append("time_stop_is_paper_only")
     return warnings
 
 
@@ -222,6 +240,12 @@ def _plan_summary(exit_orders: list[ExitOrder]) -> dict[str, Any]:
             exit_order.kind == "trailing_stop" and exit_order.close_pct < Decimal("100")
             for exit_order in exit_orders
         ),
+        "has_staged_take_profit": sum(1 for exit_order in exit_orders if exit_order.kind == "take_profit") > 1,
+        "has_partial_take_profit": any(
+            exit_order.kind == "take_profit" and exit_order.close_pct < Decimal("100")
+            for exit_order in exit_orders
+        ),
+        "requires_custom_native_mapping": _has_non_portable_exit_shape(exit_orders),
     }
 
 
@@ -253,6 +277,82 @@ def _has_stop_and_take_profit(exit_orders: list[ExitOrder]) -> bool:
 
 def _has_trailing(exit_orders: list[ExitOrder]) -> bool:
     return any(exit_order.kind == "trailing_stop" for exit_order in exit_orders)
+
+
+def _has_non_portable_exit_shape(exit_orders: list[ExitOrder]) -> bool:
+    return (
+        sum(1 for exit_order in exit_orders if exit_order.kind == "take_profit") > 1
+        or any(
+            exit_order.kind in {"take_profit", "trailing_stop"} and exit_order.close_pct < Decimal("100")
+            for exit_order in exit_orders
+        )
+        or any(exit_order.kind == "time_exit" for exit_order in exit_orders)
+    )
+
+
+def _exit_order_family(
+    exit_order: ExitOrder,
+    exit_orders: list[ExitOrder],
+    capabilities: ExchangeCapabilities,
+) -> str:
+    if capabilities.exchange_id == "paper":
+        return "synthetic_paper_oca"
+    if exit_order.kind == "time_exit":
+        return "paper_time_stop"
+    if _has_non_portable_exit_shape(exit_orders):
+        return "paper_or_custom_native_mapping"
+    if exit_order.kind in {"stop_loss", "take_profit"} and _has_stop_and_take_profit(exit_orders):
+        if capabilities.attached_stop_loss_take_profit:
+            return "attached_take_profit_stop_loss"
+        if capabilities.oco_order:
+            return "entry_then_oco"
+        return "paper_or_custom_native_mapping"
+    if exit_order.kind == "trailing_stop":
+        return "standalone_trailing_stop" if capabilities.trailing_order else "paper_or_custom_native_mapping"
+    return "standalone_conditional"
+
+
+def _execution_sequence(
+    strategy: str,
+    signal: CryptoSignal,
+    exit_orders: list[ExitOrder],
+    capabilities: ExchangeCapabilities,
+) -> list[dict[str, Any]]:
+    sequence: list[dict[str, Any]] = [
+        {
+            "step": "submit_entry",
+            "side": signal.side,
+            "order_type": "limit" if signal.price is not None else "market",
+            "live_submission_enabled": False,
+        }
+    ]
+    if not exit_orders:
+        return sequence
+    sequence.append({"step": "wait_for_entry_fill", "required_before": "protective_exits"})
+    if capabilities.exchange_id == "paper" or strategy.startswith("paper_required"):
+        sequence.append(
+            {
+                "step": "track_synthetic_exits",
+                "mode": "paper",
+                "exit_count": len(exit_orders),
+                "live_submission_enabled": False,
+            }
+        )
+        return sequence
+    if strategy == "attached_stop_loss_take_profit":
+        sequence.append({"step": "attach_stop_loss_take_profit", "venue_feature": "attached_tp_sl"})
+    elif strategy == "entry_then_oco_after_fill":
+        sequence.append({"step": "place_oco_after_fill", "venue_feature": "oco"})
+    elif strategy == "attached_bracket_with_trailing":
+        sequence.append({"step": "attach_stop_loss_take_profit", "venue_feature": "attached_tp_sl"})
+        sequence.append({"step": "place_or_track_trailing_stop", "venue_feature": "trailing_order"})
+    elif strategy == "entry_then_trailing_stop":
+        sequence.append({"step": "place_or_track_trailing_stop", "venue_feature": "trailing_order"})
+    else:
+        sequence.append({"step": "place_conditional_exit_after_fill", "venue_feature": "conditional_order"})
+    for step in sequence:
+        step.setdefault("live_submission_enabled", False)
+    return sequence
 
 
 def _exit_side(entry_side: str) -> str:

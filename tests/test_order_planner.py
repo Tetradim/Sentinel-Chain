@@ -45,9 +45,16 @@ def test_order_planner_keeps_paper_bracket_synthetic_and_not_live_safe():
     assert [exit_leg.role for exit_leg in plan.exits] == ["stop_loss", "take_profit", "trailing_stop"]
     assert [exit_leg.side for exit_leg in plan.exits] == ["sell", "sell", "sell"]
     assert [exit_leg.intent for exit_leg in plan.exits] == ["protective_exit", "profit_exit", "protective_exit"]
+    assert {exit_leg.exchange_order_family for exit_leg in plan.exits} == {"synthetic_paper_oca"}
     assert plan.summary["protective_exit_count"] == 2
     assert plan.summary["take_profit_close_pct"] == "100"
     assert plan.summary["trailing_stop_close_pct"] == "100"
+    assert plan.execution_sequence[-1] == {
+        "step": "track_synthetic_exits",
+        "mode": "paper",
+        "exit_count": 3,
+        "live_submission_enabled": False,
+    }
 
 
 def test_order_planner_uses_attached_strategy_when_venue_advertises_brackets_and_trailing():
@@ -87,8 +94,16 @@ def test_order_planner_uses_attached_strategy_when_venue_advertises_brackets_and
     assert plan.exits[0].side == "buy"
     assert plan.exits[0].reduce_only is True
     assert plan.exits[0].params["reduceOnly"] is True
+    assert plan.exits[0].exchange_order_family == "attached_take_profit_stop_loss"
     assert plan.exits[2].params["trailing"]["callbackAmount"] == "3"
     assert plan.exits[2].activation_status == "open"
+    assert [step["step"] for step in plan.execution_sequence] == [
+        "submit_entry",
+        "wait_for_entry_fill",
+        "attach_stop_loss_take_profit",
+        "place_or_track_trailing_stop",
+    ]
+    assert all(step["live_submission_enabled"] is False for step in plan.execution_sequence)
 
 
 def test_order_planner_requires_paper_when_native_trailing_is_not_advertised():
@@ -199,3 +214,52 @@ def test_signal_exchange_plan_endpoint_returns_non_executing_paper_plan():
     assert body["plan"]["exits"][0]["trigger_price"] == str(Decimal("49000.00"))
     assert body["plan"]["exits"][0]["intent"] == "protective_exit"
     assert body["plan"]["summary"]["protective_exit_count"] == 2
+    assert body["plan"]["execution_sequence"][0]["step"] == "submit_entry"
+
+
+def test_order_planner_requires_paper_for_staged_or_partial_native_bracket_shape():
+    signal = normalize_signal(
+        {
+            "signal_id": "staged-native-plan",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_targets": [
+                {"pct": "7", "close_pct": "50"},
+                {"pct": "12", "close_pct": "50"},
+            ],
+            "trailing_stop_pct": "4",
+            "trailing_stop_close_pct": "25",
+            "exchange": "coinbase",
+        },
+        source="test",
+    )
+    capabilities = ExchangeCapabilities(
+        exchange_id="coinbase",
+        spot=True,
+        margin=False,
+        swap=False,
+        future=False,
+        option=False,
+        create_order=True,
+        cancel_order=True,
+        fetch_balance=True,
+        attached_stop_loss_take_profit=True,
+        oco_order=True,
+        trailing_order=True,
+        reduce_only=True,
+    )
+
+    plan = plan_bracket_execution(signal, capabilities)
+
+    assert plan.strategy == "paper_required_for_staged_or_partial_bracket"
+    assert "staged_or_partial_exits_require_paper_or_custom_native_mapping" in plan.warnings
+    assert plan.summary["has_staged_take_profit"] is True
+    assert plan.summary["has_partial_take_profit"] is True
+    assert plan.summary["has_partial_trailing_exit"] is True
+    assert plan.summary["requires_custom_native_mapping"] is True
+    assert {exit_leg.exchange_order_family for exit_leg in plan.exits} == {"paper_or_custom_native_mapping"}
+    assert plan.execution_sequence[-1]["step"] == "track_synthetic_exits"
+    assert plan.execution_sequence[-1]["live_submission_enabled"] is False
