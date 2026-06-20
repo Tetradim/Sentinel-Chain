@@ -505,6 +505,71 @@ def create_app(
             "account": _account_state_to_dict(engine.account_state),
         }
 
+    @app.post("/brackets/{signal_id}/preview-candle")
+    async def bracket_preview_candle(signal_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        try:
+            high = _positive_decimal(payload.get("high"))
+            low = _positive_decimal(payload.get("low"))
+            close = _positive_decimal(payload.get("close"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if high < low:
+            raise HTTPException(status_code=400, detail="high must be greater than or equal to low")
+        if close < low or close > high:
+            raise HTTPException(status_code=400, detail="close must be inside the high/low range")
+
+        lots = [
+            lot
+            for lot in engine.exchange.lots
+            if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
+        ]
+        if not lots:
+            raise HTTPException(status_code=404, detail="active bracket not found")
+        if any(lot.direction != lots[0].direction for lot in lots):
+            raise HTTPException(status_code=409, detail="bracket contains mixed directions")
+
+        symbol = lots[0].symbol
+        direction = lots[0].direction
+        prices = [low, high, close] if direction == "long" else [high, low, close]
+        preview_exchange = deepcopy(engine.exchange)
+        preview_exchange.lots = [
+            lot for lot in preview_exchange.lots if lot.signal_id == signal_id or lot.symbol != symbol
+        ]
+        marks: list[dict[str, Any]] = []
+        for phase, price in zip(("adverse", "favorable", "close"), prices, strict=True):
+            triggered = preview_exchange.update_price(symbol, price)
+            marks.append(
+                {
+                    "phase": phase,
+                    "price": str(price),
+                    "would_trigger": triggered,
+                    "preview_active_exits": _active_exits_to_dict(
+                        preview_exchange.lots,
+                        signal_id=signal_id,
+                        mark_price=price,
+                    ),
+                    "preview_positions": preview_exchange.list_positions(),
+                }
+            )
+
+        return {
+            "signal_id": signal_id,
+            "symbol": symbol,
+            "mutates_state": False,
+            "intrabar_policy": "conservative_adverse_first",
+            "direction": direction,
+            "high": str(high),
+            "low": str(low),
+            "close": str(close),
+            "prices": [str(price) for price in prices],
+            "active_exits": _active_exits_to_dict(lots, signal_id=signal_id),
+            "marks": marks,
+            "final_preview_positions": preview_exchange.list_positions(),
+            "positions": engine.exchange.list_positions(),
+            "account": _account_state_to_dict(engine.account_state),
+        }
+
     @app.post("/brackets/{signal_id}/stop")
     async def amend_bracket_stop(signal_id: str, request: Request) -> dict[str, Any]:
         payload = await request.json()

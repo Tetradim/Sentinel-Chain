@@ -874,3 +874,78 @@ def test_bracket_preview_path_rejects_empty_mark_list():
 
     assert response.status_code == 400
     assert response.json()["detail"] == "prices or marks must be a non-empty list"
+
+
+def test_bracket_preview_candle_uses_conservative_long_intrabar_order_without_mutating_state():
+    app = create_app()
+    client = TestClient(app)
+
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "long-candle-preview",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+        },
+    )
+
+    response = client.post(
+        "/brackets/long-candle-preview/preview-candle",
+        json={"high": "110", "low": "95", "close": "108"},
+    )
+    active_after = client.get("/brackets/long-candle-preview").json()["active_exits"]
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mutates_state"] is False
+    assert body["intrabar_policy"] == "conservative_adverse_first"
+    assert body["direction"] == "long"
+    assert body["prices"] == ["95", "110", "108"]
+    assert body["marks"][0]["phase"] == "adverse"
+    assert body["marks"][0]["would_trigger"] == [
+        {"symbol": "BTC/USDT", "kind": "stop_loss", "price": "95.00000000", "quantity": "1.00000000"}
+    ]
+    assert body["marks"][1]["would_trigger"] == []
+    assert body["final_preview_positions"][0]["realized_pnl"] == "-5.00000000"
+    assert [exit_order["kind"] for exit_order in active_after] == ["stop_loss", "take_profit"]
+    assert client.get("/positions").json()["positions"][0]["quantity"] == "1.00000000"
+
+
+def test_bracket_preview_candle_uses_conservative_short_intrabar_order_without_mutating_state():
+    app = create_app()
+    client = TestClient(app)
+
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "short-candle-preview",
+            "symbol": "ETHUSDT",
+            "side": "short",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+        },
+    )
+
+    response = client.post(
+        "/brackets/short-candle-preview/preview-candle",
+        json={"high": "105", "low": "90", "close": "92"},
+    )
+    active_after = client.get("/brackets/short-candle-preview").json()["active_exits"]
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["direction"] == "short"
+    assert body["prices"] == ["105", "90", "92"]
+    assert body["marks"][0]["would_trigger"] == [
+        {"symbol": "ETH/USDT", "kind": "stop_loss", "price": "105.00000000", "quantity": "1.00000000"}
+    ]
+    assert body["marks"][1]["would_trigger"] == []
+    assert body["final_preview_positions"][0]["realized_pnl"] == "-5.00000000"
+    assert [exit_order["kind"] for exit_order in active_after] == ["stop_loss", "take_profit"]
+    assert client.get("/positions").json()["positions"][0]["quantity"] == "-1.00000000"

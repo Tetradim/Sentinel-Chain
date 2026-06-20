@@ -32,7 +32,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Lists all active synthetic paper brackets with remaining-notional, worst-case stop-loss, first-target reward, and aggregate bracket-risk summaries
 - Supports protective stop, trailing-stop, take-profit, and manual breakeven amendments; protective exits only tighten risk and take-profit targets only move farther into profit
 - Supports paper-only bracket close-by-signal controls that flatten or partially reduce the selected simulated bracket at an operator-supplied mark or at the current nearest protective trigger
-- Previews one active bracket by signal ID at a hypothetical mark or through a multi-mark path, including trigger distance, trailing activation context, and simulated post-mark trailing ratchets without mutating live paper state
+- Previews one active bracket by signal ID at a hypothetical mark, through a multi-mark path, or through a conservative OHLC candle path, including trigger distance, trailing activation context, and simulated post-mark trailing ratchets without mutating live paper state
 - Shows a paper bracket exit ladder by signal ID with trigger order, estimated close quantity, estimated notional, estimated P&L, and optional mark-distance math for each stop, trailing, take-profit, or time-stop leg
 - Shows read-only bracket decision support by signal ID with paper exit sequencing, health flags, and next-trailing-ratchet telemetry for a supplied mark
 - Cancels active synthetic paper bracket exits by signal ID while leaving the underlying paper position open for separate manual management
@@ -246,6 +246,12 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/brackets/btc-breakout-
   "prices": ["50600", "52400", "51100"]
 }'
 
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/brackets/btc-breakout-001/preview-candle -ContentType "application/json" -Body '{
+  "high": "52400",
+  "low": "49750",
+  "close": "51100"
+}'
+
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/brackets/btc-breakout-001/stop -ContentType "application/json" -Body '{
   "trigger_price": "50250",
   "reason": "manual support moved higher"
@@ -288,6 +294,8 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/brackets/btc-breakout-
 `POST /brackets/{signal_id}/preview` is signal-specific and paper-only. It runs the hypothetical mark against a deep copy of the selected paper bracket, returns only exits that would trigger for that bracket, and includes `distance_to_trigger`, `distance_to_trigger_pct`, and `trailing_activation_price` in the active-exit snapshot. It does not create orders, update P&L, record audit events, or mutate trailing stops on the active engine.
 
 `POST /brackets/{signal_id}/preview-path` is also signal-specific and paper-only. Send `prices` or `marks` as a non-empty list to replay several hypothetical marks through one deep-copied bracket state. The response includes each mark's `would_trigger` exits, `preview_active_exits` after that mark, simulated preview positions, and `mutates_state: false`; the live paper bracket, positions, audit log, and order history are unchanged. This is useful for reviewing whether an activation-gated or stepped trailing stop would ratchet before it would trigger.
+
+`POST /brackets/{signal_id}/preview-candle` is the OHLC version of bracket path preview. Send `high`, `low`, and `close`; Auto-Crypto replays the copied bracket with a conservative adverse-first intrabar policy, so long brackets test `low`, `high`, then `close`, while short brackets test `high`, `low`, then `close`. If both the stop and target are inside the same candle range, the preview favors the protective exit rather than overstating a profitable target fill. The active paper bracket, trailing water marks, positions, audit log, and order history are unchanged.
 
 `GET /brackets/{signal_id}/exit-ladder` is also signal-specific and paper-only. It lists the bracket's synthetic exits in the direction they would be encountered by price, including each leg's intent, status, `close_pct`, estimated close quantity, estimated trigger notional, estimated P&L, and whether that leg would close the remaining paper lot. Add `?mark_price=...` to include current distance-to-trigger values without mutating trailing stops or recording any order.
 
@@ -546,6 +554,7 @@ Current bot work is guided by paper-first risk controls and exchange order behav
 - CCXT's current FAQ separates attached TP/SL parameters, standalone closing orders, trailing support, and exchange-specific feature checks, so `/brackets/{signal_id}/decision-support` remains paper-only operator telemetry rather than an exchange order instruction: <https://docs.ccxt.com/docs/faq>
 - Current 2026 bot-setting guidance still treats stop loss, take profit, demo testing, and backtesting as core setup work, so the decision-support endpoint surfaces exit health and trigger sequencing before any live venue mapping: <https://bitsgap.com/blog/how-to-choose-crypto-trading-bot-settings-in-2026-range-investment-stop-loss-and-take-profit>
 - Walk-forward/backtesting guidance warns against false confidence from one fixed historical test, so Auto-Crypto exposes next-trailing-ratchet telemetry on active snapshots and path previews to make paper assumptions auditable mark by mark: <https://blog.quantinsti.com/walk-forward-optimization-introduction/>
+- Recent backtesting guidance emphasizes measuring worst-case scenarios and drawdowns before sizing or trusting a strategy; Auto-Crypto's bracket candle preview therefore uses an adverse-first same-candle policy for active paper brackets instead of assuming a take-profit filled before a stop inside the same OHLC range: <https://blog.traderspost.io/article/how-to-backtest-trading-strategies>
 
 ## Environment Variables
 
@@ -655,6 +664,8 @@ Paper market updates:
 - `GET /brackets/{signal_id}`
 - `GET /brackets/{signal_id}/exit-ladder`
 - `POST /brackets/{signal_id}/preview`
+- `POST /brackets/{signal_id}/preview-path`
+- `POST /brackets/{signal_id}/preview-candle`
 - `POST /brackets/{signal_id}/stop`
 - `POST /brackets/{signal_id}/trailing-stop`
 - `POST /brackets/{signal_id}/take-profit`
