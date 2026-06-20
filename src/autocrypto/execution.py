@@ -21,6 +21,7 @@ class ExitOrder:
 class PaperLot:
     signal_id: str
     symbol: str
+    direction: str
     original_quantity: Decimal
     remaining_quantity: Decimal
     entry_price: Decimal
@@ -29,6 +30,7 @@ class PaperLot:
     trailing_activation_pct: Decimal | None = None
     trailing_activated: bool = True
     high_water_mark: Decimal | None = None
+    low_water_mark: Decimal | None = None
     breakeven_trigger_pct: Decimal | None = None
     breakeven_applied: bool = False
 
@@ -50,12 +52,24 @@ class PaperPosition:
         self.quantity = total_quantity
 
     def sell(self, quantity: Decimal, price: Decimal) -> None:
+        if self.quantity <= 0:
+            return
         sell_quantity = min(quantity, self.quantity)
         self.realized_pnl += (price - self.avg_entry) * sell_quantity
         self.quantity -= sell_quantity
         if self.quantity <= 0:
             self.quantity = Decimal("0")
             self.avg_entry = Decimal("0")
+
+    def sell_short(self, quantity: Decimal, price: Decimal) -> None:
+        current_short = abs(self.quantity) if self.quantity < 0 else Decimal("0")
+        total_quantity = current_short + quantity
+        if total_quantity <= 0:
+            self.quantity = Decimal("0")
+            self.avg_entry = Decimal("0")
+            return
+        self.avg_entry = ((self.avg_entry * current_short) + (price * quantity)) / total_quantity
+        self.quantity = -total_quantity
 
     def to_dict(self) -> dict:
         return {
@@ -180,18 +194,18 @@ class PaperExchange:
         return [
             position.to_dict()
             for position in self.positions.values()
-            if position.quantity > 0 or position.realized_pnl != 0
+            if position.quantity != 0 or position.realized_pnl != 0
         ]
 
     def open_notional(self) -> Decimal:
         return sum(
-            (position.quantity * position.avg_entry for position in self.positions.values()),
+            (abs(position.quantity) * position.avg_entry for position in self.positions.values()),
             Decimal("0"),
         )
 
     def update_price(self, symbol: str, price: Decimal) -> list[dict]:
         position = self.positions.get(symbol)
-        if position is None or position.quantity <= 0:
+        if position is None or position.quantity == 0:
             return []
 
         triggered: list[dict] = []
@@ -211,13 +225,14 @@ class PaperExchange:
                 if exit_order.kind == "take_profit" and lot.remaining_quantity > 0:
                     lot.exit_orders = [order for order in lot.exit_orders if order is not exit_order]
                 order_number = len(self.orders) + 1
+                exit_side = "sell" if lot.direction == "long" else "buy"
                 order = PaperOrder(
                     order_id=f"paper-exit-{_order_fragment(lot.signal_id)}-{order_number}",
                     signal_id=f"exit-{_order_fragment(lot.signal_id)}-{order_number}",
                     mode="paper",
                     exchange="paper",
                     symbol=symbol,
-                    side="sell",
+                    side=exit_side,
                     notional=notional,
                     price=price,
                 )
@@ -252,6 +267,7 @@ class PaperExchange:
                 PaperLot(
                     signal_id=signal.signal_id,
                     symbol=signal.symbol,
+                    direction="long",
                     original_quantity=quantity,
                     remaining_quantity=quantity,
                     entry_price=signal.price,
@@ -260,6 +276,26 @@ class PaperExchange:
                     trailing_activation_pct=signal.trailing_activation_pct,
                     trailing_activated=signal.trailing_activation_pct is None,
                     high_water_mark=signal.price
+                    if signal.trailing_stop_pct is not None and signal.trailing_activation_pct is None
+                    else None,
+                    breakeven_trigger_pct=signal.breakeven_trigger_pct,
+                )
+            )
+        elif signal.side == "sell" and exit_orders:
+            position.sell_short(quantity, signal.price)
+            self.lots.append(
+                PaperLot(
+                    signal_id=signal.signal_id,
+                    symbol=signal.symbol,
+                    direction="short",
+                    original_quantity=quantity,
+                    remaining_quantity=quantity,
+                    entry_price=signal.price,
+                    exit_orders=exit_orders,
+                    trailing_stop_pct=signal.trailing_stop_pct,
+                    trailing_activation_pct=signal.trailing_activation_pct,
+                    trailing_activated=signal.trailing_activation_pct is None,
+                    low_water_mark=signal.price
                     if signal.trailing_stop_pct is not None and signal.trailing_activation_pct is None
                     else None,
                     breakeven_trigger_pct=signal.breakeven_trigger_pct,
@@ -280,6 +316,7 @@ class PaperExchange:
                 PaperLot(
                     signal_id=order.signal_id,
                     symbol=order.symbol,
+                    direction="long",
                     original_quantity=quantity,
                     remaining_quantity=quantity,
                     entry_price=order.price,
@@ -293,23 +330,62 @@ class PaperExchange:
                     breakeven_trigger_pct=order.breakeven_trigger_pct,
                 )
             )
+        elif order.side == "sell" and order.exit_orders:
+            position.sell_short(quantity, order.price)
+            self.lots.append(
+                PaperLot(
+                    signal_id=order.signal_id,
+                    symbol=order.symbol,
+                    direction="short",
+                    original_quantity=quantity,
+                    remaining_quantity=quantity,
+                    entry_price=order.price,
+                    exit_orders=order.exit_orders,
+                    trailing_stop_pct=order.trailing_stop_pct,
+                    trailing_activation_pct=order.trailing_activation_pct,
+                    trailing_activated=order.trailing_activation_pct is None,
+                    low_water_mark=order.price
+                    if order.trailing_stop_pct is not None and order.trailing_activation_pct is None
+                    else None,
+                    breakeven_trigger_pct=order.breakeven_trigger_pct,
+                )
+            )
         elif order.side == "sell":
             self._sell_quantity(order.symbol, quantity, order.price)
         self._refresh_active_exits(order.symbol)
 
     def _triggered_exit(self, lot: PaperLot, price: Decimal) -> ExitOrder | None:
         for exit_order in lot.exit_orders:
-            if exit_order.kind == "stop_loss" and price <= exit_order.trigger_price:
+            if lot.direction == "long" and exit_order.kind == "stop_loss" and price <= exit_order.trigger_price:
                 return exit_order
-            if exit_order.kind == "trailing_stop" and lot.trailing_activated and price <= exit_order.trigger_price:
+            if lot.direction == "short" and exit_order.kind == "stop_loss" and price >= exit_order.trigger_price:
+                return exit_order
+            if (
+                lot.direction == "long"
+                and exit_order.kind == "trailing_stop"
+                and lot.trailing_activated
+                and price <= exit_order.trigger_price
+            ):
+                return exit_order
+            if (
+                lot.direction == "short"
+                and exit_order.kind == "trailing_stop"
+                and lot.trailing_activated
+                and price >= exit_order.trigger_price
+            ):
                 return exit_order
         for exit_order in lot.exit_orders:
-            if exit_order.kind == "take_profit" and price >= exit_order.trigger_price:
+            if lot.direction == "long" and exit_order.kind == "take_profit" and price >= exit_order.trigger_price:
+                return exit_order
+            if lot.direction == "short" and exit_order.kind == "take_profit" and price <= exit_order.trigger_price:
                 return exit_order
         return None
 
     def _update_trailing_stop(self, lot: PaperLot, price: Decimal) -> None:
         if lot.trailing_stop_pct is None:
+            return
+        if lot.direction == "short":
+            self._update_short_trailing_stop(lot, price)
             return
         activated_now = False
         if not lot.trailing_activated:
@@ -332,15 +408,47 @@ class PaperExchange:
             for exit_order in lot.exit_orders
         ]
 
+    def _update_short_trailing_stop(self, lot: PaperLot, price: Decimal) -> None:
+        activated_now = False
+        if not lot.trailing_activated:
+            activation_price = lot.entry_price * (Decimal("1") - (lot.trailing_activation_pct or Decimal("0")) / Decimal("100"))
+            if price > activation_price:
+                return
+            lot.trailing_activated = True
+            activated_now = True
+            lot.low_water_mark = price
+        elif lot.low_water_mark is None:
+            lot.low_water_mark = lot.entry_price
+        if price >= lot.low_water_mark and not activated_now:
+            return
+        lot.low_water_mark = price
+        trigger = _money(price * (Decimal("1") + lot.trailing_stop_pct / Decimal("100")))
+        lot.exit_orders = [
+            ExitOrder(kind=exit_order.kind, trigger_price=min(exit_order.trigger_price, trigger))
+            if exit_order.kind == "trailing_stop"
+            else exit_order
+            for exit_order in lot.exit_orders
+        ]
+
     def _apply_breakeven(self, lot: PaperLot, price: Decimal) -> None:
         if lot.breakeven_trigger_pct is None or lot.breakeven_applied:
             return
-        trigger_price = lot.entry_price * (Decimal("1") + lot.breakeven_trigger_pct / Decimal("100"))
-        if price < trigger_price:
-            return
+        if lot.direction == "long":
+            trigger_price = lot.entry_price * (Decimal("1") + lot.breakeven_trigger_pct / Decimal("100"))
+            if price < trigger_price:
+                return
+        else:
+            trigger_price = lot.entry_price * (Decimal("1") - lot.breakeven_trigger_pct / Decimal("100"))
+            if price > trigger_price:
+                return
         breakeven_price = _money(lot.entry_price)
         lot.exit_orders = [
-            ExitOrder(kind=exit_order.kind, trigger_price=max(exit_order.trigger_price, breakeven_price))
+            ExitOrder(
+                kind=exit_order.kind,
+                trigger_price=max(exit_order.trigger_price, breakeven_price)
+                if lot.direction == "long"
+                else min(exit_order.trigger_price, breakeven_price),
+            )
             if exit_order.kind in {"stop_loss", "trailing_stop"}
             else exit_order
             for exit_order in lot.exit_orders
@@ -358,11 +466,16 @@ class PaperExchange:
         if position is None:
             lot.remaining_quantity = Decimal("0")
             return
-        exit_quantity = min(quantity or lot.remaining_quantity, lot.remaining_quantity, position.quantity)
-        position.realized_pnl += (price - lot.entry_price) * exit_quantity
-        position.quantity -= exit_quantity
+        open_quantity = position.quantity if lot.direction == "long" else abs(position.quantity)
+        exit_quantity = min(quantity or lot.remaining_quantity, lot.remaining_quantity, open_quantity)
+        if lot.direction == "long":
+            position.realized_pnl += (price - lot.entry_price) * exit_quantity
+            position.quantity -= exit_quantity
+        else:
+            position.realized_pnl += (lot.entry_price - price) * exit_quantity
+            position.quantity += exit_quantity
         lot.remaining_quantity -= exit_quantity
-        if position.quantity <= 0:
+        if position.quantity == 0:
             position.quantity = Decimal("0")
             position.avg_entry = Decimal("0")
         else:
@@ -372,7 +485,7 @@ class PaperExchange:
         position = self.positions.setdefault(symbol, PaperPosition(symbol=symbol))
         remaining = quantity
         for lot in self.lots:
-            if remaining <= 0 or lot.symbol != symbol or lot.remaining_quantity <= 0:
+            if remaining <= 0 or lot.symbol != symbol or lot.direction != "long" or lot.remaining_quantity <= 0:
                 continue
             reduction = min(lot.remaining_quantity, remaining)
             position.realized_pnl += (price - lot.entry_price) * reduction
@@ -382,7 +495,7 @@ class PaperExchange:
         if remaining > 0:
             position.sell(remaining, price)
         self.lots = [lot for lot in self.lots if lot.remaining_quantity > 0]
-        if position.quantity <= 0:
+        if position.quantity == 0:
             position.quantity = Decimal("0")
             position.avg_entry = Decimal("0")
         else:
@@ -390,11 +503,16 @@ class PaperExchange:
 
     def _refresh_position_average(self, symbol: str) -> None:
         position = self.positions.get(symbol)
-        if position is None or position.quantity <= 0:
+        if position is None or position.quantity == 0:
             return
-        open_lots = [lot for lot in self.lots if lot.symbol == symbol and lot.remaining_quantity > 0]
+        direction = "long" if position.quantity > 0 else "short"
+        open_lots = [
+            lot
+            for lot in self.lots
+            if lot.symbol == symbol and lot.direction == direction and lot.remaining_quantity > 0
+        ]
         lot_quantity = sum((lot.remaining_quantity for lot in open_lots), Decimal("0"))
-        if lot_quantity == position.quantity and lot_quantity > 0:
+        if lot_quantity == abs(position.quantity) and lot_quantity > 0:
             position.avg_entry = (
                 sum((lot.entry_price * lot.remaining_quantity for lot in open_lots), Decimal("0"))
                 / lot_quantity
@@ -414,16 +532,20 @@ class PaperExchange:
 
 
 def build_exit_orders(signal: CryptoSignal) -> list[ExitOrder]:
-    if signal.price is None or signal.side != "buy":
+    if signal.price is None or signal.side not in {"buy", "sell"}:
+        return []
+    if signal.side == "sell" and not _has_exit_plan(signal):
         return []
 
     exits: list[ExitOrder] = []
     if signal.stop_loss_pct is not None:
-        trigger = signal.price * (Decimal("1") - signal.stop_loss_pct / Decimal("100"))
+        stop_direction = Decimal("-1") if signal.side == "buy" else Decimal("1")
+        trigger = signal.price * (Decimal("1") + stop_direction * signal.stop_loss_pct / Decimal("100"))
         exits.append(ExitOrder(kind="stop_loss", trigger_price=_money(trigger)))
     if signal.take_profit_targets:
         for target in signal.take_profit_targets:
-            trigger = signal.price * (Decimal("1") + target.pct / Decimal("100"))
+            profit_direction = Decimal("1") if signal.side == "buy" else Decimal("-1")
+            trigger = signal.price * (Decimal("1") + profit_direction * target.pct / Decimal("100"))
             exits.append(
                 ExitOrder(
                     kind="take_profit",
@@ -432,9 +554,19 @@ def build_exit_orders(signal: CryptoSignal) -> list[ExitOrder]:
                 )
             )
     if signal.trailing_stop_pct is not None:
-        trigger = signal.price * (Decimal("1") - signal.trailing_stop_pct / Decimal("100"))
+        trail_direction = Decimal("-1") if signal.side == "buy" else Decimal("1")
+        trigger = signal.price * (Decimal("1") + trail_direction * signal.trailing_stop_pct / Decimal("100"))
         exits.append(ExitOrder(kind="trailing_stop", trigger_price=_money(trigger)))
     return exits
+
+
+def _has_exit_plan(signal: CryptoSignal) -> bool:
+    return (
+        signal.stop_loss_pct is not None
+        or bool(signal.take_profit_targets)
+        or signal.trailing_stop_pct is not None
+        or signal.breakeven_trigger_pct is not None
+    )
 
 
 def _money(value: Decimal) -> Decimal:

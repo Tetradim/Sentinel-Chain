@@ -120,6 +120,29 @@ def test_risk_rejects_buy_that_would_exceed_max_open_notional():
     assert "max_open_notional_exceeded" in decision.reason_codes
 
 
+def test_risk_treats_bracketed_sell_as_position_opening_short():
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "sell",
+            "quote_amount": "75",
+            "price": "100",
+            "take_profit_pct": "5",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(
+        signal,
+        RiskConfig(max_open_notional=Decimal("100"), require_stop_loss=True),
+        AccountState(open_notional=Decimal("50")),
+    )
+
+    assert decision.approved is False
+    assert "stop_loss_required" in decision.reason_codes
+    assert "max_open_notional_exceeded" in decision.reason_codes
+
+
 def test_risk_rejects_position_above_equity_percentage_cap():
     signal = normalize_signal(
         {

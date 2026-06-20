@@ -53,12 +53,13 @@ def evaluate_signal(
         reasons.append("symbol_blocked")
     if config.allowed_exchanges and signal.exchange not in config.allowed_exchanges:
         reasons.append("exchange_not_allowed")
-    if config.require_stop_loss and signal.side == "buy" and signal.stop_loss_pct is None:
+    opens_position = _opens_position(signal)
+    if config.require_stop_loss and opens_position and signal.stop_loss_pct is None:
         reasons.append("stop_loss_required")
     if order_notional is not None and config.max_order_notional > 0 and order_notional > config.max_order_notional:
         reasons.append("max_order_notional_exceeded")
     if (
-        signal.side == "buy"
+        opens_position
         and order_notional is not None
         and config.max_open_notional > 0
         and account_state.open_notional + order_notional > config.max_open_notional
@@ -110,3 +111,14 @@ def _order_notional(signal: CryptoSignal, reasons: list[str]) -> Decimal | None:
         return signal.base_amount * signal.price
     reasons.append("order_size_required")
     return None
+
+
+def _opens_position(signal: CryptoSignal) -> bool:
+    if signal.side == "buy":
+        return True
+    return signal.side == "sell" and (
+        signal.stop_loss_pct is not None
+        or bool(signal.take_profit_targets)
+        or signal.trailing_stop_pct is not None
+        or signal.breakeven_trigger_pct is not None
+    )

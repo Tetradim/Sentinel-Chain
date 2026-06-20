@@ -174,6 +174,7 @@ def test_operator_text_submit_reuses_paper_execution_and_audit(tmp_path):
     assert state["orders"][0]["symbol"] == "BTC/USDT"
     assert state["positions"][0]["symbol"] == "BTC/USDT"
     assert state["active_exits"][0]["kind"] == "stop_loss"
+    assert state["active_exits"][0]["direction"] == "long"
     assert state["active_exits"][0]["remaining_quantity"] == "0.0015"
     assert state["active_exits"][0]["entry_price"] == "50000"
     assert state["active_exits"][2]["kind"] == "trailing_stop"
@@ -182,6 +183,31 @@ def test_operator_text_submit_reuses_paper_execution_and_audit(tmp_path):
     assert state["active_exits"][2]["breakeven_trigger_pct"] == "2"
     assert [event["event_type"] for event in state["audit"]] == ["signal.received", "order.accepted"]
     assert all(event["created_at"] for event in state["audit"])
+
+
+def test_operator_state_marks_short_bracket_direction(tmp_path):
+    repo = SQLiteRepository(tmp_path / "ui_short.sqlite3")
+    client = TestClient(create_app(repository=repo))
+
+    response = client.post(
+        "/signals/submit",
+        json={
+            "signal_id": "ui-short",
+            "symbol": "ETHUSDT",
+            "side": "sell",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+            "trailing_stop_pct": "4",
+        },
+    )
+
+    assert response.status_code == 200
+    state = client.get("/ui/state").json()
+    assert state["positions"][0]["quantity"] == "-1.00000000"
+    assert state["active_exits"][0]["direction"] == "short"
+    assert state["active_exits"][2]["low_water_mark"] == "100"
 
 
 def test_operator_text_submit_can_queue_for_approval(tmp_path):

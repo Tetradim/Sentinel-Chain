@@ -686,7 +686,7 @@ function renderPortfolio() {
   const positions = appState.data?.positions || [];
   const maxOpen = Number(appState.data?.risk?.max_open_notional || 0) || Number(account.equity || 10000);
   const grouped = positions.length > 0
-    ? positions.map((position) => ({ symbol: position.symbol, value: Number(position.quantity) * Number(position.avg_entry || 0) }))
+    ? positions.map((position) => ({ symbol: position.symbol, value: Math.abs(Number(position.quantity)) * Number(position.avg_entry || 0) }))
     : (appState.data?.orders || []).slice(-4).map((order) => ({ symbol: order.symbol, value: Number(order.notional || 0) }));
 
   $("#limitBars").innerHTML =
@@ -707,6 +707,7 @@ function renderPortfolio() {
         return `
           <tr>
             <td>${escapeHtml(exit.symbol)}</td>
+            <td>${escapeHtml(exit.direction || "long")}</td>
             <td>${escapeHtml(exit.kind)}</td>
             <td>${escapeHtml(exit.remaining_quantity || "-")}</td>
             <td>${exit.entry_price ? money(exit.entry_price) : "-"}</td>
@@ -720,7 +721,7 @@ function renderPortfolio() {
           </tr>
         `;
       }).join("")
-      : `<tr><td colspan="6">No active exits. Buy signals with stop/TP create bracket rows.</td></tr>`;
+      : `<tr><td colspan="7">No active exits. Bracketed buy and short signals create rows.</td></tr>`;
 }
 
 function renderExchanges() {
@@ -1413,7 +1414,7 @@ function drawAllocationChart() {
   const radius = Math.min(width, height) * 0.34;
   const positions = appState.data?.positions || [];
   const values = positions.length
-    ? positions.map((position) => Number(position.quantity) * Number(position.avg_entry || 0))
+    ? positions.map((position) => Math.abs(Number(position.quantity)) * Number(position.avg_entry || 0))
     : [36, 24, 18, 14, 8];
   const total = values.reduce((sum, value) => sum + value, 0) || 1;
   const colors = ["#ffbe3d", "#27d9ef", "#28d8a1", "#a678ff", "#ff5470"];

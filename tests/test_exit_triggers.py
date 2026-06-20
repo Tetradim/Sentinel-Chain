@@ -322,3 +322,121 @@ def test_staged_take_profit_fills_all_crossed_targets_on_one_price_mark():
     ]
     assert exchange.list_positions()[0]["quantity"] == "0.00000000"
     assert exchange.list_positions()[0]["realized_pnl"] == "10.00000000"
+
+
+def test_short_bracket_take_profit_closes_with_buy_exit():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "short-entry",
+            "symbol": "ETH/USDT",
+            "side": "short",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    triggered = exchange.update_price("ETH/USDT", Decimal("90"))
+
+    assert exchange.orders[0].side == "sell"
+    assert exchange.list_positions()[0]["quantity"] == "0.00000000"
+    assert exchange.list_positions()[0]["realized_pnl"] == "10.00000000"
+    assert triggered == [
+        {"symbol": "ETH/USDT", "kind": "take_profit", "price": "90.00000000", "quantity": "1.00000000"}
+    ]
+    assert exchange.orders[-1].side == "buy"
+
+
+def test_short_trailing_stop_ratcheted_down_then_triggers_on_bounce():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    signal = normalize_signal(
+        {
+            "signal_id": "short-trailing-entry",
+            "symbol": "ETH/USDT",
+            "side": "sell",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "10",
+            "take_profit_pct": "30",
+            "trailing_stop_pct": "5",
+            "trailing_activation_pct": "4",
+        },
+        source="test",
+    )
+    engine.process_signal(signal)
+
+    before_activation = exchange.update_price("ETH/USDT", Decimal("97"))
+    activation_mark = exchange.update_price("ETH/USDT", Decimal("96"))
+    trailing_activated = exchange.lots[0].trailing_activated
+    trailing_exit = next(exit_order for exit_order in exchange.lots[0].exit_orders if exit_order.kind == "trailing_stop")
+    pullback = exchange.update_price("ETH/USDT", Decimal("100.80"))
+
+    assert before_activation == []
+    assert activation_mark == []
+    assert trailing_activated is True
+    assert trailing_exit.trigger_price == Decimal("100.80")
+    assert pullback == [
+        {"symbol": "ETH/USDT", "kind": "trailing_stop", "price": "100.80000000", "quantity": "1.00000000"}
+    ]
+    assert exchange.orders[-1].side == "buy"
+
+
+def test_short_open_notional_counts_against_exposure_cap():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    short_signal = normalize_signal(
+        {
+            "signal_id": "short-exposure",
+            "symbol": "ETH/USDT",
+            "side": "sell",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+        },
+        source="test",
+    )
+    engine.process_signal(short_signal)
+
+    assert exchange.open_notional() == Decimal("100")
+    assert exchange.list_positions()[0]["quantity"] == "-1.00000000"
+
+
+def test_plain_sell_does_not_disturb_open_short_lot():
+    exchange = PaperExchange()
+    engine = TradingEngine(exchange=exchange)
+    short_signal = normalize_signal(
+        {
+            "signal_id": "short-kept",
+            "symbol": "ETH/USDT",
+            "side": "short",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+        },
+        source="test",
+    )
+    plain_sell = normalize_signal(
+        {
+            "signal_id": "plain-sell",
+            "symbol": "ETH/USDT",
+            "side": "sell",
+            "base_amount": "1",
+            "price": "95",
+        },
+        source="test",
+    )
+
+    engine.process_signal(short_signal)
+    engine.process_signal(plain_sell)
+
+    assert exchange.list_positions()[0]["quantity"] == "-1.00000000"
+    assert exchange.open_notional() == Decimal("100")
+    assert len(exchange.lots) == 1

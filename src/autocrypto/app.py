@@ -573,6 +573,7 @@ def _active_exits_to_dict(lots: list[Any]) -> list[dict[str, str]]:
     return [
         {
             "symbol": lot.symbol,
+            "direction": lot.direction,
             "kind": exit_order.kind,
             "trigger_price": str(exit_order.trigger_price),
             "close_pct": str(exit_order.close_pct),
@@ -582,6 +583,7 @@ def _active_exits_to_dict(lots: list[Any]) -> list[dict[str, str]]:
             else None,
             "trailing_activated": str(lot.trailing_activated).lower() if exit_order.kind == "trailing_stop" else None,
             "high_water_mark": str(lot.high_water_mark) if exit_order.kind == "trailing_stop" and lot.high_water_mark else None,
+            "low_water_mark": str(lot.low_water_mark) if exit_order.kind == "trailing_stop" and lot.low_water_mark else None,
             "breakeven_trigger_pct": str(lot.breakeven_trigger_pct) if lot.breakeven_trigger_pct else None,
             "breakeven_applied": str(lot.breakeven_applied).lower(),
             "signal_id": lot.signal_id,

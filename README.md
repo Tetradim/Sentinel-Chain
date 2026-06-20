@@ -16,7 +16,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Supports approval-required mode with persisted pending approvals
 - Records paper orders, paper positions, realized PnL, active bracket lots, and audit events
 - Rehydrates paper positions, bracket lots, and exposure risk state from SQLite after restart
-- Triggers paper stop-loss, single or staged take-profit, activation-gated trailing-stop, and break-even exits from `POST /market/price`
+- Triggers paper long and short stop-loss, single or staged take-profit, activation-gated trailing-stop, and break-even exits from `POST /market/price`
 - Previews server-side risk decisions from the operator UI without placing orders
 - Shows persisted signal history with one-click reload into the Trading Desk
 - Supports quote-notional and base-quantity ticket sizing, paper position close controls, bracket lot context and trigger tests, and local unrealized P&L marks in the operator UI
@@ -119,7 +119,7 @@ python scripts/operator_ui_smoke.py
 2. Auto-Crypto normalizes the crypto symbol, side, size, price, exchange, and strategy metadata.
 3. Risk checks approve, reject, queue, or halt the signal.
 4. In paper mode, the bot records an accepted order and updates the paper portfolio.
-5. Price updates can trigger paper stop-loss, take-profit, or trailing-stop exits.
+5. Price updates can trigger paper stop-loss, take-profit, or trailing-stop exits. Long bracket exits sell; short bracket exits buy back paper quantity.
 6. Signals, orders, positions, approvals, and audit events are stored in SQLite when `AUTO_CRYPTO_DB_PATH` is set.
 
 ## Send A Test Crypto Alert
@@ -161,6 +161,8 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/market/price -ContentT
 
 For buy brackets, `stop_loss_pct` creates a fixed protective sell below entry, `take_profit_pct` creates a fixed profit-taking sell above entry, and `trailing_stop_pct` creates a sell stop that starts below entry and ratchets upward when `POST /market/price` marks a new high-water price. The trailing stop never moves lower. Add `trailing_activation_pct` to keep the trailing leg dormant until price has moved favorably by that percent, and add `breakeven_trigger_pct` to move protective stop exits up to the entry price after a favorable move.
 
+For short brackets, send `side: "sell"` or `side: "short"` with at least one exit field such as `stop_loss_pct`, `take_profit_pct`, or `trailing_stop_pct`. Paper stop-loss and trailing-stop triggers sit above entry, paper take-profit triggers sit below entry, and exit orders buy back paper quantity. Short trailing stops track a low-water price and ratchet downward only after favorable price movement; `trailing_activation_pct` delays arming until price falls by that percent. A plain `SELL` without bracket fields remains a manual long close.
+
 Use `take_profit_targets` for staged exits. Each target accepts `pct` and `close_pct`, and the total `close_pct` cannot exceed `100`. For example, `[{ "pct": "3", "close_pct": "50" }, { "pct": "6", "close_pct": "50" }]` sells half of the original paper lot at 3% profit and the remaining half at 6% profit. If the first target fills and price later falls to the stop, the remaining paper quantity exits through the stop-loss or trailing-stop leg. If `take_profit_targets` is omitted, `take_profit_pct` still creates one full-size take-profit target.
 
 ## Text Crypto Alerts
@@ -173,6 +175,7 @@ Supported examples:
 BUY BTCUSDT $125 @ 50000 SL 2.5% TP 5% TRAIL 3% ACT 2% BE 2%
 BUY SOLUSDT $50 @ 150 SL 3% TP 8% TS 4% BE 3%
 SELL ETH/USDT 0.25 @ 3000
+SHORT ETHUSDT $75 @ 3000 SL 2% TP 4% TRAIL 3% ACT 1%
 ```
 
 Validate text without placing an order:
@@ -237,7 +240,7 @@ Risk checks run before paper execution:
 - `daily_loss_limit_exceeded`
 - `price_required_for_base_amount`
 
-Set `AUTO_CRYPTO_MAX_OPEN_NOTIONAL` above `0` to cap cumulative open buy exposure. Set `AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT` above `0` to limit a single ticket to a percentage of account equity. Set `AUTO_CRYPTO_MAX_STOP_LOSS_PCT`, `AUTO_CRYPTO_MAX_TRAILING_STOP_PCT`, and `AUTO_CRYPTO_MIN_REWARD_RISK_RATIO` above `0` to reject alerts whose fixed stop or trailing stop is too wide or whose take-profit does not justify the stop risk. Set `AUTO_CRYPTO_MAX_CONSECUTIVE_LOSSES` above `0` to pause new entries after repeated losing bracket exits. SQLite-backed paper state restores open exposure after restart, and triggered paper exits release exposure for later risk checks.
+Set `AUTO_CRYPTO_MAX_OPEN_NOTIONAL` above `0` to cap cumulative open long plus short paper exposure. Set `AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT` above `0` to limit a single ticket to a percentage of account equity. Set `AUTO_CRYPTO_MAX_STOP_LOSS_PCT`, `AUTO_CRYPTO_MAX_TRAILING_STOP_PCT`, and `AUTO_CRYPTO_MIN_REWARD_RISK_RATIO` above `0` to reject alerts whose fixed stop or trailing stop is too wide or whose take-profit does not justify the stop risk. Set `AUTO_CRYPTO_MAX_CONSECUTIVE_LOSSES` above `0` to pause new entries after repeated losing bracket exits. SQLite-backed paper state restores open exposure after restart, and triggered paper exits release exposure for later risk checks.
 
 ## Research Notes
 
@@ -247,6 +250,7 @@ Current bot work is guided by paper-first risk controls and exchange order behav
 - Binance order payloads expose trailing-stop fields such as `trailingDelta` and `trailingTime`, which is useful when mapping paper behavior to future live adapters: <https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints>
 - Coinbase describes bracket and TP/SL orders as linked exits where only the triggered side executes and the other side is turned off, which is the behavior Auto-Crypto mirrors in paper bracket lots: <https://help.coinbase.com/en/coinbase/trading-and-funding/advanced-trade/order-types>
 - CCXT notes that trailing orders and stop/take-profit parameters vary by exchange, so Auto-Crypto keeps exchange-specific live execution disabled and paper-first until adapter capability checks are explicit: <https://docs.ccxt.com/docs/faq>
+- CCXT documents take-profit and stop-loss orders as closing orders for an existing position, including an inverted side when closing a sell/short position; Auto-Crypto now mirrors that by using paper buy exits for short bracket lots: <https://github.com/ccxt/ccxt/wiki/manual>
 - CCXT's order FAQ also recommends checking exchange feature flags for native take-profit and stop-loss support; this is why staged TP/SL simulation is recorded as paper behavior instead of assuming a portable live bracket implementation: <https://github.com/ccxt/ccxt/wiki/FAQ/9e4963a7b3438ba4fee47be1ec6922f4baf6684e>
 - Bot setting guidance consistently emphasizes stop loss, take profit, demo/paper testing, backtesting, and position sizing before live automation: <https://bitsgap.com/blog/how-to-choose-crypto-trading-bot-settings-in-2026-range-investment-stop-loss-and-take-profit>
 
