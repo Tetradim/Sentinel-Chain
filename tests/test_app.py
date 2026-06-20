@@ -87,3 +87,58 @@ def test_signal_preview_includes_synthetic_bracket_plan_for_short_trailing_order
         ("take_profit", "90.00"),
         ("trailing_stop", "103.00"),
     ]
+
+
+def test_signal_preview_reports_risk_sized_bracket_metrics():
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/signals/preview",
+        json={
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "risk_pct": "1",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["risk"]["order_notional"] == "2000"
+    assert body["bracket_plan"]["estimated_quantity"] == "20"
+    assert body["bracket_plan"]["worst_case_loss"] == "100"
+    assert body["bracket_plan"]["risk_pct_of_equity"] == "1.00"
+    assert body["bracket_plan"]["first_target_reward"] == "200"
+    assert body["bracket_plan"]["first_target_reward_risk_ratio"] == "2"
+
+
+def test_backtest_signal_replays_price_path_without_mutating_live_engine():
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/backtest/signal",
+        json={
+            "signal": {
+                "symbol": "BTCUSDT",
+                "side": "buy",
+                "quote_amount": "100",
+                "price": "100",
+                "stop_loss_pct": "5",
+                "take_profit_pct": "10",
+            },
+            "prices": ["104", "110"],
+        },
+    )
+    positions_after = client.get("/positions")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "accepted"
+    assert body["total_triggers"] == 1
+    assert body["final_daily_pnl"] == "10"
+    assert body["final_open_notional"] == "0"
+    assert positions_after.json()["positions"] == []

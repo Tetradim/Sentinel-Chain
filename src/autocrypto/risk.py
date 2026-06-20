@@ -11,6 +11,7 @@ class RiskConfig:
     max_order_notional: Decimal = Decimal("1000")
     max_open_notional: Decimal = Decimal("0")
     max_position_equity_pct: Decimal = Decimal("0")
+    max_risk_per_trade_pct: Decimal = Decimal("0")
     max_leverage: Decimal = Decimal("1")
     max_daily_loss: Decimal = Decimal("500")
     max_consecutive_losses: int = 0
@@ -45,7 +46,6 @@ def evaluate_signal(
     account_state: AccountState,
 ) -> RiskDecision:
     reasons: list[str] = []
-    order_notional = _order_notional(signal, reasons)
 
     if config.allowed_symbols and signal.symbol not in config.allowed_symbols:
         reasons.append("symbol_not_allowed")
@@ -61,6 +61,7 @@ def evaluate_signal(
         stop_loss_pct = _stop_loss_pct(signal, reasons)
         take_profit_pct = _take_profit_pct(signal, reasons)
         _validate_take_profit_targets(signal, reasons)
+    order_notional = _order_notional(signal, reasons, account_state, stop_loss_pct)
     if config.require_stop_loss and opens_position and stop_loss_pct is None:
         reasons.append("stop_loss_required")
     if order_notional is not None and config.max_order_notional > 0 and order_notional > config.max_order_notional:
@@ -79,6 +80,12 @@ def evaluate_signal(
         and order_notional > account_state.equity * config.max_position_equity_pct / Decimal("100")
     ):
         reasons.append("max_position_equity_pct_exceeded")
+    if (
+        signal.risk_pct is not None
+        and config.max_risk_per_trade_pct > 0
+        and signal.risk_pct > config.max_risk_per_trade_pct
+    ):
+        reasons.append("max_risk_per_trade_pct_exceeded")
     if config.max_leverage > 0 and signal.leverage > config.max_leverage:
         reasons.append("max_leverage_exceeded")
     if config.max_daily_loss > 0 and account_state.daily_pnl <= -config.max_daily_loss:
@@ -114,7 +121,12 @@ def evaluate_signal(
     return RiskDecision(approved=not reasons, reason_codes=reasons, order_notional=order_notional)
 
 
-def _order_notional(signal: CryptoSignal, reasons: list[str]) -> Decimal | None:
+def _order_notional(
+    signal: CryptoSignal,
+    reasons: list[str],
+    account_state: AccountState,
+    stop_loss_pct: Decimal | None,
+) -> Decimal | None:
     if signal.quote_amount is not None:
         return signal.quote_amount
     if signal.base_amount is not None:
@@ -122,6 +134,17 @@ def _order_notional(signal: CryptoSignal, reasons: list[str]) -> Decimal | None:
             reasons.append("price_required_for_base_amount")
             return None
         return signal.base_amount * signal.price
+    risk_budget = signal.risk_amount
+    if risk_budget is None and signal.risk_pct is not None:
+        risk_budget = account_state.equity * signal.risk_pct / Decimal("100")
+    if risk_budget is not None:
+        if stop_loss_pct is None:
+            reasons.append("risk_sizing_requires_stop_loss")
+            return None
+        if stop_loss_pct <= 0:
+            reasons.append("invalid_stop_loss_price")
+            return None
+        return risk_budget / (stop_loss_pct / Decimal("100"))
     reasons.append("order_size_required")
     return None
 

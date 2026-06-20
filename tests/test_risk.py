@@ -56,6 +56,60 @@ def test_risk_approves_valid_signal_and_reports_notional():
     assert decision.reason_codes == []
 
 
+def test_risk_sizes_order_from_risk_percent_and_stop_distance():
+    signal = normalize_signal(
+        {
+            "symbol": "SOL/USDT",
+            "side": "buy",
+            "risk_pct": "1",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(signal, RiskConfig(max_order_notional=Decimal("5000")), AccountState(equity=Decimal("10000")))
+
+    assert decision.approved is True
+    assert decision.order_notional == Decimal("2000")
+    assert decision.reason_codes == []
+
+
+def test_risk_rejects_risk_sizing_without_stop_or_above_risk_pct_cap():
+    missing_stop = normalize_signal(
+        {
+            "symbol": "SOL/USDT",
+            "side": "buy",
+            "risk_pct": "1",
+            "price": "100",
+        },
+        source="test",
+    )
+    too_much_risk = normalize_signal(
+        {
+            "symbol": "SOL/USDT",
+            "side": "buy",
+            "risk_pct": "3",
+            "price": "100",
+            "stop_loss_pct": "5",
+        },
+        source="test",
+    )
+
+    missing_stop_decision = evaluate_signal(missing_stop, RiskConfig(require_stop_loss=True), AccountState())
+    too_much_risk_decision = evaluate_signal(
+        too_much_risk,
+        RiskConfig(max_order_notional=Decimal("10000"), max_risk_per_trade_pct=Decimal("2")),
+        AccountState(equity=Decimal("10000")),
+    )
+
+    assert missing_stop_decision.approved is False
+    assert "risk_sizing_requires_stop_loss" in missing_stop_decision.reason_codes
+    assert too_much_risk_decision.approved is False
+    assert "max_risk_per_trade_pct_exceeded" in too_much_risk_decision.reason_codes
+
+
 def test_risk_rejects_exchange_not_allowlisted_by_default():
     signal = normalize_signal(
         {

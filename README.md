@@ -13,6 +13,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Normalizes crypto pairs such as `BTCUSDT`, `BTC/USDT`, `ETH-USDC`, and `SOL_USDT`
 - Blocks duplicate signal IDs across restarts with SQLite-backed idempotency
 - Applies pre-trade risk checks for stop loss, maximum stop width, minimum reward/risk, max order notional, max open notional, equity-percent position size, leverage, slippage, allowed exchanges, blocked symbols, daily loss, and consecutive losing exits
+- Supports fixed-fraction paper sizing from `risk_pct` or `risk_amount` plus stop distance, with an optional max risk-percent cap
 - Supports approval-required mode with persisted pending approvals
 - Records paper orders, paper positions, realized PnL, active bracket lots, and audit events
 - Rehydrates paper positions, bracket lots, and exposure risk state from SQLite after restart
@@ -25,6 +26,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Cancels active synthetic paper bracket exits by signal ID while leaving the underlying paper position open for separate manual management
 - Previews hypothetical market-price marks and bracket/trailing exits without mutating paper orders or positions
 - Previews server-side risk decisions from the operator UI without placing orders
+- Backtests one signal against a supplied paper mark-price path without mutating the live in-memory engine
 - Shows persisted signal history with one-click reload into the Trading Desk
 - Supports quote-notional and base-quantity ticket sizing, paper position close controls, bracket lot context and trigger tests, and local unrealized P&L marks in the operator UI
 - Captures inline halt and approval rejection reasons in operator workflows
@@ -254,12 +256,14 @@ Required fields:
 
 - `symbol`, `ticker`, or `pair`
 - `side` or `action`
-- `quote_amount`, `notional`, `base_amount`, `quantity`, or `qty`
+- `quote_amount`, `notional`, `base_amount`, `quantity`, `qty`, `risk_amount`, or `risk_pct`
 
 Recommended fields:
 
 - `signal_id`
 - `price`, `entry_price`, or `limit_price`
+- `risk_amount` to size the paper notional from a fixed quote-currency risk budget and stop distance
+- `risk_pct` to size the paper notional from account equity percent and stop distance
 - `stop_loss_pct`
 - `stop_loss_price` or `stop_price`
 - `take_profit_pct`
@@ -285,6 +289,7 @@ Risk checks run before paper execution:
 - `max_order_notional_exceeded`
 - `max_open_notional_exceeded`
 - `max_position_equity_pct_exceeded`
+- `max_risk_per_trade_pct_exceeded`
 - `max_leverage_exceeded`
 - `max_slippage_exceeded`
 - `consecutive_loss_limit_exceeded`
@@ -302,8 +307,11 @@ Risk checks run before paper execution:
 - `symbol_blocked`
 - `daily_loss_limit_exceeded`
 - `price_required_for_base_amount`
+- `risk_sizing_requires_stop_loss`
 
-Set `AUTO_CRYPTO_MAX_OPEN_NOTIONAL` above `0` to cap cumulative open long plus short paper exposure. Set `AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT` above `0` to limit a single ticket to a percentage of account equity. Set `AUTO_CRYPTO_MAX_STOP_LOSS_PCT`, `AUTO_CRYPTO_MAX_TRAILING_STOP_PCT`, and `AUTO_CRYPTO_MIN_REWARD_RISK_RATIO` above `0` to reject alerts whose fixed stop or trailing stop is too wide or whose take-profit does not justify the stop risk. Absolute `stop_loss_price` and `take_profit_price` values are converted to entry-relative percentages for those same checks, and every staged absolute take-profit target is checked for the correct side of entry. Set `AUTO_CRYPTO_MAX_CONSECUTIVE_LOSSES` above `0` to pause new entries after repeated losing bracket exits. SQLite-backed paper state restores open exposure after restart, and triggered paper exits release exposure for later risk checks.
+Set `AUTO_CRYPTO_MAX_OPEN_NOTIONAL` above `0` to cap cumulative open long plus short paper exposure. Set `AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT` above `0` to limit a single ticket to a percentage of account equity. Set `AUTO_CRYPTO_MAX_RISK_PER_TRADE_PCT` above `0` to cap `risk_pct` sizing requests. Set `AUTO_CRYPTO_MAX_STOP_LOSS_PCT`, `AUTO_CRYPTO_MAX_TRAILING_STOP_PCT`, and `AUTO_CRYPTO_MIN_REWARD_RISK_RATIO` above `0` to reject alerts whose fixed stop or trailing stop is too wide or whose take-profit does not justify the stop risk. Absolute `stop_loss_price` and `take_profit_price` values are converted to entry-relative percentages for those same checks, and every staged absolute take-profit target is checked for the correct side of entry. Set `AUTO_CRYPTO_MAX_CONSECUTIVE_LOSSES` above `0` to pause new entries after repeated losing bracket exits. SQLite-backed paper state restores open exposure after restart, and triggered paper exits release exposure for later risk checks.
+
+When `quote_amount` and `base_amount` are omitted, JSON signals may set `risk_amount` or `risk_pct` with a stop loss. Auto-Crypto computes the paper order notional as `risk budget / stop distance`. For example, `risk_pct: "1"` with `equity: 10000` and `stop_loss_pct: "5"` sizes a `2000` paper notional so the stop represents about `100` quote currency of paper risk before slippage.
 
 ## Research Notes
 
@@ -322,6 +330,8 @@ Current bot work is guided by paper-first risk controls and exchange order behav
 - CCXT's trailing-order FAQ calls out `reduceOnly` as an exchange-dependent way to close rather than open exposure; Auto-Crypto supports paper `reduce_only` and `close_short` intents while keeping live execution disabled: <https://docs.ccxt.com/docs/faq>
 - CCXT's order FAQ also recommends checking exchange feature flags for native take-profit and stop-loss support; this is why staged TP/SL simulation is recorded as paper behavior instead of assuming a portable live bracket implementation: <https://github.com/ccxt/ccxt/wiki/FAQ/9e4963a7b3438ba4fee47be1ec6922f4baf6684e>
 - Bot setting guidance consistently emphasizes stop loss, take profit, demo/paper testing, backtesting, and position sizing before live automation: <https://bitsgap.com/blog/how-to-choose-crypto-trading-bot-settings-in-2026-range-investment-stop-loss-and-take-profit>
+- Recent crypto-bot risk guidance highlights fixed-fraction sizing, commonly around 1-2% per trade, plus stop-loss and drawdown limits before live automation; Auto-Crypto's `risk_pct` sizing stays paper-only and can be capped with `AUTO_CRYPTO_MAX_RISK_PER_TRADE_PCT`: <https://cryptorobot.ai/blog/essential-tips-managing-risks-crypto-trading-bots>
+- Current crypto backtesting guidance emphasizes testing strategies on historical or simulated price paths before launch; Auto-Crypto's `/backtest/signal` endpoint applies that idea to bracket and trailing-stop paper logic without mutating active state: <https://bitsgap.com/blog/crypto-backtesting-guide-2025-tools-tips-and-how-bitsgap-helps>
 
 ## Environment Variables
 
@@ -337,6 +347,7 @@ AUTO_CRYPTO_WEBHOOK_TOLERANCE_SECONDS=300
 AUTO_CRYPTO_MAX_ORDER_NOTIONAL=1000
 AUTO_CRYPTO_MAX_OPEN_NOTIONAL=0
 AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT=0
+AUTO_CRYPTO_MAX_RISK_PER_TRADE_PCT=0
 AUTO_CRYPTO_MAX_LEVERAGE=1
 AUTO_CRYPTO_MAX_DAILY_LOSS=500
 AUTO_CRYPTO_MAX_CONSECUTIVE_LOSSES=0
@@ -392,6 +403,7 @@ Signal intake:
 - `POST /signals/preview`
 - `POST /signals/submit-text`
 - `POST /signals/submit`
+- `POST /backtest/signal`
 
 Paper market updates:
 
@@ -402,7 +414,9 @@ Paper market updates:
 - `POST /brackets/{signal_id}/stop`
 - `POST /brackets/{signal_id}/cancel`
 
-`POST /signals/preview` and `POST /signals/preview-text` return a `bracket_plan` object with the synthetic entry side, exit side, OCA group, trailing arming state, and stop/take-profit/trailing triggers that would be attached if the signal were submitted.
+`POST /signals/preview` and `POST /signals/preview-text` return a `bracket_plan` object with the synthetic entry side, exit side, OCA group, trailing arming state, stop/take-profit/trailing triggers, estimated notional and quantity, worst-case stop loss, equity risk percent, and first-target reward/risk estimate that would apply if the signal were submitted.
+
+`POST /backtest/signal` accepts a `signal` object plus a `prices` list, runs the signal through an isolated paper engine, marks each supplied price, and returns triggered exits, final paper P&L, final open notional, and final positions. It does not save orders, write audit events, or mutate the active engine.
 
 `POST /market/price/preview` returns the paper exits that would trigger at a hypothetical mark without mutating orders, positions, audit history, daily P&L, or exposure. Use it before applying a mark when testing bracket and trailing-stop behavior.
 

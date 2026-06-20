@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .approvals import ApprovalQueue
+from .backtest import run_signal_backtest
 from .bot_event_bus import BotEvent, event_bus
 from .config import load_settings
 from .edge_actions import apply_edge_action
@@ -501,6 +502,20 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return _signal_preview(signal, engine, require_approval=require_approval)
 
+    @app.post("/backtest/signal")
+    async def backtest_signal(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        signal_payload = payload.get("signal") if isinstance(payload.get("signal"), dict) else payload
+        marks_payload = payload.get("prices") or payload.get("marks") or []
+        if not isinstance(marks_payload, list) or not marks_payload:
+            raise HTTPException(status_code=400, detail="prices must be a non-empty list")
+        try:
+            signal = normalize_signal(signal_payload, source="operator-backtest")
+            prices = [_positive_decimal(price) for price in marks_payload]
+        except (SignalValidationError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return run_signal_backtest(engine, signal, prices).to_dict()
+
     @app.get("/audit")
     def audit() -> dict[str, Any]:
         return {"events": [event.to_dict() for event in repository.list_audit()] if repository else []}
@@ -574,6 +589,7 @@ def _risk_config_to_dict(config: RiskConfig) -> dict[str, Any]:
         "max_order_notional": str(config.max_order_notional),
         "max_open_notional": str(config.max_open_notional),
         "max_position_equity_pct": str(config.max_position_equity_pct),
+        "max_risk_per_trade_pct": str(config.max_risk_per_trade_pct),
         "max_leverage": str(config.max_leverage),
         "max_daily_loss": str(config.max_daily_loss),
         "max_consecutive_losses": config.max_consecutive_losses,
@@ -607,6 +623,8 @@ def _signal_to_dict(signal: CryptoSignal) -> dict[str, Any]:
         "market_type": signal.market_type,
         "quote_amount": str(signal.quote_amount) if signal.quote_amount is not None else None,
         "base_amount": str(signal.base_amount) if signal.base_amount is not None else None,
+        "risk_amount": str(signal.risk_amount) if signal.risk_amount is not None else None,
+        "risk_pct": str(signal.risk_pct) if signal.risk_pct is not None else None,
         "price": str(signal.price) if signal.price is not None else None,
         "stop_loss_pct": str(signal.stop_loss_pct) if signal.stop_loss_pct is not None else None,
         "stop_loss_price": str(signal.stop_loss_price) if signal.stop_loss_price is not None else None,
@@ -638,7 +656,7 @@ def _risk_decision_to_dict(decision: RiskDecision) -> dict[str, Any]:
     return {
         "approved": decision.approved,
         "reason_codes": decision.reason_codes,
-        "order_notional": str(decision.order_notional) if decision.order_notional is not None else None,
+        "order_notional": _decimal_to_plain(decision.order_notional) if decision.order_notional is not None else None,
     }
 
 
@@ -668,20 +686,39 @@ def _signal_preview(
             "halt_reason": engine.halt_reason,
             "approval_required": require_approval,
         },
-        "bracket_plan": _bracket_plan_to_dict(signal),
+        "bracket_plan": _bracket_plan_to_dict(signal, decision, engine.account_state),
         "account": _account_state_to_dict(engine.account_state),
     }
 
 
-def _bracket_plan_to_dict(signal: CryptoSignal) -> dict[str, Any]:
+def _bracket_plan_to_dict(signal: CryptoSignal, decision: RiskDecision, account_state: AccountState) -> dict[str, Any]:
     exits = build_exit_orders(signal)
     exit_side = "sell" if signal.side == "buy" else "buy"
     trailing_starts_armed = signal.trailing_stop_pct is not None and signal.trailing_activation_pct is None
+    stop_exit = next((exit_order for exit_order in exits if exit_order.kind == "stop_loss"), None)
+    first_target = next((exit_order for exit_order in exits if exit_order.kind == "take_profit"), None)
+    estimated_quantity = (
+        decision.order_notional / signal.price
+        if decision.order_notional is not None and signal.price is not None
+        else None
+    )
+    worst_case_loss = _worst_case_loss(signal, decision.order_notional, stop_exit)
+    first_target_reward = _target_reward(signal, decision.order_notional, first_target)
     return {
         "entry_side": signal.side,
         "exit_side": exit_side,
         "oca_group": exits[0].oca_group if exits else None,
         "trailing_starts_armed": trailing_starts_armed,
+        "estimated_notional": _decimal_to_plain(decision.order_notional) if decision.order_notional is not None else None,
+        "estimated_quantity": _decimal_to_plain(estimated_quantity) if estimated_quantity is not None else None,
+        "worst_case_loss": _decimal_to_plain(worst_case_loss) if worst_case_loss is not None else None,
+        "risk_pct_of_equity": _decimal_to_plain(worst_case_loss / account_state.equity * Decimal("100"))
+        if worst_case_loss is not None and account_state.equity > 0
+        else None,
+        "first_target_reward": _decimal_to_plain(first_target_reward) if first_target_reward is not None else None,
+        "first_target_reward_risk_ratio": _decimal_to_plain(first_target_reward / worst_case_loss)
+        if first_target_reward is not None and worst_case_loss is not None and worst_case_loss > 0
+        else None,
         "exits": [
             {
                 "kind": exit_order.kind,
@@ -693,6 +730,37 @@ def _bracket_plan_to_dict(signal: CryptoSignal) -> dict[str, Any]:
             for exit_order in exits
         ],
     }
+
+
+def _worst_case_loss(signal: CryptoSignal, notional: Decimal | None, stop_exit: Any | None) -> Decimal | None:
+    if notional is None or signal.price is None or stop_exit is None:
+        return None
+    stop_distance = (
+        signal.price - stop_exit.trigger_price
+        if signal.side == "buy"
+        else stop_exit.trigger_price - signal.price
+    )
+    if stop_distance <= 0:
+        return None
+    return notional * stop_distance / signal.price
+
+
+def _target_reward(signal: CryptoSignal, notional: Decimal | None, target_exit: Any | None) -> Decimal | None:
+    if notional is None or signal.price is None or target_exit is None:
+        return None
+    target_distance = (
+        target_exit.trigger_price - signal.price
+        if signal.side == "buy"
+        else signal.price - target_exit.trigger_price
+    )
+    if target_distance <= 0:
+        return None
+    target_notional = notional * target_exit.close_pct / Decimal("100")
+    return target_notional * target_distance / signal.price
+
+
+def _decimal_to_plain(value: Decimal) -> str:
+    return format(value, "f")
 
 
 def _active_exits_to_dict(lots: list[Any], *, signal_id: str | None = None) -> list[dict[str, str]]:

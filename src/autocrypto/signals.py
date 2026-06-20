@@ -28,6 +28,8 @@ class CryptoSignal:
     market_type: str = "spot"
     quote_amount: Decimal | None = None
     base_amount: Decimal | None = None
+    risk_amount: Decimal | None = None
+    risk_pct: Decimal | None = None
     price: Decimal | None = None
     stop_loss_pct: Decimal | None = None
     stop_loss_price: Decimal | None = None
@@ -71,9 +73,11 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
     symbol = normalize_symbol(payload.get("symbol") or payload.get("ticker") or payload.get("pair"))
     quote_amount = _optional_positive_decimal(payload.get("quote_amount") or payload.get("notional"))
     base_amount = _optional_positive_decimal(payload.get("base_amount") or payload.get("quantity") or payload.get("qty"))
+    risk_amount = _optional_positive_decimal(payload.get("risk_amount") or payload.get("risk_quote_amount"))
+    risk_pct = _optional_positive_decimal(payload.get("risk_pct") or payload.get("risk_percent"))
 
-    if quote_amount is None and base_amount is None:
-        raise SignalValidationError("signal requires quote_amount or base_amount")
+    if quote_amount is None and base_amount is None and risk_amount is None and risk_pct is None:
+        raise SignalValidationError("signal requires quote_amount, base_amount, risk_amount, or risk_pct")
 
     price = _optional_positive_decimal(payload.get("price") or payload.get("entry_price") or payload.get("limit_price"))
     stop_loss_pct = _optional_positive_decimal(_field(payload, bracket, "stop_loss_pct"))
@@ -105,6 +109,8 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         "market_type": market_type,
         "quote_amount": str(quote_amount) if quote_amount is not None else None,
         "base_amount": str(base_amount) if base_amount is not None else None,
+        "risk_amount": str(risk_amount) if risk_amount is not None else None,
+        "risk_pct": str(risk_pct) if risk_pct is not None else None,
         "price": str(price) if price is not None else None,
         "stop_loss_pct": str(stop_loss_pct) if stop_loss_pct is not None else None,
         "stop_loss_price": str(stop_loss_price) if stop_loss_price is not None else None,
@@ -137,6 +143,8 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         market_type=market_type,
         quote_amount=quote_amount,
         base_amount=base_amount,
+        risk_amount=risk_amount,
+        risk_pct=risk_pct,
         price=price,
         stop_loss_pct=stop_loss_pct,
         stop_loss_price=stop_loss_price,
