@@ -330,6 +330,7 @@ def create_app(
             "symbol": symbol,
             "price": str(price),
             "triggered": triggered,
+            "active_exits": _active_exits_to_dict(engine.exchange.lots),
             "realized_pnl_delta": str(realized_pnl_delta) if triggered else "0",
             "daily_pnl": str(engine.account_state.daily_pnl),
             "consecutive_losses": engine.account_state.consecutive_losses,

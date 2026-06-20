@@ -175,10 +175,14 @@ Supported examples:
 
 ```text
 BUY BTCUSDT $125 @ 50000 SL 2.5% TP 5% TRAIL 3% ACT 2% BE 2%
+BUY BTCUSDT $125 @ 50000 SL @ 49000 TP @ 51500 TRAIL 3%
+BUY BTCUSDT $125 @ 50000 SL 2% TP1 3% 50% TP2 @ 53000 50%
 BUY SOLUSDT $50 @ 150 SL 3% TP 8% TS 4% BE 3%
 SELL ETH/USDT 0.25 @ 3000
 SHORT ETHUSDT $75 @ 3000 SL 2% TP 4% TRAIL 3% ACT 1%
 ```
+
+Text alerts support percentage brackets (`SL 2%`, `TP 5%`), absolute brackets (`SL @ 49000`, `TP @ 51500`), and staged take-profit targets such as `TP1 3% 50% TP2 @ 53000 50%`. Staged text targets map to the same `take_profit_targets` structure as JSON alerts, and the parser rejects ambiguous prose rather than guessing.
 
 Validate text without placing an order:
 
@@ -256,6 +260,7 @@ Set `AUTO_CRYPTO_MAX_OPEN_NOTIONAL` above `0` to cap cumulative open long plus s
 Current bot work is guided by paper-first risk controls and exchange order behavior:
 
 - Binance documents spot trailing stops as dynamic contingent orders that track favorable price movement and trigger after a configured reversal delta; it also allows an optional stop price before tracking begins, which maps to Auto-Crypto's paper `trailing_activation_pct`: <https://developers.binance.com/docs/binance-spot-api-docs/faqs/trailing-stop-faq>
+- Binance.US currently describes trailing stops as stops whose trigger price follows favorable market movement and fires when the market moves against the position, matching Auto-Crypto's high-water and low-water paper trailing logic: <https://support.binance.us/en/articles/9842886-trailing-stop-orders-what-they-are-and-how-to-use-them>
 - Binance order payloads expose trailing-stop fields such as `trailingDelta` and `trailingTime`, which is useful when mapping paper behavior to future live adapters: <https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints>
 - Coinbase describes bracket and TP/SL orders as linked exits where only the triggered side executes and the other side is turned off, which is the behavior Auto-Crypto mirrors in paper bracket lots: <https://help.coinbase.com/en/coinbase/trading-and-funding/advanced-trade/order-types>
 - Coinbase Advanced Trade API attached TP/SL order examples use explicit stop and limit trigger prices, so Auto-Crypto accepts `stop_loss_price`, `take_profit_price`, and staged `trigger_price` values in addition to percentage offsets: <https://docs.cdp.coinbase.com/coinbase-app/advanced-trade-apis/guides/orders>
@@ -338,6 +343,8 @@ Signal intake:
 Paper market updates:
 
 - `POST /market/price`
+
+`POST /market/price` returns any triggered exits plus the current `active_exits` snapshot, including ratcheted trailing-stop trigger prices, activation state, and water marks.
 
 Operator controls:
 

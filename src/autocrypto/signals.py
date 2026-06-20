@@ -82,7 +82,7 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         payload.get("take_profit_price") or payload.get("target_price")
     )
     take_profit_targets = _take_profit_targets(payload.get("take_profit_targets"), take_profit_pct, take_profit_price)
-    take_profit_targets = _sort_take_profit_targets(take_profit_targets, side=side)
+    take_profit_targets = _sort_take_profit_targets(take_profit_targets, side=side, entry_price=price)
     if take_profit_pct is None and take_profit_targets:
         take_profit_pct = take_profit_targets[0].pct
     trailing_stop_pct = _optional_positive_decimal(payload.get("trailing_stop_pct"))
@@ -252,12 +252,21 @@ def _take_profit_targets(
     return tuple(targets)
 
 
-def _sort_take_profit_targets(targets: tuple[TakeProfitTarget, ...], *, side: str) -> tuple[TakeProfitTarget, ...]:
+def _sort_take_profit_targets(
+    targets: tuple[TakeProfitTarget, ...],
+    *,
+    side: str,
+    entry_price: Decimal | None,
+) -> tuple[TakeProfitTarget, ...]:
     def sort_key(target: TakeProfitTarget) -> Decimal:
-        if target.pct is not None:
-            return target.pct
+        if entry_price is not None and target.pct is not None:
+            direction = Decimal("1") if side == "buy" else Decimal("-1")
+            trigger_price = entry_price * (Decimal("1") + direction * target.pct / Decimal("100"))
+            return trigger_price if side == "buy" else -trigger_price
         if target.trigger_price is not None:
             return target.trigger_price if side == "buy" else -target.trigger_price
+        if target.pct is not None:
+            return target.pct if side == "buy" else -target.pct
         return Decimal("0")
 
     return tuple(sorted(targets, key=sort_key))

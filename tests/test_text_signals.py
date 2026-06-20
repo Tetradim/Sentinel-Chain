@@ -27,6 +27,32 @@ def test_parse_text_signal_accepts_ts_alias_for_trailing_stop():
     assert signal.trailing_stop_pct == Decimal("4")
 
 
+def test_parse_text_signal_accepts_absolute_bracket_prices():
+    signal = parse_text_signal("BUY BTCUSDT $125 @ 50000 SL @ 49000 TP @ 51500 TRAIL 3%", source="discord")
+
+    assert signal.symbol == "BTC/USDT"
+    assert signal.side == "buy"
+    assert signal.stop_loss_price == Decimal("49000")
+    assert signal.take_profit_price == Decimal("51500")
+    assert signal.take_profit_targets[0].trigger_price == Decimal("51500")
+
+
+def test_parse_text_signal_accepts_staged_take_profit_targets():
+    signal = parse_text_signal(
+        "SHORT ETHUSDT $75 @ 3000 SL @ 3060 TP1 3% 40% TP2 @ 2820 60% TRAIL 2% ACT 1%",
+        source="discord",
+    )
+
+    assert signal.symbol == "ETH/USDT"
+    assert signal.side == "sell"
+    assert signal.stop_loss_price == Decimal("3060")
+    assert [(target.pct, target.trigger_price, target.close_pct) for target in signal.take_profit_targets] == [
+        (Decimal("3"), None, Decimal("40")),
+        (None, Decimal("2820"), Decimal("60")),
+    ]
+    assert signal.trailing_activation_pct == Decimal("1")
+
+
 def test_parse_text_signal_supports_base_quantity_and_slash_symbol():
     signal = parse_text_signal("SELL ETH/USDT 0.25 @ 3000", source="discord")
 
