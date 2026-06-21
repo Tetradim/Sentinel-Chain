@@ -85,6 +85,34 @@ def test_normalizes_absolute_bracket_prices_and_reduce_only_close_short():
     ]
 
 
+@pytest.mark.parametrize(
+    ("side", "normalized_side"),
+    [
+        ("sell_to_close", "sell"),
+        ("reduce_long", "sell"),
+        ("buy_to_cover", "buy"),
+        ("cover_short", "buy"),
+        ("reduce_short", "buy"),
+    ],
+)
+def test_normalizes_position_close_side_aliases_as_reduce_only(side, normalized_side):
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": side,
+            "base_amount": "1",
+            "price": "95",
+            "stop_loss_price": "105",
+            "take_profit_price": "90",
+        },
+        source="test",
+    )
+
+    assert signal.side == normalized_side
+    assert signal.reduce_only is True
+    assert signal.stop_loss_price == Decimal("105")
+
+
 def test_normalizes_nested_bracket_order_payload():
     signal = normalize_signal(
         {

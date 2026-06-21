@@ -61,11 +61,20 @@ SIDE_ALIASES = {
     "long": "buy",
     "entry": "buy",
     "open_long": "buy",
+    "buy_to_open": "buy",
     "sell": "sell",
     "short": "sell",
+    "open_short": "sell",
+    "sell_short": "sell",
+    "sell_to_open": "sell",
     "close": "sell",
     "close_long": "sell",
+    "sell_to_close": "sell",
+    "reduce_long": "sell",
     "close_short": "buy",
+    "buy_to_cover": "buy",
+    "cover_short": "buy",
+    "reduce_short": "buy",
 }
 
 QUOTE_SUFFIXES = ("USDT", "USDC", "USD", "BTC", "ETH", "EUR")
@@ -269,7 +278,16 @@ def _normalize_side(value: Any) -> str:
 def _is_close_side(value: Any) -> bool:
     if value is None:
         return False
-    return str(value).strip().lower() in {"close", "close_long", "close_short"}
+    return str(value).strip().lower() in {
+        "close",
+        "close_long",
+        "sell_to_close",
+        "reduce_long",
+        "close_short",
+        "buy_to_cover",
+        "cover_short",
+        "reduce_short",
+    }
 
 
 def normalize_symbol(value: Any) -> str:

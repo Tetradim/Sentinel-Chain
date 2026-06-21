@@ -33,6 +33,60 @@ def test_market_price_endpoint_triggers_paper_exit_and_audit_event(tmp_path):
     assert audit_types[-1] == "exit.triggered"
 
 
+def test_market_price_endpoint_reports_oca_canceled_siblings(tmp_path):
+    repo = SQLiteRepository(tmp_path / "market_oca.sqlite3")
+    app = create_app(repository=repo)
+    client = TestClient(app)
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "market-oca-close",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+            "trailing_stop_pct": "4",
+        },
+    )
+
+    response = client.post(
+        "/market/price",
+        json={"symbol": "BTCUSDT", "price": "110", "include_order_metadata": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["triggered"] == [
+        {
+            "symbol": "BTC/USDT",
+            "kind": "take_profit",
+            "price": "110.00000000",
+            "quantity": "1.00000000",
+            "oca_group": "oca-market-oca-close",
+            "canceled_exit_orders": [
+                {
+                    "kind": "stop_loss",
+                    "trigger_price": "95.00",
+                    "close_pct": "100",
+                    "oca_group": "oca-market-oca-close",
+                    "status": "canceled",
+                },
+                {
+                    "kind": "trailing_stop",
+                    "trigger_price": "105.60",
+                    "close_pct": "100",
+                    "oca_group": "oca-market-oca-close",
+                    "status": "canceled",
+                },
+            ],
+        }
+    ]
+    audit_event = client.get("/audit").json()["events"][-1]
+    assert audit_event["event_type"] == "exit.triggered"
+    assert audit_event["data"]["triggered"][0]["canceled_exit_orders"][0]["kind"] == "stop_loss"
+
+
 def test_market_price_exit_reduces_open_notional_for_future_risk(tmp_path):
     repo = SQLiteRepository(tmp_path / "market_risk.sqlite3")
     app = create_app(

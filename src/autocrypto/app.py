@@ -21,6 +21,7 @@ from .brackets import (
     exit_distance,
     exit_intent,
     exit_ladder_sort_key,
+    exit_order_payload,
     exit_pnl,
     trailing_activation_price,
     trailing_ratchet_impacts,
@@ -313,18 +314,24 @@ def create_app(
         except BitunixRequestError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    async def _market_price_payload(request: Request) -> tuple[str, Decimal]:
+    async def _market_price_payload(request: Request) -> tuple[str, Decimal, bool]:
         payload = await request.json()
         try:
             symbol = normalize_symbol(payload.get("symbol"))
             price = _positive_decimal(payload.get("price"))
         except (SignalValidationError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return symbol, price
+        include_order_metadata = str(payload.get("include_order_metadata") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+        return symbol, price, include_order_metadata
 
     @app.post("/market/price/preview")
     async def market_price_preview(request: Request) -> dict[str, Any]:
-        symbol, price = await _market_price_payload(request)
+        symbol, price, _include_order_metadata = await _market_price_payload(request)
         preview_exchange = engine.exchange.preview_price_exchange(symbol, price)
         return {
             "symbol": symbol,
@@ -339,21 +346,26 @@ def create_app(
 
     @app.post("/market/price")
     async def market_price(request: Request) -> dict[str, Any]:
-        symbol, price = await _market_price_payload(request)
+        symbol, price, include_order_metadata = await _market_price_payload(request)
         order_offset = len(engine.exchange.orders)
         update = engine.mark_price(symbol, price)
+        triggered = (
+            _triggered_with_order_metadata(update.triggered, engine.exchange.orders[order_offset:])
+            if include_order_metadata
+            else update.triggered
+        )
         if repository:
             for order in engine.exchange.orders[order_offset:]:
                 repository.save_order(order)
             if update.triggered:
                 repository.record_audit(
                     "exit.triggered",
-                    {"symbol": symbol, "price": str(price), "triggered": update.triggered},
+                    {"symbol": symbol, "price": str(price), "triggered": triggered},
                 )
         return {
             "symbol": symbol,
             "price": str(price),
-            "triggered": update.triggered,
+            "triggered": triggered,
             "active_exits": _active_exits_to_dict(engine.exchange.lots, mark_price=price),
             "realized_pnl_delta": str(update.realized_pnl_delta),
             "daily_pnl": str(update.daily_pnl),
@@ -1399,6 +1411,27 @@ def _exchange_row(exchange_id: str, driver: str) -> dict[str, Any]:
         "credentials_configured": False,
         "live_execution_enabled": False,
     }
+
+
+def _triggered_with_order_metadata(triggered: list[dict], orders: list[Any]) -> list[dict]:
+    enriched: list[dict] = []
+    order_index = 0
+    for item in triggered:
+        payload = dict(item)
+        while order_index < len(orders):
+            order = orders[order_index]
+            order_index += 1
+            if order.exit_kind != item.get("kind"):
+                continue
+            if order.exit_orders:
+                payload["oca_group"] = order.exit_orders[0].oca_group
+            if order.canceled_exit_orders:
+                payload["canceled_exit_orders"] = [
+                    exit_order_payload(exit_order) for exit_order in order.canceled_exit_orders
+                ]
+            break
+        enriched.append(payload)
+    return enriched
 
 
 def _bitunix_exchange_row() -> dict[str, Any]:
