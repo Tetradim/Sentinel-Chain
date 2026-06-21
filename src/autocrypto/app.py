@@ -59,6 +59,7 @@ from .security import (
     verify_webhook_signature,
 )
 from .signals import CryptoSignal, SignalValidationError, normalize_signal, normalize_symbol
+from .strategy_presets import apply_strategy_preset, get_strategy_preset, list_strategy_presets
 from .text_signals import parse_text_signal
 
 
@@ -1209,6 +1210,28 @@ def create_app(
             "live_submission_enabled": False,
         }
 
+    @app.get("/strategy-presets")
+    def strategy_presets() -> dict[str, Any]:
+        return {
+            "presets": list_strategy_presets(),
+            "paper_only": True,
+            "live_submission_enabled": False,
+            "submit_endpoint": None,
+        }
+
+    @app.get("/strategy-presets/{preset_name}")
+    def strategy_preset(preset_name: str) -> dict[str, Any]:
+        try:
+            preset = get_strategy_preset(preset_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {
+            "preset": preset.to_dict(),
+            "paper_only": True,
+            "live_submission_enabled": False,
+            "submit_endpoint": None,
+        }
+
     @app.post("/signals/parse-text")
     async def parse_text(request: Request) -> dict[str, Any]:
         payload = await request.json()
@@ -1268,6 +1291,26 @@ def create_app(
         preview["template"] = get_bracket_template(str(templated_payload["bracket_template"])).to_dict()
         preview["merged_signal_payload"] = templated_payload
         preview["paper_only"] = True
+        return preview
+
+    @app.post("/signals/preview-strategy")
+    async def preview_strategy_signal(request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        try:
+            preset_payload = _strategy_signal_payload(payload)
+            signal = normalize_signal(preset_payload, source="operator-strategy-preview")
+        except SignalValidationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        preview = _signal_preview(signal, engine, require_approval=require_approval)
+        preview["strategy_preset"] = get_strategy_preset(str(preset_payload["strategy_preset"])).to_dict()
+        bracket_template_name = preset_payload.get("bracket_template")
+        if bracket_template_name:
+            preview["template"] = get_bracket_template(str(bracket_template_name)).to_dict()
+        preview["merged_signal_payload"] = preset_payload
+        preview["paper_only"] = True
+        preview["live_submission_enabled"] = False
         return preview
 
     @app.post("/signals/submit-template")
@@ -1581,6 +1624,45 @@ def _templated_signal_payload(payload: dict[str, Any]) -> dict[str, Any]:
         }
     overrides = payload.get("overrides") or payload.get("template_overrides")
     return apply_bracket_template(signal_payload, template_name, overrides=overrides)
+
+
+def _strategy_signal_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        raise ValueError("payload must be an object")
+    preset_name = str(payload.get("strategy") or payload.get("strategy_preset") or payload.get("preset") or "").strip()
+    if not preset_name:
+        raise ValueError("strategy preset is required")
+    signal_payload = payload.get("signal")
+    if signal_payload is None:
+        signal_payload = {
+            key: value
+            for key, value in payload.items()
+            if key
+            not in {
+                "strategy",
+                "strategy_preset",
+                "preset",
+                "overrides",
+                "strategy_overrides",
+                "template",
+                "template_name",
+                "bracket_template",
+                "template_overrides",
+            }
+        }
+    overrides = payload.get("overrides") or payload.get("strategy_overrides")
+    preset_payload = apply_strategy_preset(signal_payload, preset_name, overrides=overrides)
+    template_name = (
+        payload.get("template")
+        or payload.get("template_name")
+        or payload.get("bracket_template")
+        or get_strategy_preset(preset_name).suggested_bracket_template
+    )
+    return apply_bracket_template(
+        preset_payload,
+        str(template_name),
+        overrides=payload.get("template_overrides"),
+    )
 
 
 def _capabilities_for_signal_exchange(exchange_id: str) -> ExchangeCapabilities:

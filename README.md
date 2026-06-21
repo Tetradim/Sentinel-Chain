@@ -23,6 +23,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Triggers paper long and short stop-loss, single or staged take-profit, activation-gated trailing-stop, and break-even exits from `POST /market/price`
 - Accepts bracket exits either as top-level signal fields or nested under `bracket`, `bracket_order`, or `exit_plan`
 - Provides paper-only bracket templates (`fixed_bracket`, `activation_trailer`, and `staged_runner`) that can be previewed or submitted through the existing signal intake path without enabling live exchange execution
+- Provides preview-only strategy presets (`momentum_breakout`, `dip_reclaim`, and `range_reversion_short`) so entry intent is documented separately from bracket/exit templates
 - Rejects staged take-profit brackets when any absolute target is on the wrong side of entry for the order direction
 - Rejects absolute stop-loss, take-profit, trailing-start, and trailing-activation prices when they are on the wrong side of the entry for buy or short brackets
 - Rejects standalone break-even triggers unless there is a stop-loss or trailing-stop leg for the break-even rule to move
@@ -263,12 +264,22 @@ Operators can inspect active paper brackets, review bracket health flags, tighte
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8004/bracket-templates
+Invoke-RestMethod http://127.0.0.1:8004/strategy-presets
 
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/signals/preview-template -ContentType "application/json" -Body '{
   "template": "activation_trailer",
   "signal": {
     "symbol": "BTCUSDT",
     "side": "buy",
+    "quote_amount": "100",
+    "price": "50000"
+  }
+}'
+
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/signals/preview-strategy -ContentType "application/json" -Body '{
+  "strategy": "momentum_breakout",
+  "signal": {
+    "symbol": "BTCUSDT",
     "quote_amount": "100",
     "price": "50000"
   }
@@ -350,6 +361,10 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/brackets/btc-breakout-
 }'
 ```
 
+`GET /strategy-presets` lists preview-only entry-intent presets. They do not generate live signals and they do not submit orders; they standardize operator-reviewed context such as `strategy_id`, default side/market type, suggested backtest interval, and the recommended bracket template. `POST /signals/preview-strategy` accepts `{ "strategy": "...", "signal": {...}, "template": "optional_bracket_template", "overrides": {...}, "template_overrides": {...} }`, merges the strategy defaults, composes the suggested or requested bracket template, and returns the normal signal preview without creating a paper order.
+
+`GET /bracket-templates` lists paper-only bracket presets that operators can use as starter exit plans. `fixed_bracket` adds a fixed stop-loss and take-profit, `activation_trailer` adds a fixed initial stop plus activation-gated stepped trailing logic, and `staged_runner` adds staged targets, a take-profit-gated partial trailing leg, and breakeven-after-target behavior. `POST /signals/preview-template` accepts `{ "template": "...", "signal": {...}, "overrides": {...} }`, merges the template into the draft signal, then returns the same risk and bracket preview as `/signals/preview` without creating paper orders. `POST /signals/submit-template` uses the same merge path but hands the normalized result to the existing intake service, so the result is still paper or approval-gated according to the running app configuration.
+
 `POST /brackets/{signal_id}/preview` is signal-specific and paper-only. It runs the hypothetical mark against a deep copy of the selected paper bracket, returns only exits that would trigger for that bracket, and includes `distance_to_trigger`, `distance_to_trigger_pct`, and `trailing_activation_price` in the active-exit snapshot. The `impact` block reports `will_trigger`, `triggered_kinds`, `will_close_bracket`, remaining quantity before/after, quantity delta, and any simulated trailing-stop ratchet from the mark. It does not create orders, update P&L, record audit events, or mutate trailing stops on the active engine.
 
 `POST /brackets/{signal_id}/preview-path` is also signal-specific and paper-only. Send `prices` or `marks` as a non-empty list to replay several hypothetical marks through one deep-copied bracket state. The response includes each mark's `would_trigger` exits, `preview_active_exits` after that mark, simulated preview positions, and `mutates_state: false`; the live paper bracket, positions, audit log, and order history are unchanged. This is useful for reviewing whether an activation-gated or stepped trailing stop would ratchet before it would trigger.
@@ -357,8 +372,6 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/brackets/btc-breakout-
 `POST /brackets/{signal_id}/preview-candle` is the OHLC version of bracket path preview. Send `high`, `low`, and `close`, plus optional `open`/`open_price` and optional `intrabar_policy`. The default `conservative_adverse_first` policy replays the copied bracket as open, adverse extreme, favorable extreme, close; for long brackets that is `open`, `low`, `high`, `close`, while short brackets use `open`, `high`, `low`, `close`. Send `intrabar_policy: "favorable_first"` to inspect the optimistic opposite sequence. Every response includes an `outcome` block with trigger count, first trigger phase/kind, close status, remaining bracket quantity, final paper position quantity, and final realized P&L for the copied bracket path. Add `compare_policies: true` or `compare_intrabar_policies: true` to receive `policy_comparison`, which runs both supported policies, reports whether outcomes diverged, and returns the low/high/spread P&L range. Responses include `ambiguous_intrabar: true` and an `ambiguity` block when both protective and profit-taking exits are inside the same candle range, because OHLC data alone cannot prove which exit happened first. The active paper bracket, trailing water marks, positions, audit log, and order history are unchanged.
 
 `POST /brackets/{signal_id}/trailing-stop/preview-path` is a focused paper-only replay for trailing stops. Send `prices` or `marks` as a non-empty list to see each mark's trailing state before and after the copied bracket processes it, including `activated`, `ratcheted`, `next_trailing_trigger`, step-threshold telemetry, water marks, any simulated trigger, and `mutates_state: false`. Use it when the operator wants to understand whether an activation-gated or stepped trail would move before applying real paper marks or submitting a manual `/trailing-stop/mark` amendment.
-
-`GET /bracket-templates` lists paper-only bracket presets that operators can use as starter exit plans. `fixed_bracket` adds a fixed stop-loss and take-profit, `activation_trailer` adds a fixed initial stop plus activation-gated stepped trailing logic, and `staged_runner` adds staged targets, a take-profit-gated partial trailing leg, and breakeven-after-target behavior. `POST /signals/preview-template` accepts `{ "template": "...", "signal": {...}, "overrides": {...} }`, merges the template into the draft signal, then returns the same risk and bracket preview as `/signals/preview` without creating paper orders. `POST /signals/submit-template` uses the same merge path but hands the normalized result to the existing intake service, so the result is still paper or approval-gated according to the running app configuration.
 
 This preview behavior follows current trading-bot references. CCXT documents attached `stopLoss`/`takeProfit` and trailing order support as exchange-dependent, so Auto-Crypto keeps these previews synthetic and paper-only until venue-specific mappings are reviewed (<https://docs.ccxt.com/docs/faq>, <https://github.com/ccxt/ccxt/wiki/manual>). Binance documents OCO as a linked order list where one executed leg cancels the other, and also notes that trailing stops can be used as contingent OCO legs; Auto-Crypto mirrors that link-and-cancel shape in paper metadata while leaving live OCO disabled (<https://developers.binance.com/docs/binance-spot-api-docs/rest-api/trading-endpoints>, <https://developers.binance.com/docs/binance-spot-api-docs/faqs/trailing-stop-faq>). Coinbase describes take-profit/stop-loss attachments and bracket orders as predefined exit levels for risk management, and Kraken documents spot take-profit/stop-loss brackets while noting exclusions around trailing-stop combinations, so Auto-Crypto surfaces coverage and exchange-plan diagnostics instead of assuming every venue can carry the same native bracket shape (<https://help.coinbase.com/en/coinbase/trading-and-funding/advanced-trade/order-types>, <https://support.kraken.com/articles/bracket-orders-on-kraken-pro>). Freqtrade documents keeping a static stop until an offset is reached and ignoring stop changes that would loosen risk; those practices match Auto-Crypto's activation, step, and no-loosening trail previews (<https://www.freqtrade.io/en/stable/stoploss/>). Backtrader's bracket-order docs model linked stop-loss and take-profit children, with opposite-side exits for short positions, which matches the long-sell and short-buy paper exit accounting here (<https://www.backtrader.com/docu/order-creation-execution/bracket/bracket/>). Backtrader's trailing-stop docs describe long trails following price upward while short trails do the opposite; QuantConnect warns that synthetic OCO helpers can overstate certainty when both stop and take-profit orders fill inside the same bar; and the 2026 TradeZella backtesting guide warns that slippage, commissions, and execution assumptions matter. Auto-Crypto therefore exposes policy comparison, P&L range, and trigger-gap telemetry instead of pretending one OHLC ordering or mark fill is certain (<https://www.backtrader.com/docu/order-creation-execution/trail/stoptrail/>, <https://www.quantconnect.com/docs/v2/writing-algorithms/trading-and-orders/order-types/other-order-types>, <https://www.tradezella.com/blog/backtesting-trading-strategies>).
 
@@ -736,12 +749,15 @@ Signal intake:
 
 - `GET /bracket-templates`
 - `GET /bracket-templates/{template_name}`
+- `GET /strategy-presets`
+- `GET /strategy-presets/{preset_name}`
 - `POST /webhooks/tradingview`
 - `POST /webhooks/text-alert`
 - `POST /signals/parse-text`
 - `POST /signals/preview-text`
 - `POST /signals/preview`
 - `POST /signals/preview-template`
+- `POST /signals/preview-strategy`
 - `POST /signals/submit-template`
 - `POST /signals/submit-text`
 - `POST /signals/submit`
