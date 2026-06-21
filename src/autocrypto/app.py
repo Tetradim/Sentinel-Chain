@@ -588,6 +588,66 @@ def create_app(
             "account": _account_state_to_dict(engine.account_state),
         }
 
+    @app.post("/brackets/{signal_id}/trailing-stop/preview-path")
+    async def bracket_trailing_stop_preview_path(signal_id: str, request: Request) -> dict[str, Any]:
+        payload = await request.json()
+        marks_payload = payload.get("prices") or payload.get("marks") or []
+        if not isinstance(marks_payload, list) or not marks_payload:
+            raise HTTPException(status_code=400, detail="prices or marks must be a non-empty list")
+        try:
+            prices = [_positive_decimal(price) for price in marks_payload]
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        lots = [
+            lot
+            for lot in engine.exchange.lots
+            if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
+        ]
+        if not lots:
+            raise HTTPException(status_code=404, detail="active bracket not found")
+        if not any(exit_order.kind == "trailing_stop" for lot in lots for exit_order in lot.exit_orders):
+            raise HTTPException(status_code=404, detail="active trailing stop not found")
+
+        symbol = lots[0].symbol
+        preview_exchange = deepcopy(engine.exchange)
+        preview_exchange.lots = [
+            lot for lot in preview_exchange.lots if lot.signal_id == signal_id or lot.symbol != symbol
+        ]
+        steps: list[dict[str, Any]] = []
+        for index, price in enumerate(prices, start=1):
+            before = _trailing_preview_snapshot(preview_exchange.lots, signal_id=signal_id, mark_price=price)
+            triggered = preview_exchange.update_price(symbol, price)
+            after = _trailing_preview_snapshot(preview_exchange.lots, signal_id=signal_id, mark_price=price)
+            steps.append(
+                {
+                    "index": index,
+                    "price": str(price),
+                    "would_trigger": triggered,
+                    "before": before,
+                    "after": after,
+                    "ratcheted": _trailing_snapshot_ratcheted(before, after),
+                    "activated": _trailing_snapshot_activated(before, after),
+                }
+            )
+
+        return {
+            "signal_id": signal_id,
+            "symbol": symbol,
+            "mutates_state": False,
+            "prices": [str(price) for price in prices],
+            "active_trailing": _trailing_preview_snapshot(lots, signal_id=signal_id, mark_price=None),
+            "steps": steps,
+            "final_preview_trailing": _trailing_preview_snapshot(
+                preview_exchange.lots,
+                signal_id=signal_id,
+                mark_price=prices[-1],
+            ),
+            "positions": engine.exchange.list_positions(),
+            "preview_positions": preview_exchange.list_positions(),
+            "account": _account_state_to_dict(engine.account_state),
+        }
+
     @app.post("/brackets/{signal_id}/stop")
     async def amend_bracket_stop(signal_id: str, request: Request) -> dict[str, Any]:
         payload = await request.json()
@@ -1726,6 +1786,54 @@ def _active_exit_to_dict(lot: Any, exit_order: Any, *, mark_price: Decimal | Non
         "signal_id": lot.signal_id,
         "remaining_quantity": str(lot.remaining_quantity),
         "entry_price": str(lot.entry_price),
+    }
+
+
+def _trailing_preview_snapshot(
+    lots: list[Any],
+    *,
+    signal_id: str,
+    mark_price: Decimal | None,
+) -> list[dict[str, Any]]:
+    return [
+        _active_exit_to_dict(lot, exit_order, mark_price=mark_price)
+        for lot in lots
+        if lot.signal_id == signal_id and lot.remaining_quantity > 0
+        for exit_order in lot.exit_orders
+        if exit_order.kind == "trailing_stop"
+    ]
+
+
+def _trailing_snapshot_ratcheted(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> bool:
+    before_by_group = _trailing_snapshot_by_group(before)
+    after_by_group = _trailing_snapshot_by_group(after)
+    for key, before_row in before_by_group.items():
+        after_row = after_by_group.get(key)
+        if after_row is None:
+            continue
+        if before_row.get("trigger_price") != after_row.get("trigger_price"):
+            return True
+    return False
+
+
+def _trailing_snapshot_activated(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> bool:
+    before_by_group = _trailing_snapshot_by_group(before)
+    after_by_group = _trailing_snapshot_by_group(after)
+    for key, before_row in before_by_group.items():
+        after_row = after_by_group.get(key)
+        if after_row is None:
+            continue
+        if before_row.get("status") != "open" and after_row.get("status") == "open":
+            return True
+        if before_row.get("trailing_activated") == "false" and after_row.get("trailing_activated") == "true":
+            return True
+    return False
+
+
+def _trailing_snapshot_by_group(rows: list[dict[str, Any]]) -> dict[tuple[str | None, str | None], dict[str, Any]]:
+    return {
+        (row.get("signal_id"), row.get("oca_group")): row
+        for row in rows
     }
 
 

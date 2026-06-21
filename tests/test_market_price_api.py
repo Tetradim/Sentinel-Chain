@@ -255,6 +255,86 @@ def test_bracket_preview_reports_simulated_activation_snapshot_without_mutating_
     assert state_trailing["status"] == "pending_activation"
 
 
+def test_bracket_trailing_stop_preview_path_reports_step_ratchets_without_mutating_state(tmp_path):
+    repo = SQLiteRepository(tmp_path / "bracket_trailing_preview_path.sqlite3")
+    app = create_app(repository=repo)
+    client = TestClient(app)
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "trail-path-preview",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "50",
+            "trailing_stop_pct": "5",
+            "trailing_step_pct": "2",
+        },
+    )
+
+    preview = client.post(
+        "/brackets/trail-path-preview/trailing-stop/preview-path",
+        json={"prices": ["101", "103"]},
+    )
+    state_after_preview = client.get("/ui/state").json()
+
+    assert preview.status_code == 200
+    body = preview.json()
+    assert body["mutates_state"] is False
+    assert body["steps"][0]["ratcheted"] is False
+    assert body["steps"][0]["before"][0]["trailing_ratchet_ready_at_mark"] == "false"
+    assert body["steps"][1]["ratcheted"] is True
+    assert body["steps"][1]["before"][0]["next_trailing_trigger"] == "97.85"
+    assert body["steps"][1]["after"][0]["trigger_price"] == "97.85"
+    assert body["final_preview_trailing"][0]["trigger_price"] == "97.85"
+    active_trailing = next(
+        exit_order for exit_order in state_after_preview["active_exits"] if exit_order["kind"] == "trailing_stop"
+    )
+    assert active_trailing["trigger_price"] == "95.00"
+    assert len(state_after_preview["orders"]) == 1
+
+
+def test_bracket_trailing_stop_preview_path_reports_activation_without_mutating_state(tmp_path):
+    repo = SQLiteRepository(tmp_path / "bracket_trailing_activation_path.sqlite3")
+    app = create_app(repository=repo)
+    client = TestClient(app)
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "trail-activation-path",
+            "symbol": "ETHUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "50",
+            "trailing_stop_pct": "4",
+            "trailing_activation_pct": "3",
+        },
+    )
+
+    preview = client.post(
+        "/brackets/trail-activation-path/trailing-stop/preview-path",
+        json={"marks": ["102", "104"]},
+    )
+    state_after_preview = client.get("/ui/state").json()
+
+    assert preview.status_code == 200
+    body = preview.json()
+    assert body["steps"][0]["activated"] is False
+    assert body["steps"][0]["after"][0]["status"] == "pending_activation"
+    assert body["steps"][1]["activated"] is True
+    assert body["steps"][1]["after"][0]["status"] == "open"
+    assert body["steps"][1]["after"][0]["trigger_price"] == "99.84"
+    active_trailing = next(
+        exit_order for exit_order in state_after_preview["active_exits"] if exit_order["kind"] == "trailing_stop"
+    )
+    assert active_trailing["status"] == "pending_activation"
+    assert active_trailing["trigger_price"] == "96.00"
+
+
 def test_bracket_list_includes_remaining_risk_summary(tmp_path):
     repo = SQLiteRepository(tmp_path / "bracket_summary.sqlite3")
     app = create_app(repository=repo)
