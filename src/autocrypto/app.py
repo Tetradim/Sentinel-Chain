@@ -13,6 +13,18 @@ from fastapi.staticfiles import StaticFiles
 
 from .approvals import ApprovalQueue
 from .backtest import run_signal_backtest, run_signal_candle_backtest, run_signal_stress_backtest
+from .brackets import (
+    active_exit_payload,
+    bracket_coverage_payload,
+    decimal_to_plain,
+    exit_close_quantity,
+    exit_distance,
+    exit_intent,
+    exit_ladder_sort_key,
+    exit_pnl,
+    trailing_activation_price,
+    trailing_ratchet_impacts,
+)
 from .bot_event_bus import BotEvent, event_bus
 from .config import load_settings
 from .edge_actions import apply_edge_action
@@ -1726,7 +1738,7 @@ def _planned_trailing_activation_price(signal: CryptoSignal) -> Decimal | None:
 
 
 def _decimal_to_plain(value: Decimal) -> str:
-    return format(value, "f")
+    return decimal_to_plain(value)
 
 
 def _active_exits_to_dict(
@@ -1744,49 +1756,12 @@ def _active_exits_to_dict(
 
 
 def _active_exit_to_dict(lot: Any, exit_order: Any, *, mark_price: Decimal | None) -> dict[str, Any]:
-    trailing_activation_price = _lot_trailing_activation_price(lot) if exit_order.kind == "trailing_stop" else None
-    distance = _exit_distance(lot, exit_order, mark_price) if mark_price is not None else None
+    activation_price = trailing_activation_price(lot) if exit_order.kind == "trailing_stop" else None
+    distance = exit_distance(lot, exit_order, mark_price) if mark_price is not None else None
     trailing_telemetry = _trailing_telemetry(lot, exit_order, mark_price=mark_price)
     return {
-        "symbol": lot.symbol,
-        "direction": lot.direction,
-        "kind": exit_order.kind,
-        "trigger_price": str(exit_order.trigger_price),
-        "close_pct": str(exit_order.close_pct),
-        "oca_group": exit_order.oca_group,
-        "status": exit_order.status,
-        "trailing_stop_pct": str(lot.trailing_stop_pct) if exit_order.kind == "trailing_stop" and lot.trailing_stop_pct else None,
-        "trailing_stop_amount": str(lot.trailing_stop_amount)
-        if exit_order.kind == "trailing_stop" and lot.trailing_stop_amount
-        else None,
-        "initial_trailing_stop_price": str(lot.trailing_stop_price)
-        if exit_order.kind == "trailing_stop" and lot.trailing_stop_price
-        else None,
-        "trailing_step_pct": str(lot.trailing_step_pct)
-        if exit_order.kind == "trailing_stop" and lot.trailing_step_pct
-        else None,
-        "trailing_step_amount": str(lot.trailing_step_amount)
-        if exit_order.kind == "trailing_stop" and lot.trailing_step_amount
-        else None,
-        "trailing_activation_pct": str(lot.trailing_activation_pct)
-        if exit_order.kind == "trailing_stop" and lot.trailing_activation_pct
-        else None,
-        "configured_trailing_activation_price": str(lot.trailing_activation_price)
-        if exit_order.kind == "trailing_stop" and lot.trailing_activation_price
-        else None,
-        "trail_after_take_profit": str(lot.trail_after_take_profit).lower()
-        if exit_order.kind == "trailing_stop"
-        else None,
-        "take_profit_filled": str(lot.take_profit_filled).lower()
-        if exit_order.kind == "trailing_stop"
-        else None,
-        "trailing_activation_price": str(trailing_activation_price) if trailing_activation_price is not None else None,
-        "computed_trailing_activation_price": str(trailing_activation_price)
-        if trailing_activation_price is not None
-        else None,
-        "trailing_activated": str(lot.trailing_activated).lower() if exit_order.kind == "trailing_stop" else None,
-        "high_water_mark": str(lot.high_water_mark) if exit_order.kind == "trailing_stop" and lot.high_water_mark else None,
-        "low_water_mark": str(lot.low_water_mark) if exit_order.kind == "trailing_stop" and lot.low_water_mark else None,
+        **active_exit_payload(lot, exit_order, bool_style="string"),
+        "computed_trailing_activation_price": str(activation_price) if activation_price is not None else None,
         "next_trailing_trigger": trailing_telemetry["next_trailing_trigger"],
         "next_trailing_trigger_change": trailing_telemetry["next_trailing_trigger_change"],
         "trailing_step_required": trailing_telemetry["trailing_step_required"],
@@ -1797,16 +1772,6 @@ def _active_exit_to_dict(lot: Any, exit_order: Any, *, mark_price: Decimal | Non
         if distance is not None and mark_price is not None and mark_price > 0
         else None,
         "breakeven_trigger_pct": str(lot.breakeven_trigger_pct) if lot.breakeven_trigger_pct else None,
-        "breakeven_after_take_profit": str(lot.breakeven_after_take_profit).lower(),
-        "breakeven_applied": str(lot.breakeven_applied).lower(),
-        "max_hold_marks": lot.max_hold_marks if exit_order.kind == "time_exit" else None,
-        "marks_seen": lot.marks_seen if exit_order.kind == "time_exit" else None,
-        "marks_remaining": max(lot.max_hold_marks - lot.marks_seen, 0)
-        if exit_order.kind == "time_exit" and lot.max_hold_marks is not None
-        else None,
-        "signal_id": lot.signal_id,
-        "remaining_quantity": str(lot.remaining_quantity),
-        "entry_price": str(lot.entry_price),
     }
 
 
@@ -1858,27 +1823,6 @@ def _trailing_snapshot_by_group(rows: list[dict[str, Any]]) -> dict[tuple[str | 
     }
 
 
-def _lot_trailing_activation_price(lot: Any) -> Decimal | None:
-    if lot.trailing_stop_pct is None and lot.trailing_stop_amount is None:
-        return None
-    if lot.trailing_activation_price is not None:
-        return lot.trailing_activation_price
-    if lot.trailing_activation_pct is None:
-        return None
-    direction = Decimal("1") if lot.direction == "long" else Decimal("-1")
-    return lot.entry_price * (Decimal("1") + direction * lot.trailing_activation_pct / Decimal("100"))
-
-
-def _exit_distance(lot: Any, exit_order: Any, mark_price: Decimal) -> Decimal:
-    if lot.direction == "long":
-        if exit_order.kind in {"stop_loss", "trailing_stop"}:
-            return mark_price - exit_order.trigger_price
-        return exit_order.trigger_price - mark_price
-    if exit_order.kind in {"stop_loss", "trailing_stop"}:
-        return exit_order.trigger_price - mark_price
-    return mark_price - exit_order.trigger_price
-
-
 def _active_brackets_to_dict(lots: list[Any]) -> list[dict[str, Any]]:
     brackets: list[dict[str, Any]] = []
     for lot in sorted(lots, key=lambda item: (item.symbol, item.signal_id)):
@@ -1899,7 +1843,7 @@ def _active_brackets_to_dict(lots: list[Any]) -> list[dict[str, Any]]:
 
 
 def _bracket_exit_ladder_to_dict(lot: Any, *, mark_price: Decimal | None = None) -> dict[str, Any]:
-    ordered_exits = sorted(lot.exit_orders, key=lambda exit_order: _exit_ladder_sort_key(lot, exit_order))
+    ordered_exits = sorted(lot.exit_orders, key=lambda exit_order: exit_ladder_sort_key(lot, exit_order))
     rows = [
         _exit_ladder_row(lot, exit_order, trigger_order=index + 1, mark_price=mark_price)
         for index, exit_order in enumerate(ordered_exits)
@@ -1922,7 +1866,7 @@ def _bracket_decision_support_to_dict(lot: Any, *, mark_price: Decimal | None = 
     rows = [
         _decision_support_row(lot, exit_order, trigger_order=index + 1, mark_price=mark_price)
         for index, exit_order in enumerate(
-            sorted(lot.exit_orders, key=lambda exit_order: _exit_ladder_sort_key(lot, exit_order))
+            sorted(lot.exit_orders, key=lambda exit_order: exit_ladder_sort_key(lot, exit_order))
         )
     ]
     next_trigger = next((row for row in rows if row["status"] == "open"), rows[0] if rows else None)
@@ -1942,66 +1886,7 @@ def _bracket_decision_support_to_dict(lot: Any, *, mark_price: Decimal | None = 
 
 
 def _bracket_coverage_to_dict(lot: Any) -> dict[str, Any]:
-    open_exits = [exit_order for exit_order in lot.exit_orders if exit_order.status == "open"]
-    take_profit_close_pct = sum(
-        (exit_order.close_pct for exit_order in open_exits if exit_order.kind == "take_profit"),
-        Decimal("0"),
-    )
-    trailing_close_pct = sum(
-        (exit_order.close_pct for exit_order in open_exits if exit_order.kind == "trailing_stop"),
-        Decimal("0"),
-    )
-    protective_close_pct = max(
-        (exit_order.close_pct for exit_order in open_exits if exit_order.kind in {"stop_loss", "trailing_stop"}),
-        default=Decimal("0"),
-    )
-    full_close_exit_count = sum(
-        1
-        for exit_order in open_exits
-        if exit_order.kind != "time_exit" and _exit_ladder_quantity(lot, exit_order) >= lot.remaining_quantity
-    )
-    partial_close_exit_count = sum(
-        1
-        for exit_order in open_exits
-        if exit_order.kind != "time_exit" and _exit_ladder_quantity(lot, exit_order) < lot.remaining_quantity
-    )
-    return {
-        "signal_id": lot.signal_id,
-        "symbol": lot.symbol,
-        "direction": lot.direction,
-        "remaining_quantity": str(lot.remaining_quantity),
-        "take_profit_close_pct": _decimal_to_plain(take_profit_close_pct),
-        "trailing_stop_close_pct": _decimal_to_plain(trailing_close_pct) if trailing_close_pct else None,
-        "protective_close_pct": _decimal_to_plain(protective_close_pct),
-        "residual_after_take_profit_pct": _decimal_to_plain(max(Decimal("100") - take_profit_close_pct, Decimal("0"))),
-        "has_full_protective_exit": any(
-            exit_order.kind in {"stop_loss", "trailing_stop"} and _exit_ladder_quantity(lot, exit_order) >= lot.remaining_quantity
-            for exit_order in open_exits
-        ),
-        "has_full_profit_exit": take_profit_close_pct >= Decimal("100"),
-        "has_time_exit": any(exit_order.kind == "time_exit" for exit_order in lot.exit_orders),
-        "full_close_exit_count": full_close_exit_count,
-        "partial_close_exit_count": partial_close_exit_count,
-        "coverage_notes": _bracket_coverage_notes(lot, open_exits, take_profit_close_pct),
-    }
-
-
-def _bracket_coverage_notes(lot: Any, open_exits: list[Any], take_profit_close_pct: Decimal) -> list[str]:
-    notes: list[str] = []
-    if not any(exit_order.kind in {"stop_loss", "trailing_stop"} for exit_order in open_exits):
-        notes.append("no_open_protective_exit")
-    if take_profit_close_pct == 0:
-        notes.append("no_open_take_profit_exit")
-    elif take_profit_close_pct < Decimal("100"):
-        notes.append("take_profit_plan_leaves_residual")
-    if any(
-        exit_order.kind in {"take_profit", "trailing_stop"} and _exit_ladder_quantity(lot, exit_order) < lot.remaining_quantity
-        for exit_order in open_exits
-    ):
-        notes.append("contains_partial_exit")
-    if any(exit_order.kind == "time_exit" for exit_order in lot.exit_orders):
-        notes.append("contains_paper_time_exit")
-    return notes
+    return bracket_coverage_payload(lot)
 
 
 def _bracket_preview_impact(
@@ -2026,33 +1911,8 @@ def _bracket_preview_impact(
         "remaining_quantity_before": _decimal_to_plain(before_quantity),
         "remaining_quantity_after": _decimal_to_plain(after_quantity),
         "quantity_delta": _decimal_to_plain(after_quantity - before_quantity),
-        "trailing_ratchets": _trailing_ratchet_impacts(lots, preview_lots),
+        "trailing_ratchets": trailing_ratchet_impacts(lots, preview_lots),
     }
-
-
-def _trailing_ratchet_impacts(live_lots: list[Any], preview_lots: list[Any]) -> list[dict[str, Any]]:
-    impacts: list[dict[str, Any]] = []
-    for live_lot in live_lots:
-        preview_lot = next((lot for lot in preview_lots if lot.signal_id == live_lot.signal_id), None)
-        if preview_lot is None:
-            continue
-        live_trail = next((exit_order for exit_order in live_lot.exit_orders if exit_order.kind == "trailing_stop"), None)
-        preview_trail = next((exit_order for exit_order in preview_lot.exit_orders if exit_order.kind == "trailing_stop"), None)
-        if live_trail is None or preview_trail is None or live_trail.trigger_price == preview_trail.trigger_price:
-            continue
-        impacts.append(
-            {
-                "signal_id": live_lot.signal_id,
-                "before_trigger_price": str(live_trail.trigger_price),
-                "after_trigger_price": str(preview_trail.trigger_price),
-                "trigger_change": _decimal_to_plain(preview_trail.trigger_price - live_trail.trigger_price)
-                if live_lot.direction == "long"
-                else _decimal_to_plain(live_trail.trigger_price - preview_trail.trigger_price),
-                "status_before": live_trail.status,
-                "status_after": preview_trail.status,
-            }
-        )
-    return impacts
 
 
 def _decision_support_row(
@@ -2077,14 +1937,14 @@ def _exit_ladder_row(
     trigger_order: int,
     mark_price: Decimal | None,
 ) -> dict[str, Any]:
-    quantity = _exit_ladder_quantity(lot, exit_order)
+    quantity = exit_close_quantity(lot, exit_order)
     estimated_notional = quantity * exit_order.trigger_price
-    estimated_pnl = _exit_ladder_pnl(lot, exit_order, quantity)
-    distance = _exit_distance(lot, exit_order, mark_price) if mark_price is not None else None
+    estimated_pnl = exit_pnl(lot, exit_order, quantity)
+    distance = exit_distance(lot, exit_order, mark_price) if mark_price is not None else None
     return {
         "trigger_order": trigger_order,
         "kind": exit_order.kind,
-        "intent": _exit_ladder_intent(exit_order),
+        "intent": exit_intent(exit_order),
         "status": exit_order.status,
         "trigger_price": str(exit_order.trigger_price),
         "close_pct": str(exit_order.close_pct),
@@ -2100,45 +1960,14 @@ def _exit_ladder_row(
         "distance_to_trigger_pct": str(distance / mark_price * Decimal("100"))
         if distance is not None and mark_price is not None and mark_price > 0
         else None,
-        "trailing_activation_price": str(_lot_trailing_activation_price(lot))
-        if exit_order.kind == "trailing_stop" and _lot_trailing_activation_price(lot) is not None
+        "trailing_activation_price": str(trailing_activation_price(lot))
+        if exit_order.kind == "trailing_stop" and trailing_activation_price(lot) is not None
         else None,
         "marks_remaining": max(lot.max_hold_marks - lot.marks_seen, 0)
         if exit_order.kind == "time_exit" and lot.max_hold_marks is not None
         else None,
         **_trailing_telemetry(lot, exit_order, mark_price=mark_price),
     }
-
-
-def _exit_ladder_quantity(lot: Any, exit_order: Any) -> Decimal:
-    if exit_order.kind not in {"take_profit", "trailing_stop"}:
-        return lot.remaining_quantity
-    target_quantity = lot.original_quantity * exit_order.close_pct / Decimal("100")
-    return min(target_quantity, lot.remaining_quantity)
-
-
-def _exit_ladder_pnl(lot: Any, exit_order: Any, quantity: Decimal) -> Decimal:
-    if lot.direction == "long":
-        return (exit_order.trigger_price - lot.entry_price) * quantity
-    return (lot.entry_price - exit_order.trigger_price) * quantity
-
-
-def _exit_ladder_intent(exit_order: Any) -> str:
-    if exit_order.kind in {"stop_loss", "trailing_stop"}:
-        return "protective_exit"
-    if exit_order.kind == "take_profit":
-        return "profit_exit"
-    if exit_order.kind == "time_exit":
-        return "staleness_exit"
-    return "conditional_exit"
-
-
-def _exit_ladder_sort_key(lot: Any, exit_order: Any) -> tuple[int, Decimal, str]:
-    if exit_order.kind == "time_exit":
-        return (1, Decimal("0"), exit_order.kind)
-    price_key = exit_order.trigger_price if lot.direction == "long" else -exit_order.trigger_price
-    return (0, price_key, exit_order.kind)
-
 
 def _trailing_telemetry(lot: Any, exit_order: Any, *, mark_price: Decimal | None) -> dict[str, Any]:
     empty = {
@@ -2180,7 +2009,7 @@ def _trailing_telemetry(lot: Any, exit_order: Any, *, mark_price: Decimal | None
 
 
 def _trailing_activation_ready(lot: Any, mark_price: Decimal | None) -> bool | None:
-    activation_price = _lot_trailing_activation_price(lot)
+    activation_price = trailing_activation_price(lot)
     if activation_price is None or mark_price is None:
         return None
     return mark_price >= activation_price if lot.direction == "long" else mark_price <= activation_price

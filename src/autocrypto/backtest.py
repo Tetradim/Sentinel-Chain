@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from decimal import Decimal
 
+from .brackets import active_exit_payload
 from .engine import TradingEngine
 from .execution import ExecutionCostConfig, PaperExchange
 from .risk import AccountState
@@ -236,48 +237,14 @@ def _update_excursion(
 
 def _active_exits_snapshot(lots: list) -> list[dict]:
     return [
-        {
-            "signal_id": lot.signal_id,
-            "symbol": lot.symbol,
-            "direction": lot.direction,
-            "kind": exit_order.kind,
-            "trigger_price": str(exit_order.trigger_price),
-            "status": exit_order.status,
-            "initial_trailing_stop_price": str(lot.trailing_stop_price)
-            if exit_order.kind == "trailing_stop" and lot.trailing_stop_price
-            else None,
-            "trailing_stop_pct": str(lot.trailing_stop_pct)
-            if exit_order.kind == "trailing_stop" and lot.trailing_stop_pct
-            else None,
-            "trailing_stop_amount": str(lot.trailing_stop_amount)
-            if exit_order.kind == "trailing_stop" and lot.trailing_stop_amount
-            else None,
-            "trailing_step_pct": str(lot.trailing_step_pct)
-            if exit_order.kind == "trailing_stop" and lot.trailing_step_pct
-            else None,
-            "trailing_step_amount": str(lot.trailing_step_amount)
-            if exit_order.kind == "trailing_stop" and lot.trailing_step_amount
-            else None,
-            "trailing_activation_pct": str(lot.trailing_activation_pct)
-            if exit_order.kind == "trailing_stop" and lot.trailing_activation_pct
-            else None,
-            "trailing_activation_price": str(lot.trailing_activation_price)
-            if exit_order.kind == "trailing_stop" and lot.trailing_activation_price
-            else None,
-            "trail_after_take_profit": lot.trail_after_take_profit if exit_order.kind == "trailing_stop" else None,
-            "take_profit_filled": lot.take_profit_filled if exit_order.kind == "trailing_stop" else None,
-            "trailing_activated": lot.trailing_activated if exit_order.kind == "trailing_stop" else None,
-            "high_water_mark": str(lot.high_water_mark) if exit_order.kind == "trailing_stop" and lot.high_water_mark else None,
-            "low_water_mark": str(lot.low_water_mark) if exit_order.kind == "trailing_stop" and lot.low_water_mark else None,
-            "breakeven_after_take_profit": lot.breakeven_after_take_profit,
-            "breakeven_applied": lot.breakeven_applied,
-            "max_hold_marks": lot.max_hold_marks if exit_order.kind == "time_exit" else None,
-            "marks_seen": lot.marks_seen if exit_order.kind == "time_exit" else None,
-            "marks_remaining": max(lot.max_hold_marks - lot.marks_seen, 0)
-            if exit_order.kind == "time_exit" and lot.max_hold_marks is not None
-            else None,
-            "remaining_quantity": str(lot.remaining_quantity),
-        }
+        active_exit_payload(
+            lot,
+            exit_order,
+            bool_style="native",
+            include_entry=False,
+            include_close_pct=False,
+            include_oca_group=False,
+        )
         for lot in sorted(lots, key=lambda item: (item.symbol, item.signal_id))
         if lot.remaining_quantity > 0
         for exit_order in lot.exit_orders
