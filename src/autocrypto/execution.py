@@ -25,12 +25,16 @@ class ExitOrder:
 class ExecutionCostConfig:
     fee_bps: Decimal = Decimal("0")
     slippage_bps: Decimal = Decimal("0")
+    funding_rate_bps: Decimal = Decimal("0")
+    funding_periods_per_mark: Decimal = Decimal("0")
 
     def __post_init__(self) -> None:
         if self.fee_bps < 0:
             raise ValueError("fee_bps must be non-negative")
         if self.slippage_bps < 0:
             raise ValueError("slippage_bps must be non-negative")
+        if self.funding_periods_per_mark < 0:
+            raise ValueError("funding_periods_per_mark must be non-negative")
 
 
 @dataclass

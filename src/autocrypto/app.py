@@ -1531,6 +1531,11 @@ def _stress_scenario_payload(value: Any) -> dict[str, Any]:
         "costs": ExecutionCostConfig(
             fee_bps=_non_negative_decimal(costs_payload.get("fee_bps"), default=Decimal("0")),
             slippage_bps=_non_negative_decimal(costs_payload.get("slippage_bps"), default=Decimal("0")),
+            funding_rate_bps=_decimal(costs_payload.get("funding_rate_bps"), default=Decimal("0")),
+            funding_periods_per_mark=_non_negative_decimal(
+                costs_payload.get("funding_periods_per_mark"),
+                default=Decimal("0"),
+            ),
         ),
     }
 
@@ -1539,9 +1544,15 @@ def _execution_cost_payload(payload: dict[str, Any]) -> ExecutionCostConfig:
     costs = payload.get("costs") if isinstance(payload.get("costs"), dict) else {}
     fee_bps = costs.get("fee_bps") if costs else payload.get("fee_bps")
     slippage_bps = costs.get("slippage_bps") if costs else payload.get("slippage_bps")
+    funding_rate_bps = costs.get("funding_rate_bps") if costs else payload.get("funding_rate_bps")
+    funding_periods_per_mark = (
+        costs.get("funding_periods_per_mark") if costs else payload.get("funding_periods_per_mark")
+    )
     return ExecutionCostConfig(
         fee_bps=_non_negative_decimal(fee_bps, default=Decimal("0")),
         slippage_bps=_non_negative_decimal(slippage_bps, default=Decimal("0")),
+        funding_rate_bps=_decimal(funding_rate_bps, default=Decimal("0")),
+        funding_periods_per_mark=_non_negative_decimal(funding_periods_per_mark, default=Decimal("0")),
     )
 
 
@@ -1589,6 +1600,15 @@ def _non_negative_decimal(value: Any, *, default: Decimal) -> Decimal:
     if parsed < 0:
         raise ValueError("value must be non-negative")
     return parsed
+
+
+def _decimal(value: Any, *, default: Decimal) -> Decimal:
+    if value is None or value == "":
+        return default
+    try:
+        return Decimal(str(value))
+    except (InvalidOperation, ValueError) as exc:
+        raise ValueError(f"invalid decimal: {value}") from exc
 
 
 def _paper_capabilities() -> ExchangeCapabilities:

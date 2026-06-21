@@ -438,7 +438,12 @@ def test_backtest_signal_can_include_fee_costs_in_paper_pnl():
 
     assert response.status_code == 200
     body = response.json()
-    assert body["costs"] == {"fee_bps": "100", "slippage_bps": "0"}
+    assert body["costs"] == {
+        "fee_bps": "100",
+        "slippage_bps": "0",
+        "funding_rate_bps": "0",
+        "funding_periods_per_mark": "0",
+    }
     assert body["marks"][0]["triggered"] == [
         {
             "symbol": "BTC/USDT",
@@ -452,6 +457,44 @@ def test_backtest_signal_can_include_fee_costs_in_paper_pnl():
     assert body["final_daily_pnl"] == "7.90"
     assert body["final_positions"][0]["realized_pnl"] == "7.90000000"
     assert body["final_positions"][0]["fees_paid"] == "2.10000000"
+    assert positions_after.json()["positions"] == []
+
+
+def test_backtest_signal_can_include_funding_costs_for_open_perp_exposure():
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/backtest/signal",
+        json={
+            "signal": {
+                "symbol": "BTCUSDT",
+                "side": "buy",
+                "quote_amount": "100",
+                "price": "100",
+                "stop_loss_pct": "5",
+                "take_profit_pct": "20",
+            },
+            "prices": ["105"],
+            "costs": {"funding_rate_bps": "5", "funding_periods_per_mark": "2"},
+        },
+    )
+    positions_after = client.get("/positions")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["costs"] == {
+        "fee_bps": "0",
+        "slippage_bps": "0",
+        "funding_rate_bps": "5",
+        "funding_periods_per_mark": "2",
+    }
+    assert body["marks"][0]["funding_pnl_delta"] == "-0.1050"
+    assert body["funding_pnl_total"] == "-0.1050"
+    assert body["final_daily_pnl"] == "-0.1050"
+    assert body["final_unrealized_pnl"] == "5"
+    assert body["final_total_pnl"] == "4.8950"
+    assert body["report_metrics"]["total_return_pct"] == "4.89500"
     assert positions_after.json()["positions"] == []
 
 

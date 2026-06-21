@@ -55,7 +55,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Previews server-side risk decisions from the operator UI without placing orders
 - Backtests one signal against a supplied paper mark-price path and returns active exit snapshots after each mark without mutating the live in-memory engine
 - Backtests one signal against OHLC candles with conservative adverse-first intrabar sequencing, plus MFE/MAE excursion metrics, without mutating active state
-- Backtests can opt into paper fee and slippage assumptions and report closed-P&L drawdown/runup so bracket/trailing-stop results are not limited to clean mark-price fills
+- Backtests can opt into paper fee, slippage, and funding-rate assumptions and report closed-P&L drawdown/runup so bracket/trailing-stop results are not limited to clean mark-price fills
 - Backtests can report final mark-to-market unrealized P&L for open paper lots, or optionally force-close remaining simulated bracket quantity at the final mark
 - Backtests include report metrics for closed trades, win rate, gross profit/loss, profit factor, average win/loss, realized return, total mark-to-market return, and drawdown percent
 - Fetches Bitunix futures klines through the native market-data adapter and can run isolated paper backtests directly from those candles
@@ -621,6 +621,7 @@ Current bot work is guided by paper-first risk controls and exchange order behav
 - Current automated trading guidance recommends volatility-aware sizing and portfolio-level stress tests rather than fixed trade sizes alone; Auto-Crypto can reject signals carrying high `volatility_pct` or `atr_pct` and can replay multiple stress scenarios through `/backtest/stress`: <https://www.tradingbotexperts.com/blog/best-automated-trading-platforms>
 - Current crypto backtesting guidance emphasizes testing strategies on historical or simulated price paths before launch; Auto-Crypto's `/backtest/signal` endpoint applies that idea to bracket and trailing-stop paper logic without mutating active state: <https://bitsgap.com/blog/crypto-backtesting-guide-2025-tools-tips-and-how-bitsgap-helps>
 - Current crypto-bot backtesting guidance warns that clean historical fills can hide slippage, fees, latency, and stressed-market liquidity; Auto-Crypto's backtest-only `fee_bps` and `slippage_bps` inputs make those assumptions explicit while keeping live execution disabled: <https://bitsgap.com/blog/crypto-bot-backtesting-in-2026-what-it-shows-and-what-it-cannot-predict>
+- Perpetual futures strategies also need funding assumptions in paper tests; Bitunix's futures API exposes current contract funding data and its 2026 explainer describes positive funding as paid by longs and received by shorts, so Auto-Crypto exposes backtest-only `funding_rate_bps` and `funding_periods_per_mark` beside fee and slippage assumptions instead of treating perp marks as spot-only price paths: <https://www.bitunix.com/api-docs/futures/market/get_funding_rate.html>, <https://www.bitunix.com/hub/helpcenter/article/introduction-to-futures-funding-rate?id=79>
 - Recent backtesting guidance emphasizes replaying rules with realistic fees, slippage, position sizing, drawdown review, and forward testing before risking capital; Auto-Crypto's breakeven-after-TP option is therefore modeled first in paper exits and backtest snapshots: <https://coinbureau.com/guides/how-to-backtest-your-crypto-trading-strategy>
 - Backtrader's slippage documentation notes that real-market conditions can miss requested prices and exposes configurable percentage/fixed slippage in simulation; Auto-Crypto uses the same idea in isolated paper backtest and paper-exchange cost knobs: <https://www.backtrader.com/docu/slippage/slippage/>
 - Interactive Brokers' current walk-forward analysis guidance describes rolling in-sample/out-of-sample testing as a closer simulation of real trading conditions than one fixed historical backtest, which is why Auto-Crypto now supports labeled candle batches suitable for chunked walk-forward checks: <https://www.interactivebrokers.com/campus/ibkr-quant-news/the-future-of-backtesting-a-deep-dive-into-walk-forward-analysis/>
@@ -654,6 +655,7 @@ Current bot work is guided by paper-first risk controls and exchange order behav
 - Current order-type guidance treats bracket/OCO exits as linked conditional orders, and current trading API guidance keeps bracket and trailing orders as venue-specific order families rather than one universal shape; Auto-Crypto therefore inventories reused synthetic OCA groups and flags cross-bracket reuse before any operator treats paper buy/sell bracket logic as portable live execution: <https://bitsgap.com/blog/the-only-guide-to-order-types-youll-ever-need> and <https://alpaca.markets/learn/how-to-build-stock-trading-bot-with-alpaca>
 - CCXT's current FAQ notes that attached TP/SL and trailing support are exchange-specific, while Binance documents trailing stops as contingent orders that can cancel an OCO sibling when triggered; Auto-Crypto accepts several webhook bracket-leg shapes but normalizes them into one synthetic paper model with explicit partial-close caps before any venue adapter is allowed to submit live orders: <https://docs.ccxt.com/docs/faq> and <https://developers.binance.com/docs/binance-spot-api-docs/faqs/trailing-stop-faq>
 - Bitunix's official futures market-data docs expose `GET /api/v1/futures/market/kline` with `symbol`, `interval`, optional time bounds, `limit` capped at `200`, and price type selection; Auto-Crypto uses that public kline response only as an isolated paper backtest input, not as a live execution trigger: <https://www.bitunix.com/api-docs/futures/market/get_kline.html>
+- Current copy-trading research found Invo/Involio product pages describing social crypto mimic/copy features but no public developer API, while Bybit and Bitget publish official copy-trading API docs; Auto-Crypto should therefore rank documented exchange/API paths ahead of consumer-app automation and keep all copy-trade behavior paper-first and approval-gated: <https://www.invoapp.com/>, <https://app.invoapp.com/>, <https://bybit-exchange.github.io/docs/v5/copytrade>, and <https://bitgetlimited.github.io/apidoc/en/copyTrade/>
 
 ## Environment Variables
 
@@ -813,7 +815,7 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/backtest/signal -Conte
 }'
 ```
 
-Backtests may include `costs`, or top-level `fee_bps` and `slippage_bps`, to model paper fill friction. Fees are charged on entry and exit fills, and slippage moves buys above the mark and sells below the mark. These knobs are isolated to the backtest sandbox unless a caller explicitly creates a separate paper exchange with costs in code:
+Backtests may include `costs`, or top-level `fee_bps`, `slippage_bps`, `funding_rate_bps`, and `funding_periods_per_mark`, to model paper fill friction. Fees are charged on entry and exit fills, slippage moves buys above the mark and sells below the mark, and funding is applied once per supplied mark group to any still-open paper lot. Positive funding rates debit long lots and credit short lots; negative funding rates do the reverse. These knobs are isolated to the backtest sandbox unless a caller explicitly creates a separate paper exchange with costs in code:
 
 ```powershell
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/backtest/signal -ContentType "application/json" -Body '{
@@ -828,12 +830,16 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/backtest/signal -Conte
   "prices": ["104", "110"],
   "costs": {
     "fee_bps": "10",
-    "slippage_bps": "20"
+    "slippage_bps": "20",
+    "funding_rate_bps": "1",
+    "funding_periods_per_mark": "1"
   }
 }'
 ```
 
-When a backtest ends with an open simulated bracket lot, `final_unrealized_pnl` marks the remaining quantity at `final_mark_price` and `final_total_pnl` combines realized and unrealized P&L. Add `close_final_positions: true` or `force_close_final: true` to close remaining paper bracket quantity at the final mark inside the sandbox; this records `final_close_triggers`, moves the P&L into `final_daily_pnl`, and leaves the live engine unchanged.
+Funding assumptions are explicit because Bitunix futures documentation exposes current funding rate data through `GET /api/v1/futures/market/funding_rate`, and Bitunix's help center describes funding as position value multiplied by the current funding rate, with positive rates paid by longs and received by shorts (<https://www.bitunix.com/api-docs/futures/market/get_funding_rate.html>, <https://www.bitunix.com/hub/helpcenter/article/introduction-to-futures-funding-rate?id=79>). Auto-Crypto does not silently fetch or apply funding history; operators choose the paper assumption per backtest or stress scenario.
+
+When a backtest ends with an open simulated bracket lot, `final_unrealized_pnl` marks the remaining quantity at `final_mark_price` and `final_total_pnl` combines realized, funding, and unrealized P&L. Add `close_final_positions: true` or `force_close_final: true` to close remaining paper bracket quantity at the final mark inside the sandbox; this records `final_close_triggers`, moves the P&L into `final_daily_pnl`, and leaves the live engine unchanged.
 
 Every backtest summary includes `report_metrics` with `initial_notional`, closed/winning/losing trade counts, `win_rate_pct`, `gross_profit`, `gross_loss`, `profit_factor`, `average_win`, `average_loss`, `realized_return_pct`, `total_return_pct`, and `max_drawdown_pct`. Realized return only counts closed simulated exits; total return includes final mark-to-market unrealized P&L for lots that remain open at the end of the test.
 
@@ -963,6 +969,18 @@ Invoke-RestMethod http://127.0.0.1:8004/exchanges/coinbase/integration
 ```
 
 Use `.[exchange]` dependencies to let CCXT-backed platforms report `adapter_ready`. Platform metadata is non-secret review data; it does not enable live execution. Keep `AUTO_CRYPTO_ALLOWED_EXCHANGES=paper` unless you are deliberately testing a non-paper path, keep every `AUTO_CRYPTO_<VENUE>_LIVE_ENABLED=false`, and use trade-only keys without withdrawal permission. A native Robinhood adapter and richer native Alpaca broker flows require separate request-signing implementations before live execution can be considered.
+
+## Copy-Trading Research
+
+Copy-trading integrations are research-first and paper-first. Auto-Crypto should not scrape consumer apps, automate credentials, reverse-engineer private endpoints, or bypass platform terms. A candidate is integration-ready only when it has public or account-authorized API documentation, clear permission scopes, and a way to keep execution approval-gated.
+
+Current posture:
+
+- Invo/Involio is a social crypto copy-trading product with one-click mimic/copy features and Hyperliquid-powered futures messaging, but the public pages reviewed so far do not expose a developer API or approved automation path. Treat it as watchlist research only: <https://www.invoapp.com/> and <https://app.invoapp.com/>
+- Bybit documents a V5 copy-trading path for master traders using the normal order-create endpoint, mandatory contract order/position permissions, and USDT perpetual scope checks through instrument metadata. This is the strongest current exchange-native candidate, but any Auto-Crypto work should remain paper planning until credentials, permissions, region eligibility, and testnet behavior are reviewed: <https://bybit-exchange.github.io/docs/v5/copytrade>
+- Bitget has official copy-trading API documentation with public/private interfaces, signed private requests, rate limits, simulation product types, copy amount modes, leverage modes, and margin modes. It is credible for further API-addressable research, but the docs should be rechecked for current V2/V3 migration status before implementation: <https://bitgetlimited.github.io/apidoc/en/copyTrade/> and <https://www.bitget.com/support/articles/12560603838361>
+- Binance has an official copy-trading REST connector package, which is worth a separate official-docs pass before ranking it against Bybit/Bitget. Do not add dependency code from connector packages until the underlying exchange documentation and account permissions are reviewed: <https://www.npmjs.com/package/@binance/copy-trading>
+- Duplikium advertises a RESTful trade-copier API for managing copier infrastructure, risk settings, symbol mappings, filters, templates, positions, and reporting, but says the API is for managing connected copier accounts/settings and not direct order placement. This looks more like external copier infrastructure than a crypto-exchange-native execution path: <https://www.trade-copier.com/features/trade-copier-api>
 
 ## Bitunix Integration
 

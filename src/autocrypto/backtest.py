@@ -17,6 +17,7 @@ class BacktestMark:
     active_exits: list[dict]
     open_notional: Decimal
     realized_pnl_delta: Decimal
+    funding_pnl_delta: Decimal
     daily_pnl: Decimal
     label: str | None = None
     mfe: Decimal | None = None
@@ -36,11 +37,14 @@ class BacktestSummary:
     max_runup: Decimal = Decimal("0")
     fee_bps: Decimal = Decimal("0")
     slippage_bps: Decimal = Decimal("0")
+    funding_rate_bps: Decimal = Decimal("0")
+    funding_periods_per_mark: Decimal = Decimal("0")
     final_mark_price: Decimal | None = None
     final_unrealized_pnl: Decimal = Decimal("0")
     final_total_pnl: Decimal = Decimal("0")
     final_close_requested: bool = False
     final_close_triggers: list[dict] = field(default_factory=list)
+    funding_pnl_total: Decimal = Decimal("0")
     report_metrics: dict[str, str | int | None] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
@@ -54,6 +58,7 @@ class BacktestSummary:
                     "active_exits": mark.active_exits,
                     "open_notional": str(mark.open_notional),
                     "realized_pnl_delta": str(mark.realized_pnl_delta),
+                    "funding_pnl_delta": str(mark.funding_pnl_delta),
                     "daily_pnl": str(mark.daily_pnl),
                     "label": mark.label,
                     "mfe": str(mark.mfe) if mark.mfe is not None else None,
@@ -69,6 +74,7 @@ class BacktestSummary:
             "final_total_pnl": str(self.final_total_pnl),
             "final_close_requested": self.final_close_requested,
             "final_close_triggers": self.final_close_triggers,
+            "funding_pnl_total": str(self.funding_pnl_total),
             "total_triggers": self.total_triggers,
             "report_metrics": self.report_metrics,
             "risk_summary": {
@@ -78,6 +84,8 @@ class BacktestSummary:
             "costs": {
                 "fee_bps": str(self.fee_bps),
                 "slippage_bps": str(self.slippage_bps),
+                "funding_rate_bps": str(self.funding_rate_bps),
+                "funding_periods_per_mark": str(self.funding_periods_per_mark),
             },
         }
 
@@ -212,6 +220,7 @@ def _run_backtest_path(
     final_mark_price: Decimal | None = None
     final_close_triggers: list[dict] = []
     realized_trade_pnls: list[Decimal] = []
+    funding_pnl_total = Decimal("0")
     if result.status == "accepted":
         for label, prices in path:
             candle_triggered: list[dict] = []
@@ -227,6 +236,10 @@ def _run_backtest_path(
                     realized_trade_pnls.append(last_update.realized_pnl_delta)
             if last_update is None:
                 continue
+            funding_pnl_delta = _funding_pnl_delta(sandbox.exchange.lots, prices[-1], costs)
+            if funding_pnl_delta != 0:
+                sandbox.account_state.daily_pnl += funding_pnl_delta
+                funding_pnl_total += funding_pnl_delta
             marks.append(
                 BacktestMark(
                     price=prices[-1],
@@ -234,7 +247,8 @@ def _run_backtest_path(
                     active_exits=_active_exits_snapshot(sandbox.exchange.lots),
                     open_notional=last_update.open_notional,
                     realized_pnl_delta=realized_pnl_delta,
-                    daily_pnl=last_update.daily_pnl,
+                    funding_pnl_delta=funding_pnl_delta,
+                    daily_pnl=sandbox.account_state.daily_pnl,
                     label=label,
                     mfe=mfe,
                     mae=mae,
@@ -258,11 +272,14 @@ def _run_backtest_path(
         max_runup=_max_runup([mark.daily_pnl for mark in marks]),
         fee_bps=costs.fee_bps,
         slippage_bps=costs.slippage_bps,
+        funding_rate_bps=costs.funding_rate_bps,
+        funding_periods_per_mark=costs.funding_periods_per_mark,
         final_mark_price=final_mark_price,
         final_unrealized_pnl=final_unrealized_pnl,
         final_total_pnl=final_total_pnl,
         final_close_requested=close_final_positions,
         final_close_triggers=final_close_triggers,
+        funding_pnl_total=funding_pnl_total,
         report_metrics=_report_metrics(
             initial_notional=initial_notional,
             realized_trade_pnls=realized_trade_pnls,
@@ -347,6 +364,22 @@ def _unrealized_pnl(lots: list, mark_price: Decimal | None) -> Decimal:
             total += (mark_price - lot.entry_price) * lot.remaining_quantity
         else:
             total += (lot.entry_price - mark_price) * lot.remaining_quantity
+    return total
+
+
+def _funding_pnl_delta(lots: list, mark_price: Decimal, costs: ExecutionCostConfig) -> Decimal:
+    if costs.funding_rate_bps == 0 or costs.funding_periods_per_mark == 0:
+        return Decimal("0")
+    total = Decimal("0")
+    for lot in lots:
+        if lot.remaining_quantity <= 0:
+            continue
+        notional = lot.remaining_quantity * mark_price
+        funding = notional * costs.funding_rate_bps / Decimal("10000") * costs.funding_periods_per_mark
+        if lot.direction == "long":
+            total -= funding
+        else:
+            total += funding
     return total
 
 
