@@ -126,6 +126,16 @@ def active_exit_payload(
     return payload
 
 
+def exit_order_payload(exit_order: Any) -> dict[str, Any]:
+    return {
+        "kind": exit_order.kind,
+        "trigger_price": str(exit_order.trigger_price),
+        "close_pct": str(exit_order.close_pct),
+        "oca_group": exit_order.oca_group,
+        "status": exit_order.status,
+    }
+
+
 def bracket_coverage_payload(lot: Any) -> dict[str, Any]:
     open_exits = [exit_order for exit_order in lot.exit_orders if exit_order.status == "open"]
     take_profit_close_pct = sum(

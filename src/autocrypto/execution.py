@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from decimal import Decimal, ROUND_HALF_UP
 
+from .brackets import exit_order_payload
 from .risk import RiskDecision
 from .signals import CryptoSignal
 
@@ -152,16 +153,7 @@ class PaperOrder:
             "notional": str(self.notional),
             "price": str(self.price) if self.price is not None else None,
             "status": self.status,
-            "exit_orders": [
-                {
-                    "kind": exit_order.kind,
-                    "trigger_price": str(exit_order.trigger_price),
-                    "close_pct": str(exit_order.close_pct),
-                    "oca_group": exit_order.oca_group,
-                    "status": exit_order.status,
-                }
-                for exit_order in self.exit_orders
-            ],
+            "exit_orders": [exit_order_payload(exit_order) for exit_order in self.exit_orders],
             "trailing_stop_pct": str(self.trailing_stop_pct) if self.trailing_stop_pct is not None else None,
             "trailing_stop_amount": str(self.trailing_stop_amount) if self.trailing_stop_amount is not None else None,
             "trailing_stop_price": str(self.trailing_stop_price) if self.trailing_stop_price is not None else None,
@@ -181,16 +173,7 @@ class PaperOrder:
             "max_hold_marks": self.max_hold_marks,
             "exit_kind": self.exit_kind,
             "amend_target_index": self.amend_target_index,
-            "canceled_exit_orders": [
-                {
-                    "kind": exit_order.kind,
-                    "trigger_price": str(exit_order.trigger_price),
-                    "close_pct": str(exit_order.close_pct),
-                    "oca_group": exit_order.oca_group,
-                    "status": exit_order.status,
-                }
-                for exit_order in self.canceled_exit_orders
-            ],
+            "canceled_exit_orders": [exit_order_payload(exit_order) for exit_order in self.canceled_exit_orders],
             "reduce_only": self.reduce_only,
             "fee": str(self.fee),
             "fee_bps": str(self.fee_bps),
