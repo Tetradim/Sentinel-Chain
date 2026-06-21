@@ -198,6 +198,33 @@ def test_risk_rejects_buy_that_would_exceed_symbol_concentration_cap():
     assert "max_symbol_open_notional_exceeded" in decision.reason_codes
 
 
+def test_risk_rejects_entry_that_would_exceed_aggregate_open_bracket_risk_caps():
+    signal = normalize_signal(
+        {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "12",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(
+        signal,
+        RiskConfig(
+            max_open_risk_amount=Decimal("12"),
+            max_open_risk_equity_pct=Decimal("0.1"),
+        ),
+        AccountState(equity=Decimal("10000"), open_risk_amount=Decimal("8")),
+    )
+
+    assert decision.approved is False
+    assert "max_open_risk_amount_exceeded" in decision.reason_codes
+    assert "max_open_risk_equity_pct_exceeded" in decision.reason_codes
+
+
 def test_risk_rejects_entries_when_volatility_regime_exceeds_cap():
     signal = normalize_signal(
         {

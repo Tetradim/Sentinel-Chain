@@ -116,6 +116,49 @@ def test_engine_updates_open_notional_and_blocks_cumulative_exposure():
     assert len(engine.exchange.orders) == 1
 
 
+def test_engine_updates_open_risk_and_blocks_cumulative_bracket_loss():
+    account = AccountState(open_risk_amount=Decimal("0"))
+    engine = TradingEngine(
+        exchange=PaperExchange(),
+        risk_config=RiskConfig(max_order_notional=Decimal("500"), max_open_risk_amount=Decimal("5")),
+        account_state=account,
+        idempotency=InMemoryIdempotencyStore(),
+    )
+    first_signal = normalize_signal(
+        {
+            "signal_id": "first-open-risk",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "3",
+            "take_profit_pct": "8",
+        },
+        source="test",
+    )
+    second_signal = normalize_signal(
+        {
+            "signal_id": "second-open-risk",
+            "symbol": "ETH/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "3",
+            "take_profit_pct": "8",
+        },
+        source="test",
+    )
+
+    first = engine.process_signal(first_signal)
+    second = engine.process_signal(second_signal)
+
+    assert first.status == "accepted"
+    assert account.open_risk_amount == Decimal("3.00")
+    assert second.status == "rejected"
+    assert "max_open_risk_amount_exceeded" in second.decision.reason_codes
+    assert len(engine.exchange.orders) == 1
+
+
 def test_engine_recomputes_open_notional_after_partial_sell_at_exit_price():
     account = AccountState(open_notional=Decimal("0"))
     engine = TradingEngine(

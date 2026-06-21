@@ -11,6 +11,8 @@ class RiskConfig:
     max_order_notional: Decimal = Decimal("1000")
     max_open_notional: Decimal = Decimal("0")
     max_symbol_open_notional: Decimal = Decimal("0")
+    max_open_risk_amount: Decimal = Decimal("0")
+    max_open_risk_equity_pct: Decimal = Decimal("0")
     max_position_equity_pct: Decimal = Decimal("0")
     max_risk_amount: Decimal = Decimal("0")
     max_risk_per_trade_pct: Decimal = Decimal("0")
@@ -37,6 +39,7 @@ class AccountState:
     daily_pnl: Decimal = Decimal("0")
     open_notional: Decimal = Decimal("0")
     symbol_open_notional: Decimal = Decimal("0")
+    open_risk_amount: Decimal = Decimal("0")
     consecutive_losses: int = 0
 
 
@@ -89,6 +92,21 @@ def evaluate_signal(
         and account_state.symbol_open_notional + order_notional > config.max_symbol_open_notional
     ):
         reasons.append("max_symbol_open_notional_exceeded")
+    new_trade_risk = _new_trade_risk(opens_position, order_notional, stop_loss_pct)
+    if (
+        new_trade_risk is not None
+        and config.max_open_risk_amount > 0
+        and account_state.open_risk_amount + new_trade_risk > config.max_open_risk_amount
+    ):
+        reasons.append("max_open_risk_amount_exceeded")
+    if (
+        new_trade_risk is not None
+        and config.max_open_risk_equity_pct > 0
+        and account_state.equity > 0
+        and account_state.open_risk_amount + new_trade_risk
+        > account_state.equity * config.max_open_risk_equity_pct / Decimal("100")
+    ):
+        reasons.append("max_open_risk_equity_pct_exceeded")
     if (
         order_notional is not None
         and config.max_position_equity_pct > 0
@@ -229,6 +247,16 @@ def _order_notional(
         return risk_budget / (stop_loss_pct / Decimal("100"))
     reasons.append("order_size_required")
     return None
+
+
+def _new_trade_risk(
+    opens_position: bool,
+    order_notional: Decimal | None,
+    stop_loss_pct: Decimal | None,
+) -> Decimal | None:
+    if not opens_position or order_notional is None or stop_loss_pct is None:
+        return None
+    return order_notional * stop_loss_pct / Decimal("100")
 
 
 def _opens_position(signal: CryptoSignal) -> bool:

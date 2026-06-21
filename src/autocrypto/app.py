@@ -80,7 +80,10 @@ def create_app(
     if paper_exchange is None:
         paper_exchange = PaperExchange.from_order_history(repository.list_orders()) if repository else PaperExchange()
     if account_state is None:
-        account_state = AccountState(open_notional=paper_exchange.open_notional())
+        account_state = AccountState(
+            open_notional=paper_exchange.open_notional(),
+            open_risk_amount=paper_exchange.open_risk_amount(),
+        )
     engine = TradingEngine(
         exchange=paper_exchange,
         risk_config=risk_config or RiskConfig(),
@@ -1472,6 +1475,8 @@ def _risk_config_to_dict(config: RiskConfig) -> dict[str, Any]:
         "max_order_notional": str(config.max_order_notional),
         "max_open_notional": str(config.max_open_notional),
         "max_symbol_open_notional": str(config.max_symbol_open_notional),
+        "max_open_risk_amount": str(config.max_open_risk_amount),
+        "max_open_risk_equity_pct": str(config.max_open_risk_equity_pct),
         "max_position_equity_pct": str(config.max_position_equity_pct),
         "max_risk_amount": str(config.max_risk_amount),
         "max_risk_per_trade_pct": str(config.max_risk_per_trade_pct),
@@ -1499,6 +1504,7 @@ def _account_state_to_dict(account_state: AccountState) -> dict[str, Any]:
         "daily_pnl": str(account_state.daily_pnl),
         "open_notional": str(account_state.open_notional),
         "symbol_open_notional": str(account_state.symbol_open_notional),
+        "open_risk_amount": str(account_state.open_risk_amount),
         "consecutive_losses": account_state.consecutive_losses,
     }
 

@@ -293,6 +293,9 @@ class PaperExchange:
             return Decimal("0")
         return abs(position.quantity) * position.avg_entry
 
+    def open_risk_amount(self) -> Decimal:
+        return sum((_lot_open_risk(lot) for lot in self.lots if lot.remaining_quantity > 0), Decimal("0"))
+
     def update_price(self, symbol: str, price: Decimal) -> list[dict]:
         position = self.positions.get(symbol)
         if position is None or position.quantity == 0:
@@ -1820,6 +1823,17 @@ def _nearest_protective_exit(lot: PaperLot) -> ExitOrder | None:
     if lot.direction == "long":
         return max(protective_exits, key=lambda item: item.trigger_price, default=None)
     return min(protective_exits, key=lambda item: item.trigger_price, default=None)
+
+
+def _lot_open_risk(lot: PaperLot) -> Decimal:
+    protective_exit = _nearest_protective_exit(lot)
+    if protective_exit is None:
+        return Decimal("0")
+    if lot.direction == "long":
+        distance = lot.entry_price - protective_exit.trigger_price
+    else:
+        distance = protective_exit.trigger_price - lot.entry_price
+    return max(distance, Decimal("0")) * lot.remaining_quantity
 
 
 def _trailing_starts_activated(

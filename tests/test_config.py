@@ -10,6 +10,8 @@ def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(mo
     monkeypatch.setenv("AUTO_CRYPTO_DB_PATH", str(db_path))
     monkeypatch.setenv("AUTO_CRYPTO_MAX_ORDER_NOTIONAL", "250")
     monkeypatch.setenv("AUTO_CRYPTO_MAX_OPEN_NOTIONAL", "750")
+    monkeypatch.setenv("AUTO_CRYPTO_MAX_OPEN_RISK_AMOUNT", "40")
+    monkeypatch.setenv("AUTO_CRYPTO_MAX_OPEN_RISK_EQUITY_PCT", "4")
     monkeypatch.setenv("AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT", "5")
     monkeypatch.setenv("AUTO_CRYPTO_MAX_RISK_AMOUNT", "25")
     monkeypatch.setenv("AUTO_CRYPTO_MAX_RISK_PER_TRADE_PCT", "2")
@@ -35,6 +37,8 @@ def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(mo
     assert settings.require_approval is True
     assert settings.risk.max_order_notional == Decimal("250")
     assert settings.risk.max_open_notional == Decimal("750")
+    assert settings.risk.max_open_risk_amount == Decimal("40")
+    assert settings.risk.max_open_risk_equity_pct == Decimal("4")
     assert settings.risk.max_position_equity_pct == Decimal("5")
     assert settings.risk.max_risk_amount == Decimal("25")
     assert settings.risk.max_risk_per_trade_pct == Decimal("2")
