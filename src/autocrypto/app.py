@@ -402,6 +402,10 @@ def create_app(
             "coverage": [_bracket_coverage_to_dict(lot) for lot in active_lots],
         }
 
+    @app.get("/brackets/oca-groups")
+    def bracket_oca_groups() -> dict[str, Any]:
+        return _bracket_oca_groups(engine.exchange.lots)
+
     @app.get("/brackets/{signal_id}")
     def bracket_status(signal_id: str) -> dict[str, Any]:
         lots = [
@@ -2122,6 +2126,8 @@ def _bracket_risk_summary(lots: list[Any]) -> dict[str, Any]:
 
     return {
         "bracket_count": len(active_lots),
+        "long_bracket_count": sum(1 for lot in active_lots if lot.direction == "long"),
+        "short_bracket_count": sum(1 for lot in active_lots if lot.direction == "short"),
         "exit_count": sum(len(lot.exit_orders) for lot in active_lots),
         "trailing_stop_count": sum(
             1 for lot in active_lots for exit_order in lot.exit_orders if exit_order.kind == "trailing_stop"
@@ -2140,7 +2146,11 @@ def _bracket_risk_summary(lots: list[Any]) -> dict[str, Any]:
 
 def _bracket_health(lots: list[Any]) -> dict[str, Any]:
     active_lots = [lot for lot in lots if lot.remaining_quantity > 0 and lot.exit_orders]
-    rows = [_bracket_health_row(lot) for lot in sorted(active_lots, key=lambda item: (item.symbol, item.signal_id))]
+    oca_conflict_signal_ids = _oca_conflict_signal_ids(active_lots)
+    rows = [
+        _bracket_health_row(lot, oca_conflict_signal_ids=oca_conflict_signal_ids)
+        for lot in sorted(active_lots, key=lambda item: (item.symbol, item.signal_id))
+    ]
     issue_counts: dict[str, int] = {}
     for row in rows:
         for issue in row["issues"]:
@@ -2154,7 +2164,7 @@ def _bracket_health(lots: list[Any]) -> dict[str, Any]:
     }
 
 
-def _bracket_health_row(lot: Any) -> dict[str, Any]:
+def _bracket_health_row(lot: Any, *, oca_conflict_signal_ids: set[str] | None = None) -> dict[str, Any]:
     summary = _bracket_summary(lot)
     protective_exit = _nearest_protective_exit(lot)
     first_reward_ratio = _decimal_or_none(summary["first_target_reward_risk_ratio"])
@@ -2180,6 +2190,8 @@ def _bracket_health_row(lot: Any) -> dict[str, Any]:
         issues.append("first_target_reward_below_risk")
     if total_reward_ratio is not None and total_reward_ratio < 1:
         issues.append("total_target_reward_below_risk")
+    if oca_conflict_signal_ids and lot.signal_id in oca_conflict_signal_ids:
+        issues.append("oca_group_reused_across_brackets")
     return {
         "signal_id": lot.signal_id,
         "symbol": lot.symbol,
@@ -2196,7 +2208,78 @@ def _bracket_health_row(lot: Any) -> dict[str, Any]:
         "total_target_reward_risk_ratio": summary["total_target_reward_risk_ratio"],
         "open_take_profit_count": open_take_profit_count,
         "pending_trailing_count": pending_trailing_count,
+        "oca_groups": _lot_oca_groups(lot),
     }
+
+
+def _bracket_oca_groups(lots: list[Any]) -> dict[str, Any]:
+    active_lots = [lot for lot in lots if lot.remaining_quantity > 0 and lot.exit_orders]
+    groups: dict[str, dict[str, Any]] = {}
+    for lot in active_lots:
+        for group in _lot_oca_groups(lot):
+            row = groups.setdefault(
+                group,
+                {
+                    "oca_group": group,
+                    "signal_ids": set(),
+                    "symbols": set(),
+                    "directions": set(),
+                    "exit_count": 0,
+                },
+            )
+            row["signal_ids"].add(lot.signal_id)
+            row["symbols"].add(lot.symbol)
+            row["directions"].add(lot.direction)
+            row["exit_count"] += sum(1 for exit_order in lot.exit_orders if exit_order.oca_group == group)
+
+    rows: list[dict[str, Any]] = []
+    for group in sorted(groups):
+        row = groups[group]
+        signal_ids = sorted(row["signal_ids"])
+        symbols = sorted(row["symbols"])
+        directions = sorted(row["directions"])
+        notes: list[str] = []
+        if len(signal_ids) > 1:
+            notes.append("oca_group_reused_across_brackets")
+        if len(symbols) > 1:
+            notes.append("oca_group_spans_symbols")
+        if len(directions) > 1:
+            notes.append("oca_group_spans_directions")
+        rows.append(
+            {
+                "oca_group": group,
+                "bracket_count": len(signal_ids),
+                "exit_count": row["exit_count"],
+                "signal_ids": signal_ids,
+                "symbols": symbols,
+                "directions": directions,
+                "reused_across_brackets": len(signal_ids) > 1,
+                "notes": notes,
+            }
+        )
+    return {
+        "group_count": len(rows),
+        "reused_group_count": sum(1 for row in rows if row["reused_across_brackets"]),
+        "groups": rows,
+    }
+
+
+def _oca_conflict_signal_ids(lots: list[Any]) -> set[str]:
+    conflicts: set[str] = set()
+    for row in _bracket_oca_groups(lots)["groups"]:
+        if row["reused_across_brackets"]:
+            conflicts.update(row["signal_ids"])
+    return conflicts
+
+
+def _lot_oca_groups(lot: Any) -> list[str]:
+    return sorted(
+        {
+            exit_order.oca_group
+            for exit_order in lot.exit_orders
+            if exit_order.status not in {"canceled", "filled"} and exit_order.oca_group
+        }
+    )
 
 
 def _empty_bracket_totals(*, symbol: str | None = None) -> dict[str, Any]:

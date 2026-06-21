@@ -653,6 +653,8 @@ def test_bracket_risk_summary_aggregates_long_short_and_trailing_counts():
     assert response.status_code == 200
     summary = response.json()["summary"]
     assert summary["bracket_count"] == 2
+    assert summary["long_bracket_count"] == 1
+    assert summary["short_bracket_count"] == 1
     assert summary["exit_count"] == 6
     assert summary["trailing_stop_count"] == 1
     assert summary["pending_trailing_stop_count"] == 1
@@ -668,6 +670,47 @@ def test_bracket_risk_summary_aggregates_long_short_and_trailing_counts():
         "total_target_reward_risk_ratio": "2",
     }
     assert [row["symbol"] for row in summary["by_symbol"]] == ["BTC/USDT", "ETH/USDT"]
+
+
+def test_bracket_oca_groups_report_reused_external_group_and_health_flag():
+    app = create_app()
+    client = TestClient(app)
+
+    for signal_id, symbol in (("shared-oca-one", "BTCUSDT"), ("shared-oca-two", "ETHUSDT")):
+        client.post(
+            "/webhooks/tradingview",
+            json={
+                "signal_id": signal_id,
+                "symbol": symbol,
+                "side": "buy",
+                "quote_amount": "100",
+                "price": "100",
+                "stop_loss_pct": "5",
+                "take_profit_pct": "10",
+                "oca_group": "external-bracket-42",
+            },
+        )
+
+    groups_response = client.get("/brackets/oca-groups")
+    health_response = client.get("/brackets/health")
+
+    assert groups_response.status_code == 200
+    body = groups_response.json()
+    assert body["group_count"] == 1
+    assert body["reused_group_count"] == 1
+    assert body["groups"][0] == {
+        "oca_group": "external-bracket-42",
+        "bracket_count": 2,
+        "exit_count": 4,
+        "signal_ids": ["shared-oca-one", "shared-oca-two"],
+        "symbols": ["BTC/USDT", "ETH/USDT"],
+        "directions": ["long"],
+        "reused_across_brackets": True,
+        "notes": ["oca_group_reused_across_brackets", "oca_group_spans_symbols"],
+    }
+    health = health_response.json()["health"]
+    assert health["issue_counts"]["oca_group_reused_across_brackets"] == 2
+    assert all("external-bracket-42" in row["oca_groups"] for row in health["brackets"])
 
 
 def test_bracket_health_flags_pending_trailing_and_missing_take_profit():
