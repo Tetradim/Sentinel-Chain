@@ -17,6 +17,8 @@ class PlannedOrderLeg:
     intent: str
     position_effect: str
     close_action: str | None = None
+    trigger_condition: str | None = None
+    trigger_relation: str | None = None
     trigger_price: Decimal | None = None
     limit_price: Decimal | None = None
     close_pct: Decimal = Decimal("100")
@@ -34,6 +36,8 @@ class PlannedOrderLeg:
             "intent": self.intent,
             "position_effect": self.position_effect,
             "close_action": self.close_action,
+            "trigger_condition": self.trigger_condition,
+            "trigger_relation": self.trigger_relation,
             "trigger_price": str(self.trigger_price) if self.trigger_price is not None else None,
             "limit_price": str(self.limit_price) if self.limit_price is not None else None,
             "close_pct": str(self.close_pct),
@@ -179,6 +183,8 @@ def _planned_exit(
         intent=intent,
         position_effect="close",
         close_action=_close_action(signal.side),
+        trigger_condition=_trigger_condition(signal.side, exit_order),
+        trigger_relation=_trigger_relation(signal.side, exit_order),
         trigger_price=exit_order.trigger_price,
         close_pct=exit_order.close_pct,
         reduce_only=True,
@@ -272,6 +278,9 @@ def _plan_summary(signal: CryptoSignal, exit_orders: list[ExitOrder]) -> dict[st
         "entry_position_effect": "reduce_only" if signal.reduce_only else _entry_position_effect(signal.side),
         "exit_side": _exit_side(signal.side),
         "exit_close_action": _close_action(signal.side),
+        "entry_ticket": _entry_ticket(signal),
+        "exit_ticket": _exit_ticket(signal, exit_orders),
+        "bracket_order_flow": _bracket_order_flow(signal, exit_orders),
         "ignored_bracket_fields": signal.reduce_only and _signal_has_exit_fields(signal) and not exit_orders,
     }
 
@@ -296,7 +305,145 @@ def _trailing_params(signal: CryptoSignal, exit_order: ExitOrder) -> dict[str, A
         params["activationPrice"] = str(signal.trailing_activation_price)
     if signal.trail_after_take_profit:
         params["trailAfterTakeProfit"] = True
+    ratchet = _next_trailing_ratchet(signal, exit_order)
+    if ratchet:
+        params["nextRatchet"] = ratchet
     return params
+
+
+def _entry_ticket(signal: CryptoSignal) -> dict[str, Any]:
+    return {
+        "side": signal.side,
+        "action": _entry_action(signal),
+        "order_type": "limit" if signal.price is not None else "market",
+        "limit_price": str(signal.price) if signal.price is not None else None,
+        "reduce_only": signal.reduce_only,
+        "live_submission_enabled": False,
+    }
+
+
+def _entry_action(signal: CryptoSignal) -> str:
+    if signal.reduce_only:
+        return "sell_to_close_long" if signal.side == "sell" else "buy_to_cover_short"
+    return "buy_to_open_long" if signal.side == "buy" else "sell_to_open_short"
+
+
+def _exit_ticket(signal: CryptoSignal, exit_orders: list[ExitOrder]) -> dict[str, Any]:
+    return {
+        "side": _exit_side(signal.side),
+        "close_action": _close_action(signal.side),
+        "reduce_only": True,
+        "leg_count": len(exit_orders),
+        "oca_group": exit_orders[0].oca_group if exit_orders else None,
+        "live_submission_enabled": False,
+    }
+
+
+def _bracket_order_flow(signal: CryptoSignal, exit_orders: list[ExitOrder]) -> list[dict[str, Any]]:
+    flow = [
+        {
+            "role": "entry",
+            "side": signal.side,
+            "action": _entry_ticket(signal)["action"],
+            "position_effect": "reduce_only" if signal.reduce_only else _entry_position_effect(signal.side),
+            "live_submission_enabled": False,
+        }
+    ]
+    for exit_order in exit_orders:
+        flow.append(
+            {
+                "role": exit_order.kind,
+                "side": _exit_side(signal.side),
+                "action": _close_action(signal.side),
+                "trigger_condition": _trigger_condition(signal.side, exit_order),
+                "trigger_relation": _trigger_relation(signal.side, exit_order),
+                "trigger_price": str(exit_order.trigger_price),
+                "close_pct": str(exit_order.close_pct),
+                "status": exit_order.status,
+                "reduce_only": True,
+                "live_submission_enabled": False,
+            }
+        )
+    return flow
+
+
+def _trigger_condition(entry_side: str, exit_order: ExitOrder) -> str | None:
+    relation = _trigger_relation(entry_side, exit_order)
+    if relation is None:
+        return None
+    return f"mark_price {relation} {exit_order.trigger_price}"
+
+
+def _trigger_relation(entry_side: str, exit_order: ExitOrder) -> str | None:
+    if exit_order.kind == "time_exit":
+        return "after_mark_count"
+    if entry_side == "buy":
+        return "<=" if exit_order.kind in {"stop_loss", "trailing_stop"} else ">="
+    return ">=" if exit_order.kind in {"stop_loss", "trailing_stop"} else "<="
+
+
+def _next_trailing_ratchet(signal: CryptoSignal, exit_order: ExitOrder) -> dict[str, Any] | None:
+    if exit_order.kind != "trailing_stop":
+        return None
+    if signal.trailing_stop_pct is None and signal.trailing_stop_amount is None:
+        return None
+    step = _trailing_step_required(signal, exit_order.trigger_price)
+    if exit_order.status == "pending_take_profit":
+        return {
+            "blocked_by": "take_profit_fill",
+            "activation_price": str(_planned_activation_price(signal)) if _planned_activation_price(signal) is not None else None,
+            "step_required": str(step),
+        }
+    if exit_order.status == "pending_activation":
+        return {
+            "blocked_by": "activation_price",
+            "activation_price": str(_planned_activation_price(signal)) if _planned_activation_price(signal) is not None else None,
+            "step_required": str(step),
+        }
+    desired_trigger = (
+        exit_order.trigger_price + step
+        if signal.side == "buy"
+        else exit_order.trigger_price - step
+    )
+    mark_price = _mark_for_trailing_trigger(signal, desired_trigger)
+    return {
+        "blocked_by": None,
+        "step_required": str(step),
+        "next_trigger_price": str(desired_trigger),
+        "minimum_favorable_mark": str(mark_price) if mark_price is not None else None,
+    }
+
+
+def _trailing_step_required(signal: CryptoSignal, current_trigger: Decimal) -> Decimal:
+    if signal.trailing_step_amount is not None:
+        return signal.trailing_step_amount
+    if signal.trailing_step_pct is not None:
+        return current_trigger * signal.trailing_step_pct / Decimal("100")
+    return Decimal("0")
+
+
+def _mark_for_trailing_trigger(signal: CryptoSignal, trigger_price: Decimal) -> Decimal | None:
+    if signal.trailing_stop_amount is not None:
+        return (
+            trigger_price + signal.trailing_stop_amount
+            if signal.side == "buy"
+            else trigger_price - signal.trailing_stop_amount
+        )
+    if signal.trailing_stop_pct is None:
+        return None
+    callback = signal.trailing_stop_pct / Decimal("100")
+    if signal.side == "buy":
+        return trigger_price / (Decimal("1") - callback)
+    return trigger_price / (Decimal("1") + callback)
+
+
+def _planned_activation_price(signal: CryptoSignal) -> Decimal | None:
+    if signal.trailing_activation_price is not None:
+        return signal.trailing_activation_price
+    if signal.price is None or signal.trailing_activation_pct is None:
+        return None
+    direction = Decimal("1") if signal.side == "buy" else Decimal("-1")
+    return signal.price * (Decimal("1") + direction * signal.trailing_activation_pct / Decimal("100"))
 
 
 def _has_stop_and_take_profit(exit_orders: list[ExitOrder]) -> bool:

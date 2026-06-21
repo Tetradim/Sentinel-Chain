@@ -52,6 +52,31 @@ def test_order_planner_keeps_paper_bracket_synthetic_and_not_live_safe():
     assert plan.summary["entry_position_effect"] == "open_long"
     assert plan.summary["exit_side"] == "sell"
     assert plan.summary["exit_close_action"] == "sell_to_close_long"
+    assert plan.summary["entry_ticket"] == {
+        "side": "buy",
+        "action": "buy_to_open_long",
+        "order_type": "limit",
+        "limit_price": "100",
+        "reduce_only": False,
+        "live_submission_enabled": False,
+    }
+    assert plan.summary["exit_ticket"] == {
+        "side": "sell",
+        "close_action": "sell_to_close_long",
+        "reduce_only": True,
+        "leg_count": 3,
+        "oca_group": "oca-paper-plan",
+        "live_submission_enabled": False,
+    }
+    assert [
+        (step["role"], step["side"], step["action"], step.get("trigger_relation"))
+        for step in plan.summary["bracket_order_flow"]
+    ] == [
+        ("entry", "buy", "buy_to_open_long", None),
+        ("stop_loss", "sell", "sell_to_close_long", "<="),
+        ("take_profit", "sell", "sell_to_close_long", ">="),
+        ("trailing_stop", "sell", "sell_to_close_long", "<="),
+    ]
     assert plan.summary["take_profit_close_pct"] == "100"
     assert plan.summary["trailing_stop_close_pct"] == "100"
     assert plan.execution_sequence[-1]["step"] == "track_synthetic_exits"
@@ -152,6 +177,8 @@ def test_order_planner_uses_attached_strategy_when_venue_advertises_brackets_and
     assert plan.entry.position_effect == "open_short"
     assert plan.exits[0].side == "buy"
     assert plan.exits[0].close_action == "buy_to_cover_short"
+    assert plan.exits[0].trigger_relation == ">="
+    assert plan.exits[1].trigger_condition == "mark_price <= 90.00"
     assert plan.exits[0].position_effect == "close"
     assert plan.exits[0].reduce_only is True
     assert plan.exits[0].params["reduceOnly"] is True
@@ -247,6 +274,11 @@ def test_order_planner_marks_pending_and_partial_trailing_stop_metadata():
     assert trailing.partial_close is True
     assert trailing.params["trailing"]["activationPct"] == "2"
     assert trailing.params["trailing"]["stepPct"] == "0.5"
+    assert trailing.params["trailing"]["nextRatchet"] == {
+        "blocked_by": "activation_price",
+        "activation_price": "102.00",
+        "step_required": "0.485",
+    }
     assert "trailing_stop_starts_pending_activation" in plan.warnings
     assert plan.summary["pending_trailing_stop_count"] == 1
     assert plan.summary["has_partial_trailing_exit"] is True
@@ -407,3 +439,68 @@ def test_order_planner_flags_reduce_only_signals_that_include_bracket_fields():
     assert plan.exits == ()
     assert "reduce_only_signal_ignores_bracket_exit_fields" in plan.warnings
     assert plan.summary["ignored_bracket_fields"] is True
+    assert plan.summary["entry_ticket"]["action"] == "sell_to_close_long"
+
+
+def test_order_planner_reports_next_trailing_ratchet_mark_for_long_and_short():
+    long_signal = normalize_signal(
+        {
+            "signal_id": "long-next-ratchet",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "20",
+            "trailing_stop_pct": "5",
+            "trailing_step_amount": "2",
+        },
+        source="test",
+    )
+    short_signal = normalize_signal(
+        {
+            "signal_id": "short-next-ratchet",
+            "symbol": "ETH/USDT",
+            "side": "short",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "20",
+            "trailing_stop_amount": "4",
+            "trailing_step_amount": "1",
+        },
+        source="test",
+    )
+    capabilities = ExchangeCapabilities(
+        exchange_id="paper",
+        spot=True,
+        margin=False,
+        swap=False,
+        future=False,
+        option=False,
+        create_order=True,
+        cancel_order=False,
+        fetch_balance=False,
+        attached_stop_loss_take_profit=True,
+        oco_order=True,
+        trailing_order=True,
+        reduce_only=True,
+    )
+
+    long_plan = plan_bracket_execution(long_signal, capabilities)
+    short_plan = plan_bracket_execution(short_signal, capabilities)
+    long_trailing = next(exit_leg for exit_leg in long_plan.exits if exit_leg.role == "trailing_stop")
+    short_trailing = next(exit_leg for exit_leg in short_plan.exits if exit_leg.role == "trailing_stop")
+
+    assert long_trailing.params["trailing"]["nextRatchet"] == {
+        "blocked_by": None,
+        "step_required": "2",
+        "next_trigger_price": "97.00",
+        "minimum_favorable_mark": "102.1052631578947368421052632",
+    }
+    assert short_trailing.params["trailing"]["nextRatchet"] == {
+        "blocked_by": None,
+        "step_required": "1",
+        "next_trigger_price": "103.00",
+        "minimum_favorable_mark": "99.00",
+    }
