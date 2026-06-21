@@ -87,6 +87,9 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
     if not isinstance(payload, dict):
         raise SignalValidationError("signal payload must be an object")
     bracket = _bracket_payload(payload)
+    stop_loss_leg = _nested_bracket_leg(bracket, "stop_loss", "stop", "sl")
+    take_profit_leg = _nested_bracket_leg(bracket, "take_profit", "target", "tp")
+    trailing_leg = _nested_bracket_leg(bracket, "trailing_stop", "trailing", "trail")
 
     raw_side = payload.get("side") or payload.get("action")
     side = _normalize_side(raw_side)
@@ -107,39 +110,111 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         raise SignalValidationError("signal requires quote_amount, base_amount, risk_amount, or risk_pct")
 
     price = _optional_positive_decimal(payload.get("price") or payload.get("entry_price") or payload.get("limit_price"))
-    stop_loss_pct = _optional_positive_decimal(_field(payload, bracket, "stop_loss_pct"))
-    stop_loss_price = _optional_positive_decimal(_field(payload, bracket, "stop_loss_price", "stop_price"))
-    take_profit_pct = _optional_positive_decimal(_field(payload, bracket, "take_profit_pct"))
-    take_profit_price = _optional_positive_decimal(
-        _field(payload, bracket, "take_profit_price", "target_price")
+    stop_loss_pct = _optional_positive_decimal(
+        _first_present(
+            _field(payload, bracket, "stop_loss_pct"),
+            _leg_field(stop_loss_leg, "pct", "percent", "percentage", "stop_loss_pct"),
+        )
     )
-    take_profit_targets = _take_profit_targets(_field(payload, bracket, "take_profit_targets"), take_profit_pct, take_profit_price)
+    stop_loss_price = _optional_positive_decimal(
+        _first_present(
+            _field(payload, bracket, "stop_loss_price", "stop_price"),
+            _leg_field(stop_loss_leg, "price", "trigger_price", "stop_price", "stop_loss_price"),
+        )
+    )
+    take_profit_pct = _optional_positive_decimal(
+        _first_present(
+            _field(payload, bracket, "take_profit_pct"),
+            _leg_field(take_profit_leg, "pct", "percent", "percentage", "take_profit_pct", "target_pct"),
+        )
+    )
+    take_profit_price = _optional_positive_decimal(
+        _first_present(
+            _field(payload, bracket, "take_profit_price", "target_price"),
+            _leg_field(take_profit_leg, "price", "trigger_price", "limit_price", "take_profit_price", "target_price"),
+        )
+    )
+    take_profit_targets_payload = _first_present(
+        _field(payload, bracket, "take_profit_targets"),
+        _leg_field(take_profit_leg, "targets", "take_profit_targets"),
+        take_profit_leg if isinstance(take_profit_leg, list) else None,
+    )
+    if take_profit_targets_payload is None and isinstance(take_profit_leg, dict) and take_profit_leg:
+        take_profit_targets_payload = [take_profit_leg]
+    take_profit_targets = _take_profit_targets(take_profit_targets_payload, take_profit_pct, take_profit_price)
     take_profit_targets = _sort_take_profit_targets(take_profit_targets, side=side, entry_price=price)
     if take_profit_pct is None and take_profit_targets:
         take_profit_pct = take_profit_targets[0].pct
-    trailing_stop_pct = _optional_positive_decimal(_field(payload, bracket, "trailing_stop_pct"))
+    trailing_stop_pct = _optional_positive_decimal(
+        _first_present(
+            _field(payload, bracket, "trailing_stop_pct"),
+            _leg_field(trailing_leg, "pct", "percent", "percentage", "trailing_stop_pct", "callback_pct"),
+        )
+    )
     trailing_stop_amount = _optional_positive_decimal(
-        _field(payload, bracket, "trailing_stop_amount", "trail_amount")
+        _first_present(
+            _field(payload, bracket, "trailing_stop_amount", "trail_amount"),
+            _leg_field(trailing_leg, "amount", "distance", "trail_amount", "trailing_stop_amount", "callback_amount"),
+        )
     )
     trailing_stop_price = _optional_positive_decimal(
-        _field(payload, bracket, "trailing_stop_price", "trail_price")
+        _first_present(
+            _field(payload, bracket, "trailing_stop_price", "trail_price"),
+            _leg_field(trailing_leg, "price", "trigger_price", "trail_price", "trailing_stop_price"),
+        )
     )
     trailing_stop_close_pct = (
-        _optional_positive_decimal(_field(payload, bracket, "trailing_stop_close_pct", "trail_close_pct"))
+        _optional_positive_decimal(
+            _first_present(
+                _field(payload, bracket, "trailing_stop_close_pct", "trail_close_pct"),
+                _leg_field(
+                    trailing_leg,
+                    "close_pct",
+                    "close_percent",
+                    "qty_pct",
+                    "quantity_pct",
+                    "size_pct",
+                    "trailing_stop_close_pct",
+                    "trail_close_pct",
+                ),
+            )
+        )
         or Decimal("100")
     )
-    trailing_step_pct = _optional_positive_decimal(_field(payload, bracket, "trailing_step_pct", "trail_step_pct"))
+    trailing_step_pct = _optional_positive_decimal(
+        _first_present(
+            _field(payload, bracket, "trailing_step_pct", "trail_step_pct"),
+            _leg_field(trailing_leg, "step_pct", "trail_step_pct", "trailing_step_pct"),
+        )
+    )
     trailing_step_amount = _optional_positive_decimal(
-        _field(payload, bracket, "trailing_step_amount", "trail_step_amount")
+        _first_present(
+            _field(payload, bracket, "trailing_step_amount", "trail_step_amount"),
+            _leg_field(trailing_leg, "step_amount", "trail_step_amount", "trailing_step_amount"),
+        )
     )
     trailing_activation_pct = _optional_positive_decimal(
-        _field(payload, bracket, "trailing_activation_pct", "trail_activation_pct")
+        _first_present(
+            _field(payload, bracket, "trailing_activation_pct", "trail_activation_pct"),
+            _leg_field(trailing_leg, "activation_pct", "trail_activation_pct", "trailing_activation_pct"),
+        )
     )
     trailing_activation_price = _optional_positive_decimal(
-        _field(payload, bracket, "trailing_activation_price", "trail_activation_price", "activation_price")
+        _first_present(
+            _field(payload, bracket, "trailing_activation_price", "trail_activation_price", "activation_price"),
+            _leg_field(
+                trailing_leg,
+                "activation_price",
+                "trail_activation_price",
+                "trailing_activation_price",
+            ),
+        )
     )
     trail_after_take_profit = _bool(
-        _field(payload, bracket, "trail_after_take_profit", "trailing_after_take_profit", "trail_after_tp"),
+        _first_present(
+            _field(payload, bracket, "trail_after_take_profit", "trailing_after_take_profit", "trail_after_tp"),
+            _leg_field(trailing_leg, "after_take_profit", "trail_after_take_profit", "trail_after_tp"),
+        ),
         default=False,
     )
     breakeven_trigger_pct = _optional_positive_decimal(_field(payload, bracket, "breakeven_trigger_pct"))
@@ -272,6 +347,34 @@ def _bracket_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return bracket
 
 
+def _nested_bracket_leg(bracket: dict[str, Any], *names: str) -> dict[str, Any] | list[Any]:
+    for name in names:
+        value = bracket.get(name)
+        if value in (None, ""):
+            continue
+        if isinstance(value, (dict, list)):
+            return value
+        raise SignalValidationError(f"bracket {name} must be an object or list")
+    return {}
+
+
+def _leg_field(leg: dict[str, Any] | list[Any], *names: str) -> Any:
+    if not isinstance(leg, dict):
+        return None
+    for name in names:
+        value = leg.get(name)
+        if value not in (None, ""):
+            return value
+    return None
+
+
+def _first_present(*values: Any) -> Any:
+    for value in values:
+        if value not in (None, ""):
+            return value
+    return None
+
+
 def _field(payload: dict[str, Any], bracket: dict[str, Any], *names: str) -> Any:
     for name in names:
         if payload.get(name) not in (None, ""):
@@ -396,11 +499,37 @@ def _take_profit_targets(
     for item in value:
         if not isinstance(item, dict):
             raise SignalValidationError("take_profit_targets entries must be objects")
-        pct = _optional_positive_decimal(item.get("pct") or item.get("take_profit_pct"))
-        trigger_price = _optional_positive_decimal(
-            item.get("trigger_price") or item.get("price") or item.get("take_profit_price")
+        pct = _optional_positive_decimal(
+            _first_present(
+                item.get("pct"),
+                item.get("percent"),
+                item.get("percentage"),
+                item.get("take_profit_pct"),
+                item.get("target_pct"),
+            )
         )
-        close_pct = _optional_positive_decimal(item.get("close_pct") or item.get("size_pct")) or Decimal("100")
+        trigger_price = _optional_positive_decimal(
+            _first_present(
+                item.get("trigger_price"),
+                item.get("price"),
+                item.get("limit_price"),
+                item.get("take_profit_price"),
+                item.get("target_price"),
+            )
+        )
+        close_pct = (
+            _optional_positive_decimal(
+                _first_present(
+                    item.get("close_pct"),
+                    item.get("close_percent"),
+                    item.get("size_pct"),
+                    item.get("size_percent"),
+                    item.get("qty_pct"),
+                    item.get("quantity_pct"),
+                )
+            )
+            or Decimal("100")
+        )
         if pct is None and trigger_price is None:
             raise SignalValidationError("take_profit_targets entries require pct or trigger_price")
         if close_pct > Decimal("100"):

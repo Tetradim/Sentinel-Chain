@@ -151,6 +151,67 @@ def test_normalizes_nested_bracket_order_payload():
     assert signal.profit_lock_after_take_profit_pct == Decimal("1")
 
 
+def test_normalizes_object_shaped_bracket_legs():
+    signal = normalize_signal(
+        {
+            "symbol": "SOL/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "50",
+            "bracket": {
+                "stop_loss": {"percent": "3"},
+                "take_profit": {"target_pct": "8", "close_percent": "60"},
+                "trailing_stop": {
+                    "callback_pct": "4",
+                    "qty_pct": "40",
+                    "activation_pct": "2",
+                    "step_pct": "0.5",
+                    "after_take_profit": True,
+                },
+            },
+        },
+        source="test",
+    )
+
+    assert signal.stop_loss_pct == Decimal("3")
+    assert [(target.pct, target.close_pct) for target in signal.take_profit_targets] == [
+        (Decimal("8"), Decimal("60")),
+    ]
+    assert signal.trailing_stop_pct == Decimal("4")
+    assert signal.trailing_stop_close_pct == Decimal("40")
+    assert signal.trailing_activation_pct == Decimal("2")
+    assert signal.trailing_step_pct == Decimal("0.5")
+    assert signal.trail_after_take_profit is True
+
+
+def test_normalizes_list_shaped_nested_take_profit_leg_aliases():
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "short",
+            "quote_amount": "100",
+            "price": "100",
+            "bracket": {
+                "stop": {"price": "105"},
+                "tp": [
+                    {"percentage": "4", "quantity_pct": "25"},
+                    {"target_price": "90", "size_percent": "75"},
+                ],
+                "trail": {"amount": "3", "activation_price": "96"},
+            },
+        },
+        source="test",
+    )
+
+    assert signal.stop_loss_price == Decimal("105")
+    assert [(target.pct, target.trigger_price, target.close_pct) for target in signal.take_profit_targets] == [
+        (Decimal("4"), None, Decimal("25")),
+        (None, Decimal("90"), Decimal("75")),
+    ]
+    assert signal.trailing_stop_amount == Decimal("3")
+    assert signal.trailing_activation_price == Decimal("96")
+
+
 def test_normalizes_exact_initial_trailing_stop_price_from_nested_bracket():
     signal = normalize_signal(
         {
@@ -314,6 +375,24 @@ def test_normalizes_trailing_stop_close_pct_from_nested_bracket():
     )
 
     assert signal.trailing_stop_close_pct == Decimal("50")
+
+
+def test_normalizes_nested_trailing_stop_close_pct_for_risk_review():
+    signal = normalize_signal(
+        {
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "bracket": {
+                "stop_loss_pct": "5",
+                "trailing_stop": {"pct": "4", "close_pct": "125"},
+            },
+        },
+        source="test",
+    )
+
+    assert signal.trailing_stop_close_pct == Decimal("125")
 
 
 @pytest.mark.parametrize(

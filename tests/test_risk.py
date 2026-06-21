@@ -579,14 +579,30 @@ def test_risk_rejects_invalid_trailing_stop_close_pct():
         },
         source="test",
     )
+    nested_oversized = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "3000",
+            "bracket": {
+                "stop_loss": {"pct": "3"},
+                "trailing_stop": {"pct": "4", "qty_pct": "125"},
+            },
+        },
+        source="test",
+    )
 
     oversized_decision = evaluate_signal(oversized, RiskConfig(), AccountState())
     missing_trail_decision = evaluate_signal(missing_trail, RiskConfig(), AccountState())
+    nested_oversized_decision = evaluate_signal(nested_oversized, RiskConfig(), AccountState())
 
     assert oversized_decision.approved is False
     assert "invalid_trailing_stop_close_pct" in oversized_decision.reason_codes
     assert missing_trail_decision.approved is False
     assert "trailing_stop_required_for_close_pct" in missing_trail_decision.reason_codes
+    assert nested_oversized_decision.approved is False
+    assert "invalid_trailing_stop_close_pct" in nested_oversized_decision.reason_codes
 
 
 def test_risk_applies_trailing_amount_to_max_trailing_stop_pct_cap():
