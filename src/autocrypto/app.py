@@ -2094,6 +2094,8 @@ def _bracket_health(lots: list[Any]) -> dict[str, Any]:
 def _bracket_health_row(lot: Any) -> dict[str, Any]:
     summary = _bracket_summary(lot)
     protective_exit = _nearest_protective_exit(lot)
+    first_reward_ratio = _decimal_or_none(summary["first_target_reward_risk_ratio"])
+    total_reward_ratio = _decimal_or_none(summary["total_target_reward_risk_ratio"])
     open_take_profit_count = sum(
         1 for exit_order in lot.exit_orders if exit_order.kind == "take_profit" and exit_order.status == "open"
     )
@@ -2111,6 +2113,10 @@ def _bracket_health_row(lot: Any) -> dict[str, Any]:
         issues.append("trailing_stop_pending")
     if open_take_profit_count == 0:
         issues.append("no_open_take_profit_exit")
+    elif first_reward_ratio is not None and first_reward_ratio < 1:
+        issues.append("first_target_reward_below_risk")
+    if total_reward_ratio is not None and total_reward_ratio < 1:
+        issues.append("total_target_reward_below_risk")
     return {
         "signal_id": lot.signal_id,
         "symbol": lot.symbol,
@@ -2123,6 +2129,8 @@ def _bracket_health_row(lot: Any) -> dict[str, Any]:
         "protective_trigger_price": summary["protective_trigger_price"],
         "worst_case_loss": summary["worst_case_loss"],
         "protective_locked_pnl": summary["protective_locked_pnl"],
+        "first_target_reward_risk_ratio": summary["first_target_reward_risk_ratio"],
+        "total_target_reward_risk_ratio": summary["total_target_reward_risk_ratio"],
         "open_take_profit_count": open_take_profit_count,
         "pending_trailing_count": pending_trailing_count,
     }
@@ -2156,7 +2164,17 @@ def _bracket_totals_to_dict(totals: dict[str, Any]) -> dict[str, Any]:
         "worst_case_loss": _decimal_to_plain(totals["worst_case_loss"]),
         "protective_locked_pnl": _decimal_to_plain(totals["protective_locked_pnl"]),
         "first_target_reward": _decimal_to_plain(totals["first_target_reward"]),
+        "first_target_reward_risk_ratio": _decimal_to_plain(
+            totals["first_target_reward"] / totals["worst_case_loss"]
+        )
+        if totals["worst_case_loss"] > 0
+        else None,
         "total_target_reward": _decimal_to_plain(totals["total_target_reward"]),
+        "total_target_reward_risk_ratio": _decimal_to_plain(
+            totals["total_target_reward"] / totals["worst_case_loss"]
+        )
+        if totals["worst_case_loss"] > 0
+        else None,
     }
     if totals["symbol"] is not None:
         payload["symbol"] = totals["symbol"]
@@ -2165,6 +2183,10 @@ def _bracket_totals_to_dict(totals: dict[str, Any]) -> dict[str, Any]:
 
 def _decimal_or_zero(value: str | None) -> Decimal:
     return Decimal(value) if value is not None else Decimal("0")
+
+
+def _decimal_or_none(value: str | None) -> Decimal | None:
+    return Decimal(value) if value is not None else None
 
 
 def _bracket_summary(lot: Any) -> dict[str, str | None]:

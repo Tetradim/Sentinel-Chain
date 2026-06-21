@@ -663,7 +663,9 @@ def test_bracket_risk_summary_aggregates_long_short_and_trailing_counts():
         "worst_case_loss": "15.00",
         "protective_locked_pnl": "-15.00",
         "first_target_reward": "30.00",
+        "first_target_reward_risk_ratio": "2",
         "total_target_reward": "30.00",
+        "total_target_reward_risk_ratio": "2",
     }
     assert [row["symbol"] for row in summary["by_symbol"]] == ["BTC/USDT", "ETH/USDT"]
 
@@ -733,11 +735,40 @@ def test_bracket_coverage_reports_partial_exit_residuals():
     assert coverage["trailing_stop_close_pct"] == "25"
     assert coverage["protective_close_pct"] == "100"
     assert coverage["residual_after_take_profit_pct"] == "30"
+    assert coverage["residual_after_take_profit_quantity"] == "0.3"
+    assert coverage["residual_after_take_profit_notional"] == "30.0"
     assert coverage["has_full_protective_exit"] is True
     assert coverage["has_full_profit_exit"] is False
     assert coverage["full_close_exit_count"] == 1
     assert coverage["partial_close_exit_count"] == 3
     assert coverage["coverage_notes"] == ["take_profit_plan_leaves_residual", "contains_partial_exit"]
+
+
+def test_bracket_health_flags_reward_below_open_risk():
+    app = create_app()
+    client = TestClient(app)
+
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "weak-reward",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "3",
+        },
+    )
+
+    response = client.get("/brackets/health")
+
+    assert response.status_code == 200
+    row = response.json()["health"]["brackets"][0]
+    assert row["first_target_reward_risk_ratio"] == "0.6"
+    assert row["total_target_reward_risk_ratio"] == "0.6"
+    assert "first_target_reward_below_risk" in row["issues"]
+    assert "total_target_reward_below_risk" in row["issues"]
 
 
 def test_bracket_preview_reports_close_impact_without_mutating_state():

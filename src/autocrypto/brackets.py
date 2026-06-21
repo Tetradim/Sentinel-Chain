@@ -160,6 +160,9 @@ def bracket_coverage_payload(lot: Any) -> dict[str, Any]:
         for exit_order in open_exits
         if exit_order.kind != "time_exit" and exit_close_quantity(lot, exit_order) < lot.remaining_quantity
     )
+    residual_after_take_profit_pct = max(Decimal("100") - take_profit_close_pct, Decimal("0"))
+    residual_after_take_profit_quantity = lot.original_quantity * residual_after_take_profit_pct / Decimal("100")
+    residual_after_take_profit_quantity = min(residual_after_take_profit_quantity, lot.remaining_quantity)
     return {
         "signal_id": lot.signal_id,
         "symbol": lot.symbol,
@@ -168,7 +171,11 @@ def bracket_coverage_payload(lot: Any) -> dict[str, Any]:
         "take_profit_close_pct": decimal_to_plain(take_profit_close_pct),
         "trailing_stop_close_pct": decimal_to_plain(trailing_close_pct) if trailing_close_pct else None,
         "protective_close_pct": decimal_to_plain(protective_close_pct),
-        "residual_after_take_profit_pct": decimal_to_plain(max(Decimal("100") - take_profit_close_pct, Decimal("0"))),
+        "residual_after_take_profit_pct": decimal_to_plain(residual_after_take_profit_pct),
+        "residual_after_take_profit_quantity": decimal_to_plain(residual_after_take_profit_quantity),
+        "residual_after_take_profit_notional": decimal_to_plain(
+            residual_after_take_profit_quantity * lot.entry_price
+        ),
         "has_full_protective_exit": any(
             exit_order.kind in PROTECTIVE_EXIT_KINDS and exit_close_quantity(lot, exit_order) >= lot.remaining_quantity
             for exit_order in open_exits

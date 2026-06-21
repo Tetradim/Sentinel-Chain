@@ -30,15 +30,15 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Requires a fixed stop-loss by default when a trailing stop starts pending activation or pending take-profit, so initial paper risk is defined before the trail can arm
 - Supports optional paper breakeven-after-take-profit brackets so the remaining stop/trailing legs lock at entry after a staged target fills
 - Supports paper time-stop exits with `max_hold_marks`/`time_stop_marks` so a bracket can close after a fixed number of market-price marks when no price exit fired
-- Lists all active synthetic paper brackets with remaining-notional, worst-case stop-loss, first-target reward, and aggregate bracket-risk summaries
+- Lists all active synthetic paper brackets with remaining-notional, worst-case stop-loss, first-target reward, reward/risk ratios, and aggregate bracket-risk summaries
 - Supports protective stop, trailing-stop, take-profit, and manual breakeven amendments; protective exits only tighten risk and take-profit targets only move farther into profit
 - Supports paper-only trailing-stop tightening from a supplied favorable mark, computing the next synthetic trail trigger from the configured percentage or fixed trail distance while rejecting marks that would loosen risk
 - Supports paper-only bracket close-by-signal controls that flatten or partially reduce the selected simulated bracket at an operator-supplied mark or at the current nearest protective trigger
 - Previews one active bracket by signal ID at a hypothetical mark, through a multi-mark path, or through an OHLC candle path with conservative adverse-first or favorable-first sequencing, optional open mark, ambiguous stop/target range flags, trigger distance, trailing activation context, and simulated post-mark trailing ratchets without mutating live paper state
 - Previews one bracket's trailing-stop path across several hypothetical marks with before/after activation and ratchet flags, without mutating active paper orders, positions, P&L, or water marks
 - Shows a paper bracket exit ladder by signal ID with trigger order, estimated close quantity, estimated notional, estimated P&L, and optional mark-distance math for each stop, trailing, take-profit, or time-stop leg
-- Shows read-only bracket decision support by signal ID with paper exit sequencing, health flags, and next-trailing-ratchet telemetry for a supplied mark
-- Shows read-only bracket coverage diagnostics so operators can spot partial take-profit residuals, partial trailing reductions, missing full-profit exits, and paper-only time exits before applying marks
+- Shows read-only bracket decision support by signal ID with paper exit sequencing, reward/risk health flags, and next-trailing-ratchet telemetry for a supplied mark
+- Shows read-only bracket coverage diagnostics so operators can spot partial take-profit residual quantity/notional, partial trailing reductions, missing full-profit exits, and paper-only time exits before applying marks
 - Cancels active synthetic paper bracket exits by signal ID while leaving the underlying paper position open for separate manual management
 - Previews hypothetical market-price marks and bracket/trailing exits without mutating paper orders or positions, including simulated post-mark trailing-stop ratchets and per-bracket impact summaries for trigger, close, quantity, and trailing-ratchet outcomes
 - Previews server-side risk decisions from the operator UI without placing orders
@@ -515,6 +515,7 @@ When `quote_amount` and `base_amount` are omitted, JSON signals may set `risk_am
 
 Current bot work is guided by paper-first risk controls and exchange order behavior:
 
+- Bitsgap's 2026 bot-settings guide emphasizes stop loss, take profit, demo testing, and backtesting as core bot configuration checks, which is why Auto-Crypto surfaces reward/risk health and residual bracket exposure before any live execution is possible: <https://bitsgap.com/blog/how-to-choose-crypto-trading-bot-settings-in-2026-range-investment-stop-loss-and-take-profit>
 - Binance documents spot trailing stops as dynamic contingent orders that track favorable price movement and trigger after a configured reversal delta; it also allows an optional stop price before tracking begins, which maps to Auto-Crypto's paper `trailing_activation_pct` and `trailing_activation_price`. Binance also documents per-symbol trailing-delta filters, which is why Auto-Crypto now supports paper `trailing_step_pct` and `trailing_step_amount` to avoid unrealistic tick-by-tick ratchets in simulations: <https://developers.binance.com/docs/binance-spot-api-docs/faqs/trailing-stop-faq>
 - Binance Futures describes trailing stop orders as requiring both an activation condition and a callback-rate reversal condition before a market order is issued, matching Auto-Crypto's paper activation-plus-ratchet model: <https://www.binance.com/en/support/faq/detail/360042299292>
 - Binance.US currently describes trailing stops as stops whose trigger price follows favorable market movement and fires when the market moves against the position, matching Auto-Crypto's high-water and low-water paper trailing logic: <https://support.binance.us/en/articles/9842886-trailing-stop-orders-what-they-are-and-how-to-use-them>
