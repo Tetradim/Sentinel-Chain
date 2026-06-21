@@ -1385,6 +1385,7 @@ def _risk_config_to_dict(config: RiskConfig) -> dict[str, Any]:
         "max_open_notional": str(config.max_open_notional),
         "max_symbol_open_notional": str(config.max_symbol_open_notional),
         "max_position_equity_pct": str(config.max_position_equity_pct),
+        "max_risk_amount": str(config.max_risk_amount),
         "max_risk_per_trade_pct": str(config.max_risk_per_trade_pct),
         "max_entry_volatility_pct": str(config.max_entry_volatility_pct),
         "max_leverage": str(config.max_leverage),
@@ -1400,6 +1401,7 @@ def _risk_config_to_dict(config: RiskConfig) -> dict[str, Any]:
         "allowed_exchanges": sorted(config.allowed_exchanges),
         "allowed_symbols": sorted(config.allowed_symbols),
         "blocked_symbols": sorted(config.blocked_symbols),
+        "require_fixed_stop_for_pending_trailing": config.require_fixed_stop_for_pending_trailing,
     }
 
 

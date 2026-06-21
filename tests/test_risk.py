@@ -265,6 +265,52 @@ def test_risk_rejects_position_above_equity_percentage_cap():
     assert "max_position_equity_pct_exceeded" in decision.reason_codes
 
 
+def test_risk_rejects_order_whose_stop_distance_exceeds_max_risk_amount():
+    signal = normalize_signal(
+        {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "500",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "12",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(
+        signal,
+        RiskConfig(max_order_notional=Decimal("1000"), max_risk_amount=Decimal("20")),
+        AccountState(),
+    )
+
+    assert decision.approved is False
+    assert "max_risk_amount_exceeded" in decision.reason_codes
+
+
+def test_risk_caps_absolute_stop_distance_with_max_risk_amount_for_short_brackets():
+    signal = normalize_signal(
+        {
+            "symbol": "ETH/USDT",
+            "side": "sell",
+            "quote_amount": "400",
+            "price": "100",
+            "stop_loss_price": "106",
+            "take_profit_price": "88",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(
+        signal,
+        RiskConfig(max_order_notional=Decimal("1000"), max_risk_amount=Decimal("20")),
+        AccountState(),
+    )
+
+    assert decision.approved is False
+    assert "max_risk_amount_exceeded" in decision.reason_codes
+
+
 def test_risk_rejects_wide_stop_or_weak_reward_risk():
     signal = normalize_signal(
         {
@@ -694,6 +740,50 @@ def test_risk_rejects_trail_after_take_profit_without_trail_or_target():
 
     assert "trailing_stop_required_for_take_profit_delay" in missing_trail_decision.reason_codes
     assert "trail_after_take_profit_requires_take_profit" in missing_target_decision.reason_codes
+
+
+def test_risk_rejects_pending_trailing_without_fixed_stop_by_default():
+    signal = normalize_signal(
+        {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "take_profit_pct": "10",
+            "trailing_stop_pct": "4",
+            "trailing_activation_pct": "3",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(signal, RiskConfig(require_stop_loss=False), AccountState())
+
+    assert decision.approved is False
+    assert "pending_trailing_requires_fixed_stop" in decision.reason_codes
+
+
+def test_risk_can_allow_pending_trailing_without_fixed_stop_when_configured():
+    signal = normalize_signal(
+        {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "take_profit_pct": "10",
+            "trailing_stop_pct": "4",
+            "trailing_activation_pct": "3",
+        },
+        source="test",
+    )
+
+    decision = evaluate_signal(
+        signal,
+        RiskConfig(require_stop_loss=False, require_fixed_stop_for_pending_trailing=False),
+        AccountState(),
+    )
+
+    assert decision.approved is True
+    assert decision.reason_codes == []
 
 
 def test_risk_rejects_invalid_or_incomplete_trailing_stop_price():

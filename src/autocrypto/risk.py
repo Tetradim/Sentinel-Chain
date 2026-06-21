@@ -12,6 +12,7 @@ class RiskConfig:
     max_open_notional: Decimal = Decimal("0")
     max_symbol_open_notional: Decimal = Decimal("0")
     max_position_equity_pct: Decimal = Decimal("0")
+    max_risk_amount: Decimal = Decimal("0")
     max_risk_per_trade_pct: Decimal = Decimal("0")
     max_entry_volatility_pct: Decimal = Decimal("0")
     max_leverage: Decimal = Decimal("1")
@@ -27,6 +28,7 @@ class RiskConfig:
     allowed_exchanges: set[str] = field(default_factory=lambda: {"paper"})
     allowed_symbols: set[str] = field(default_factory=set)
     blocked_symbols: set[str] = field(default_factory=set)
+    require_fixed_stop_for_pending_trailing: bool = True
 
 
 @dataclass
@@ -101,6 +103,14 @@ def evaluate_signal(
     ):
         reasons.append("max_risk_per_trade_pct_exceeded")
     if (
+        opens_position
+        and order_notional is not None
+        and stop_loss_pct is not None
+        and config.max_risk_amount > 0
+        and order_notional * stop_loss_pct / Decimal("100") > config.max_risk_amount
+    ):
+        reasons.append("max_risk_amount_exceeded")
+    if (
         signal.volatility_pct is not None
         and config.max_entry_volatility_pct > 0
         and signal.volatility_pct > config.max_entry_volatility_pct
@@ -136,6 +146,8 @@ def evaluate_signal(
         reasons.append("trailing_stop_required_for_take_profit_delay")
     if signal.trail_after_take_profit and not signal.take_profit_targets:
         reasons.append("trail_after_take_profit_requires_take_profit")
+    if config.require_fixed_stop_for_pending_trailing and stop_loss_pct is None and _has_pending_trailing(signal):
+        reasons.append("pending_trailing_requires_fixed_stop")
     if signal.trailing_activation_pct is not None and signal.trailing_activation_price is not None:
         reasons.append("duplicate_trailing_activation")
     if signal.trailing_stop_price is not None and signal.trailing_stop_pct is None and signal.trailing_stop_amount is None:
@@ -359,3 +371,13 @@ def _total_reward_risk_ratio(
 def _append_reason(reasons: list[str], reason: str) -> None:
     if reason not in reasons:
         reasons.append(reason)
+
+
+def _has_pending_trailing(signal: CryptoSignal) -> bool:
+    if signal.trailing_stop_pct is None and signal.trailing_stop_amount is None and signal.trailing_stop_price is None:
+        return False
+    return (
+        signal.trail_after_take_profit
+        or signal.trailing_activation_pct is not None
+        or signal.trailing_activation_price is not None
+    )

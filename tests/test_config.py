@@ -11,6 +11,7 @@ def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(mo
     monkeypatch.setenv("AUTO_CRYPTO_MAX_ORDER_NOTIONAL", "250")
     monkeypatch.setenv("AUTO_CRYPTO_MAX_OPEN_NOTIONAL", "750")
     monkeypatch.setenv("AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT", "5")
+    monkeypatch.setenv("AUTO_CRYPTO_MAX_RISK_AMOUNT", "25")
     monkeypatch.setenv("AUTO_CRYPTO_MAX_RISK_PER_TRADE_PCT", "2")
     monkeypatch.setenv("AUTO_CRYPTO_MAX_LEVERAGE", "2")
     monkeypatch.setenv("AUTO_CRYPTO_MAX_CONSECUTIVE_LOSSES", "3")
@@ -24,6 +25,7 @@ def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(mo
     monkeypatch.setenv("AUTO_CRYPTO_WEBHOOK_SECRET", "secret")
     monkeypatch.setenv("AUTO_CRYPTO_WEBHOOK_TOLERANCE_SECONDS", "120")
     monkeypatch.setenv("AUTO_CRYPTO_REQUIRE_APPROVAL", "true")
+    monkeypatch.setenv("AUTO_CRYPTO_REQUIRE_FIXED_STOP_FOR_PENDING_TRAILING", "false")
 
     settings = load_settings()
 
@@ -34,6 +36,7 @@ def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(mo
     assert settings.risk.max_order_notional == Decimal("250")
     assert settings.risk.max_open_notional == Decimal("750")
     assert settings.risk.max_position_equity_pct == Decimal("5")
+    assert settings.risk.max_risk_amount == Decimal("25")
     assert settings.risk.max_risk_per_trade_pct == Decimal("2")
     assert settings.risk.max_leverage == Decimal("2")
     assert settings.risk.max_consecutive_losses == 3
@@ -44,6 +47,7 @@ def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(mo
     assert settings.risk.min_total_reward_risk_ratio == Decimal("1.5")
     assert settings.risk.max_take_profit_targets == 3
     assert settings.risk.allowed_exchanges == {"paper", "binance", "kraken"}
+    assert settings.risk.require_fixed_stop_for_pending_trailing is False
 
 
 def test_zero_webhook_tolerance_disables_timestamp_staleness_window(monkeypatch):

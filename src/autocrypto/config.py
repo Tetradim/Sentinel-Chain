@@ -36,6 +36,7 @@ def load_settings() -> AppSettings:
             max_open_notional=Decimal(os.getenv("AUTO_CRYPTO_MAX_OPEN_NOTIONAL", "0")),
             max_symbol_open_notional=Decimal(os.getenv("AUTO_CRYPTO_MAX_SYMBOL_OPEN_NOTIONAL", "0")),
             max_position_equity_pct=Decimal(os.getenv("AUTO_CRYPTO_MAX_POSITION_EQUITY_PCT", "0")),
+            max_risk_amount=Decimal(os.getenv("AUTO_CRYPTO_MAX_RISK_AMOUNT", "0")),
             max_risk_per_trade_pct=Decimal(os.getenv("AUTO_CRYPTO_MAX_RISK_PER_TRADE_PCT", "0")),
             max_entry_volatility_pct=Decimal(os.getenv("AUTO_CRYPTO_MAX_ENTRY_VOLATILITY_PCT", "0")),
             max_leverage=Decimal(os.getenv("AUTO_CRYPTO_MAX_LEVERAGE", "1")),
@@ -49,6 +50,9 @@ def load_settings() -> AppSettings:
             max_take_profit_targets=int(os.getenv("AUTO_CRYPTO_MAX_TAKE_PROFIT_TARGETS", "0")),
             max_slippage_bps=int(os.getenv("AUTO_CRYPTO_MAX_SLIPPAGE_BPS", "100")),
             allowed_exchanges=_csv_set(os.getenv("AUTO_CRYPTO_ALLOWED_EXCHANGES", "paper")),
+            require_fixed_stop_for_pending_trailing=_bool(
+                os.getenv("AUTO_CRYPTO_REQUIRE_FIXED_STOP_FOR_PENDING_TRAILING", "true")
+            ),
         ),
     )
 
