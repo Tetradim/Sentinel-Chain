@@ -143,6 +143,16 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
     market_type = str(payload.get("market_type") or "spot").strip().lower()
     strategy_id = str(payload.get("strategy_id") or payload.get("strategy") or "manual").strip()
 
+    _validate_absolute_bracket_prices(
+        side=side,
+        reduce_only=reduce_only,
+        entry_price=price,
+        stop_loss_price=stop_loss_price,
+        take_profit_targets=take_profit_targets,
+        trailing_stop_price=trailing_stop_price,
+        trailing_activation_price=trailing_activation_price,
+    )
+
     canonical = {
         "source": source,
         "symbol": symbol,
@@ -374,6 +384,50 @@ def _sort_take_profit_targets(
         return Decimal("0")
 
     return tuple(sorted(targets, key=sort_key))
+
+
+def _validate_absolute_bracket_prices(
+    *,
+    side: str,
+    reduce_only: bool,
+    entry_price: Decimal | None,
+    stop_loss_price: Decimal | None,
+    take_profit_targets: tuple[TakeProfitTarget, ...],
+    trailing_stop_price: Decimal | None,
+    trailing_activation_price: Decimal | None,
+) -> None:
+    if reduce_only or entry_price is None or side not in {"buy", "sell"}:
+        return
+
+    def require_less(field_name: str, value: Decimal | None) -> None:
+        if value is not None and value >= entry_price:
+            raise SignalValidationError(f"{field_name} must be below entry price for buy brackets")
+
+    def require_greater(field_name: str, value: Decimal | None) -> None:
+        if value is not None and value <= entry_price:
+            raise SignalValidationError(f"{field_name} must be above entry price for buy brackets")
+
+    if side == "sell":
+        def require_short_less(field_name: str, value: Decimal | None) -> None:
+            if value is not None and value >= entry_price:
+                raise SignalValidationError(f"{field_name} must be below entry price for short brackets")
+
+        def require_short_greater(field_name: str, value: Decimal | None) -> None:
+            if value is not None and value <= entry_price:
+                raise SignalValidationError(f"{field_name} must be above entry price for short brackets")
+
+        require_short_greater("stop_loss_price", stop_loss_price)
+        require_short_greater("trailing_stop_price", trailing_stop_price)
+        require_short_less("trailing_activation_price", trailing_activation_price)
+        for index, target in enumerate(take_profit_targets, start=1):
+            require_short_less(f"take_profit_targets[{index}].trigger_price", target.trigger_price)
+        return
+
+    require_less("stop_loss_price", stop_loss_price)
+    require_less("trailing_stop_price", trailing_stop_price)
+    require_greater("trailing_activation_price", trailing_activation_price)
+    for index, target in enumerate(take_profit_targets, start=1):
+        require_greater(f"take_profit_targets[{index}].trigger_price", target.trigger_price)
 
 
 def _fingerprint(payload: dict[str, Any]) -> str:

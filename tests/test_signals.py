@@ -163,6 +163,89 @@ def test_normalizes_amount_trail_and_absolute_activation_from_nested_bracket():
     assert signal.trailing_activation_price == Decimal("106")
 
 
+def test_rejects_buy_absolute_bracket_prices_on_wrong_side_of_entry():
+    with pytest.raises(SignalValidationError, match="stop_loss_price must be below entry price"):
+        normalize_signal(
+            {
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "quote_amount": "100",
+                "price": "100",
+                "stop_loss_price": "101",
+            },
+            source="test",
+        )
+
+    with pytest.raises(SignalValidationError, match="take_profit_targets\\[1\\]\\.trigger_price must be above"):
+        normalize_signal(
+            {
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "quote_amount": "100",
+                "price": "100",
+                "take_profit_price": "99",
+            },
+            source="test",
+        )
+
+
+def test_rejects_short_absolute_bracket_prices_on_wrong_side_of_entry():
+    with pytest.raises(SignalValidationError, match="stop_loss_price must be above entry price"):
+        normalize_signal(
+            {
+                "symbol": "ETH/USDT",
+                "side": "short",
+                "quote_amount": "100",
+                "price": "100",
+                "stop_loss_price": "99",
+            },
+            source="test",
+        )
+
+    with pytest.raises(SignalValidationError, match="take_profit_targets\\[1\\]\\.trigger_price must be below"):
+        normalize_signal(
+            {
+                "symbol": "ETH/USDT",
+                "side": "short",
+                "quote_amount": "100",
+                "price": "100",
+                "take_profit_targets": [{"trigger_price": "101", "close_pct": "100"}],
+            },
+            source="test",
+        )
+
+
+@pytest.mark.parametrize(
+    ("side", "trailing_stop_price", "activation_price", "message"),
+    [
+        ("buy", "101", None, "trailing_stop_price must be below entry price"),
+        ("buy", None, "99", "trailing_activation_price must be above entry price"),
+        ("short", "99", None, "trailing_stop_price must be above entry price"),
+        ("short", None, "101", "trailing_activation_price must be below entry price"),
+    ],
+)
+def test_rejects_absolute_trailing_prices_on_wrong_side_of_entry(
+    side,
+    trailing_stop_price,
+    activation_price,
+    message,
+):
+    payload = {
+        "symbol": "BTC/USDT",
+        "side": side,
+        "quote_amount": "100",
+        "price": "100",
+        "trailing_stop_pct": "5",
+    }
+    if trailing_stop_price is not None:
+        payload["trailing_stop_price"] = trailing_stop_price
+    if activation_price is not None:
+        payload["trailing_activation_price"] = activation_price
+
+    with pytest.raises(SignalValidationError, match=message):
+        normalize_signal(payload, source="test")
+
+
 def test_normalizes_trailing_step_controls_from_nested_bracket():
     signal = normalize_signal(
         {

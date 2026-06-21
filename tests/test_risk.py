@@ -1,7 +1,9 @@
 from decimal import Decimal
 
+import pytest
+
 from autocrypto.risk import AccountState, RiskConfig, evaluate_signal
-from autocrypto.signals import normalize_signal
+from autocrypto.signals import SignalValidationError, normalize_signal
 
 
 def test_risk_rejects_signal_without_required_stop_loss():
@@ -360,67 +362,54 @@ def test_risk_applies_stop_width_and_reward_ratio_to_absolute_bracket_prices():
 
 
 def test_risk_rejects_inverted_absolute_bracket_prices():
-    signal = normalize_signal(
-        {
-            "symbol": "ETH/USDT",
-            "side": "sell",
-            "quote_amount": "100",
-            "price": "100",
-            "stop_loss_price": "95",
-            "take_profit_price": "105",
-        },
-        source="test",
-    )
-
-    decision = evaluate_signal(signal, RiskConfig(require_stop_loss=True), AccountState())
-
-    assert decision.approved is False
-    assert "invalid_stop_loss_price" in decision.reason_codes
-    assert "invalid_take_profit_price" in decision.reason_codes
+    with pytest.raises(SignalValidationError, match="stop_loss_price must be above entry price"):
+        normalize_signal(
+            {
+                "symbol": "ETH/USDT",
+                "side": "sell",
+                "quote_amount": "100",
+                "price": "100",
+                "stop_loss_price": "95",
+                "take_profit_price": "105",
+            },
+            source="test",
+        )
 
 
 def test_risk_rejects_later_staged_take_profit_target_below_long_entry():
-    signal = normalize_signal(
-        {
-            "symbol": "ETH/USDT",
-            "side": "buy",
-            "quote_amount": "100",
-            "price": "100",
-            "stop_loss_price": "95",
-            "take_profit_targets": [
-                {"trigger_price": "104", "close_pct": "50"},
-                {"trigger_price": "99", "close_pct": "50"},
-            ],
-        },
-        source="test",
-    )
-
-    decision = evaluate_signal(signal, RiskConfig(require_stop_loss=True), AccountState())
-
-    assert decision.approved is False
-    assert "invalid_take_profit_price" in decision.reason_codes
+    with pytest.raises(SignalValidationError, match="take_profit_targets\\[1\\]\\.trigger_price must be above"):
+        normalize_signal(
+            {
+                "symbol": "ETH/USDT",
+                "side": "buy",
+                "quote_amount": "100",
+                "price": "100",
+                "stop_loss_price": "95",
+                "take_profit_targets": [
+                    {"trigger_price": "104", "close_pct": "50"},
+                    {"trigger_price": "99", "close_pct": "50"},
+                ],
+            },
+            source="test",
+        )
 
 
 def test_risk_rejects_staged_take_profit_target_above_short_entry():
-    signal = normalize_signal(
-        {
-            "symbol": "ETH/USDT",
-            "side": "sell",
-            "quote_amount": "100",
-            "price": "100",
-            "stop_loss_price": "105",
-            "take_profit_targets": [
-                {"trigger_price": "96", "close_pct": "50"},
-                {"trigger_price": "101", "close_pct": "50"},
-            ],
-        },
-        source="test",
-    )
-
-    decision = evaluate_signal(signal, RiskConfig(require_stop_loss=True), AccountState())
-
-    assert decision.approved is False
-    assert "invalid_take_profit_price" in decision.reason_codes
+    with pytest.raises(SignalValidationError, match="take_profit_targets\\[1\\]\\.trigger_price must be below"):
+        normalize_signal(
+            {
+                "symbol": "ETH/USDT",
+                "side": "sell",
+                "quote_amount": "100",
+                "price": "100",
+                "stop_loss_price": "105",
+                "take_profit_targets": [
+                    {"trigger_price": "96", "close_pct": "50"},
+                    {"trigger_price": "101", "close_pct": "50"},
+                ],
+            },
+            source="test",
+        )
 
 
 def test_risk_rejects_staged_plan_with_weak_total_reward_risk():
@@ -620,43 +609,35 @@ def test_risk_applies_trailing_amount_to_max_trailing_stop_pct_cap():
 
 
 def test_risk_rejects_invalid_trailing_activation_price():
-    signal = normalize_signal(
-        {
-            "symbol": "ETH/USDT",
-            "side": "sell",
-            "quote_amount": "100",
-            "price": "100",
-            "stop_loss_pct": "3",
-            "trailing_stop_amount": "4",
-            "trailing_activation_price": "102",
-        },
-        source="test",
-    )
-
-    decision = evaluate_signal(signal, RiskConfig(), AccountState())
-
-    assert decision.approved is False
-    assert "invalid_trailing_activation_price" in decision.reason_codes
+    with pytest.raises(SignalValidationError, match="trailing_activation_price must be below entry price"):
+        normalize_signal(
+            {
+                "symbol": "ETH/USDT",
+                "side": "sell",
+                "quote_amount": "100",
+                "price": "100",
+                "stop_loss_pct": "3",
+                "trailing_stop_amount": "4",
+                "trailing_activation_price": "102",
+            },
+            source="test",
+        )
 
 
 def test_risk_still_validates_initial_trailing_price_when_amount_sets_distance():
-    signal = normalize_signal(
-        {
-            "symbol": "ETH/USDT",
-            "side": "buy",
-            "quote_amount": "100",
-            "price": "100",
-            "stop_loss_pct": "3",
-            "trailing_stop_amount": "4",
-            "trailing_stop_price": "101",
-        },
-        source="test",
-    )
-
-    decision = evaluate_signal(signal, RiskConfig(), AccountState())
-
-    assert decision.approved is False
-    assert "invalid_trailing_stop_price" in decision.reason_codes
+    with pytest.raises(SignalValidationError, match="trailing_stop_price must be below entry price"):
+        normalize_signal(
+            {
+                "symbol": "ETH/USDT",
+                "side": "buy",
+                "quote_amount": "100",
+                "price": "100",
+                "stop_loss_pct": "3",
+                "trailing_stop_amount": "4",
+                "trailing_stop_price": "101",
+            },
+            source="test",
+        )
 
 
 def test_risk_rejects_breakeven_without_protective_exit_to_move():
@@ -787,18 +768,20 @@ def test_risk_can_allow_pending_trailing_without_fixed_stop_when_configured():
 
 
 def test_risk_rejects_invalid_or_incomplete_trailing_stop_price():
-    inverted = normalize_signal(
-        {
-            "symbol": "BTC/USDT",
-            "side": "buy",
-            "quote_amount": "100",
-            "price": "100",
-            "stop_loss_pct": "5",
-            "trailing_stop_pct": "3",
-            "trailing_stop_price": "101",
-        },
-        source="test",
-    )
+    with pytest.raises(SignalValidationError, match="trailing_stop_price must be below entry price"):
+        normalize_signal(
+            {
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "quote_amount": "100",
+                "price": "100",
+                "stop_loss_pct": "5",
+                "trailing_stop_pct": "3",
+                "trailing_stop_price": "101",
+            },
+            source="test",
+        )
+
     missing_pct = normalize_signal(
         {
             "symbol": "BTC/USDT",
@@ -811,11 +794,8 @@ def test_risk_rejects_invalid_or_incomplete_trailing_stop_price():
         source="test",
     )
 
-    inverted_decision = evaluate_signal(inverted, RiskConfig(), AccountState())
     missing_pct_decision = evaluate_signal(missing_pct, RiskConfig(), AccountState())
 
-    assert inverted_decision.approved is False
-    assert "invalid_trailing_stop_price" in inverted_decision.reason_codes
     assert missing_pct_decision.approved is False
     assert "trailing_stop_pct_required_for_price" in missing_pct_decision.reason_codes
 
