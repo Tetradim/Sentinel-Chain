@@ -41,6 +41,7 @@ class BacktestSummary:
     final_total_pnl: Decimal = Decimal("0")
     final_close_requested: bool = False
     final_close_triggers: list[dict] = field(default_factory=list)
+    report_metrics: dict[str, str | int | None] = field(default_factory=dict)
 
     def to_dict(self) -> dict:
         return {
@@ -69,6 +70,7 @@ class BacktestSummary:
             "final_close_requested": self.final_close_requested,
             "final_close_triggers": self.final_close_triggers,
             "total_triggers": self.total_triggers,
+            "report_metrics": self.report_metrics,
             "risk_summary": {
                 "max_drawdown": str(self.max_drawdown),
                 "max_runup": str(self.max_runup),
@@ -209,6 +211,7 @@ def _run_backtest_path(
     mae: Decimal | None = None
     final_mark_price: Decimal | None = None
     final_close_triggers: list[dict] = []
+    realized_trade_pnls: list[Decimal] = []
     if result.status == "accepted":
         for label, prices in path:
             candle_triggered: list[dict] = []
@@ -220,6 +223,8 @@ def _run_backtest_path(
                 last_update = sandbox.mark_price(signal.symbol, price)
                 candle_triggered.extend(last_update.triggered)
                 realized_pnl_delta += last_update.realized_pnl_delta
+                if last_update.realized_pnl_delta != 0:
+                    realized_trade_pnls.append(last_update.realized_pnl_delta)
             if last_update is None:
                 continue
             marks.append(
@@ -236,8 +241,11 @@ def _run_backtest_path(
                 )
             )
         if close_final_positions and final_mark_price is not None:
-            final_close_triggers = _close_open_lots_at_mark(sandbox, final_mark_price)
+            final_close_triggers, final_close_pnls = _close_open_lots_at_mark(sandbox, final_mark_price)
+            realized_trade_pnls.extend(final_close_pnls)
     final_unrealized_pnl = _unrealized_pnl(sandbox.exchange.lots, final_mark_price)
+    initial_notional = result.decision.order_notional if result.decision.order_notional is not None else Decimal("0")
+    final_total_pnl = sandbox.account_state.daily_pnl + final_unrealized_pnl
     return BacktestSummary(
         status=result.status,
         accepted=result.status == "accepted",
@@ -252,14 +260,22 @@ def _run_backtest_path(
         slippage_bps=costs.slippage_bps,
         final_mark_price=final_mark_price,
         final_unrealized_pnl=final_unrealized_pnl,
-        final_total_pnl=sandbox.account_state.daily_pnl + final_unrealized_pnl,
+        final_total_pnl=final_total_pnl,
         final_close_requested=close_final_positions,
         final_close_triggers=final_close_triggers,
+        report_metrics=_report_metrics(
+            initial_notional=initial_notional,
+            realized_trade_pnls=realized_trade_pnls,
+            realized_pnl=sandbox.account_state.daily_pnl,
+            total_pnl=final_total_pnl,
+            max_drawdown=_max_drawdown([mark.daily_pnl for mark in marks]),
+        ),
     )
 
 
-def _close_open_lots_at_mark(sandbox: TradingEngine, price: Decimal) -> list[dict]:
+def _close_open_lots_at_mark(sandbox: TradingEngine, price: Decimal) -> tuple[list[dict], list[Decimal]]:
     triggers: list[dict] = []
+    realized_pnls: list[Decimal] = []
     for lot in list(sandbox.exchange.lots):
         if lot.remaining_quantity <= 0:
             continue
@@ -270,6 +286,8 @@ def _close_open_lots_at_mark(sandbox: TradingEngine, price: Decimal) -> list[dic
         realized_delta = _position_realized_pnl(sandbox.exchange, lot.symbol) - realized_before
         sandbox.account_state.daily_pnl += realized_delta
         sandbox.account_state.open_notional = sandbox.exchange.open_notional()
+        if realized_delta != 0:
+            realized_pnls.append(realized_delta)
         triggers.append(
             {
                 "symbol": lot.symbol,
@@ -279,7 +297,43 @@ def _close_open_lots_at_mark(sandbox: TradingEngine, price: Decimal) -> list[dic
                 "realized_pnl_delta": str(realized_delta),
             }
         )
-    return triggers
+    return triggers, realized_pnls
+
+
+def _report_metrics(
+    *,
+    initial_notional: Decimal,
+    realized_trade_pnls: list[Decimal],
+    realized_pnl: Decimal,
+    total_pnl: Decimal,
+    max_drawdown: Decimal,
+) -> dict[str, str | int | None]:
+    wins = [pnl for pnl in realized_trade_pnls if pnl > 0]
+    losses = [pnl for pnl in realized_trade_pnls if pnl < 0]
+    closed_count = len(realized_trade_pnls)
+    gross_profit = sum(wins, Decimal("0"))
+    gross_loss = -sum(losses, Decimal("0"))
+    return {
+        "initial_notional": str(initial_notional),
+        "closed_trade_count": closed_count,
+        "winning_trade_count": len(wins),
+        "losing_trade_count": len(losses),
+        "win_rate_pct": str(_percentage(Decimal(len(wins)), Decimal(closed_count))) if closed_count else None,
+        "gross_profit": str(gross_profit),
+        "gross_loss": str(gross_loss),
+        "profit_factor": str(gross_profit / gross_loss) if gross_loss > 0 else None,
+        "average_win": str(gross_profit / Decimal(len(wins))) if wins else None,
+        "average_loss": str(gross_loss / Decimal(len(losses))) if losses else None,
+        "realized_return_pct": str(_percentage(realized_pnl, initial_notional)) if initial_notional > 0 else None,
+        "total_return_pct": str(_percentage(total_pnl, initial_notional)) if initial_notional > 0 else None,
+        "max_drawdown_pct": str(_percentage(max_drawdown, initial_notional)) if initial_notional > 0 else None,
+    }
+
+
+def _percentage(numerator: Decimal, denominator: Decimal) -> Decimal:
+    if denominator == 0:
+        return Decimal("0")
+    return numerator / denominator * Decimal("100")
 
 
 def _unrealized_pnl(lots: list, mark_price: Decimal | None) -> Decimal:

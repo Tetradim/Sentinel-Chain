@@ -521,6 +521,21 @@ def test_backtest_reports_final_mark_to_market_for_open_position():
     assert body["final_total_pnl"] == "5"
     assert body["final_open_notional"] == "100"
     assert body["final_close_requested"] is False
+    assert body["report_metrics"] == {
+        "initial_notional": "100",
+        "closed_trade_count": 0,
+        "winning_trade_count": 0,
+        "losing_trade_count": 0,
+        "win_rate_pct": None,
+        "gross_profit": "0",
+        "gross_loss": "0",
+        "profit_factor": None,
+        "average_win": None,
+        "average_loss": None,
+        "realized_return_pct": "0",
+        "total_return_pct": "5.00",
+        "max_drawdown_pct": "0",
+    }
 
 
 def test_backtest_can_force_close_open_position_at_final_mark():
@@ -561,6 +576,21 @@ def test_backtest_can_force_close_open_position_at_final_mark():
             "realized_pnl_delta": "5",
         }
     ]
+    assert body["report_metrics"] == {
+        "initial_notional": "100",
+        "closed_trade_count": 1,
+        "winning_trade_count": 1,
+        "losing_trade_count": 0,
+        "win_rate_pct": "100",
+        "gross_profit": "5",
+        "gross_loss": "0",
+        "profit_factor": None,
+        "average_win": "5",
+        "average_loss": None,
+        "realized_return_pct": "5.00",
+        "total_return_pct": "5.00",
+        "max_drawdown_pct": "0",
+    }
     assert positions_after.json()["positions"] == []
 
 

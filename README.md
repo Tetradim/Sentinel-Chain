@@ -56,6 +56,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Backtests one signal against OHLC candles with conservative adverse-first intrabar sequencing, plus MFE/MAE excursion metrics, without mutating active state
 - Backtests can opt into paper fee and slippage assumptions and report closed-P&L drawdown/runup so bracket/trailing-stop results are not limited to clean mark-price fills
 - Backtests can report final mark-to-market unrealized P&L for open paper lots, or optionally force-close remaining simulated bracket quantity at the final mark
+- Backtests include report metrics for closed trades, win rate, gross profit/loss, profit factor, average win/loss, realized return, total mark-to-market return, and drawdown percent
 - Fetches Bitunix futures klines through the native market-data adapter and can run isolated paper backtests directly from those candles
 - Shows persisted signal history with one-click reload into the Trading Desk
 - Supports quote-notional and base-quantity ticket sizing, paper position close controls, bracket lot context, bracket previews, stop tightening, breakeven locks, bracket cancellation, trigger tests, and local unrealized P&L marks in the operator UI
@@ -774,7 +775,7 @@ Paper market updates:
 
 `POST /signals/preview` and `POST /signals/preview-text` return a `bracket_plan` object with the synthetic entry side, exit side, OCA group, trailing arming state, trailing activation price, stop/take-profit/trailing triggers, estimated notional and quantity, worst-case stop loss, equity risk percent, first-target reward/risk, and weighted total staged target reward/risk that would apply if the signal were submitted. The preview echoes both percentage and fixed-amount trail fields in the normalized signal payload.
 
-`POST /backtest/signal` accepts a `signal` object plus a `prices` list, runs the signal through an isolated paper engine, marks each supplied price, and returns triggered exits, active exit snapshots after each mark, final paper P&L, final open notional, final positions, closed-P&L drawdown/runup, final mark-to-market unrealized P&L, final total P&L, and the applied cost assumptions. It does not save orders, write audit events, or mutate the active engine.
+`POST /backtest/signal` accepts a `signal` object plus a `prices` list, runs the signal through an isolated paper engine, marks each supplied price, and returns triggered exits, active exit snapshots after each mark, final paper P&L, final open notional, final positions, closed-P&L drawdown/runup, final mark-to-market unrealized P&L, final total P&L, report metrics, and the applied cost assumptions. It does not save orders, write audit events, or mutate the active engine.
 
 `POST /backtest/signal` also accepts a `candles` list instead of `prices`. Each candle requires `high`, `low`, and `close`, plus an optional `label`, `time`, or `timestamp`. Candle backtests use a conservative adverse-first path: long signals mark low, high, then close; short signals mark high, low, then close. If a candle could have hit both a stop and a target, this favors the protective stop outcome rather than assuming the profitable target filled first. Each returned mark includes cumulative `mfe` and `mae` percentages from entry.
 
@@ -817,6 +818,8 @@ Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8004/backtest/signal -Conte
 ```
 
 When a backtest ends with an open simulated bracket lot, `final_unrealized_pnl` marks the remaining quantity at `final_mark_price` and `final_total_pnl` combines realized and unrealized P&L. Add `close_final_positions: true` or `force_close_final: true` to close remaining paper bracket quantity at the final mark inside the sandbox; this records `final_close_triggers`, moves the P&L into `final_daily_pnl`, and leaves the live engine unchanged.
+
+Every backtest summary includes `report_metrics` with `initial_notional`, closed/winning/losing trade counts, `win_rate_pct`, `gross_profit`, `gross_loss`, `profit_factor`, `average_win`, `average_loss`, `realized_return_pct`, `total_return_pct`, and `max_drawdown_pct`. Realized return only counts closed simulated exits; total return includes final mark-to-market unrealized P&L for lots that remain open at the end of the test.
 
 `POST /backtest/bitunix-klines` fetches Bitunix futures kline candles, normalizes them into the same candle backtest path, and returns the regular isolated paper summary plus a `market_data` block. It requires `symbol` and `interval`; optional `start_time`, `end_time`, `limit` up to `200`, and `price_type` map to the native Bitunix market-data request. This endpoint reads public market data only and does not enable Bitunix order execution.
 
