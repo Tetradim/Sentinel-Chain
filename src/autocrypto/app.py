@@ -332,11 +332,13 @@ def create_app(
     @app.post("/market/price/preview")
     async def market_price_preview(request: Request) -> dict[str, Any]:
         symbol, price, _include_order_metadata = await _market_price_payload(request)
+        live_lots = deepcopy(engine.exchange.lots)
         preview_exchange = engine.exchange.preview_price_exchange(symbol, price)
         return {
             "symbol": symbol,
             "price": str(price),
             "would_trigger": engine.exchange.preview_price(symbol, price),
+            "trailing_ratchets": trailing_ratchet_impacts(live_lots, preview_exchange.lots),
             "active_exits": _active_exits_to_dict(engine.exchange.lots, mark_price=price),
             "preview_active_exits": _active_exits_to_dict(preview_exchange.lots, mark_price=price),
             "positions": engine.exchange.list_positions(),
@@ -348,6 +350,7 @@ def create_app(
     async def market_price(request: Request) -> dict[str, Any]:
         symbol, price, include_order_metadata = await _market_price_payload(request)
         order_offset = len(engine.exchange.orders)
+        before_lots = deepcopy(engine.exchange.lots)
         update = engine.mark_price(symbol, price)
         triggered = (
             _triggered_with_order_metadata(update.triggered, engine.exchange.orders[order_offset:])
@@ -366,6 +369,7 @@ def create_app(
             "symbol": symbol,
             "price": str(price),
             "triggered": triggered,
+            "trailing_ratchets": trailing_ratchet_impacts(before_lots, engine.exchange.lots),
             "active_exits": _active_exits_to_dict(engine.exchange.lots, mark_price=price),
             "realized_pnl_delta": str(update.realized_pnl_delta),
             "daily_pnl": str(update.daily_pnl),
@@ -1424,7 +1428,10 @@ def _triggered_with_order_metadata(triggered: list[dict], orders: list[Any]) -> 
             if order.exit_kind != item.get("kind"):
                 continue
             if order.exit_orders:
-                payload["oca_group"] = order.exit_orders[0].oca_group
+                exit_order = order.exit_orders[0]
+                payload["oca_group"] = exit_order.oca_group
+                payload["trigger_price"] = str(exit_order.trigger_price)
+                payload["trigger_gap"] = _decimal_to_plain(_trigger_gap(item, exit_order))
             if order.canceled_exit_orders:
                 payload["canceled_exit_orders"] = [
                     exit_order_payload(exit_order) for exit_order in order.canceled_exit_orders
@@ -1432,6 +1439,19 @@ def _triggered_with_order_metadata(triggered: list[dict], orders: list[Any]) -> 
             break
         enriched.append(payload)
     return enriched
+
+
+def _trigger_gap(triggered: dict, exit_order: Any) -> Decimal:
+    fill_price = Decimal(str(triggered["price"]))
+    if exit_order.kind in {"stop_loss", "trailing_stop"}:
+        if fill_price <= exit_order.trigger_price:
+            return exit_order.trigger_price - fill_price
+        return fill_price - exit_order.trigger_price
+    if exit_order.kind == "take_profit":
+        if fill_price >= exit_order.trigger_price:
+            return fill_price - exit_order.trigger_price
+        return exit_order.trigger_price - fill_price
+    return abs(fill_price - exit_order.trigger_price)
 
 
 def _bitunix_exchange_row() -> dict[str, Any]:
@@ -1525,6 +1545,7 @@ def _signal_to_dict(signal: CryptoSignal) -> dict[str, Any]:
         if signal.profit_lock_after_take_profit_pct is not None
         else None,
         "max_hold_marks": signal.max_hold_marks,
+        "oca_group": signal.oca_group,
         "leverage": str(signal.leverage),
         "max_slippage_bps": signal.max_slippage_bps,
         "reduce_only": signal.reduce_only,

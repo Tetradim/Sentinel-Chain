@@ -64,6 +64,8 @@ def test_market_price_endpoint_reports_oca_canceled_siblings(tmp_path):
             "price": "110.00000000",
             "quantity": "1.00000000",
             "oca_group": "oca-market-oca-close",
+            "trigger_price": "110.00",
+            "trigger_gap": "0.00000000",
             "canceled_exit_orders": [
                 {
                     "kind": "stop_loss",
@@ -85,6 +87,66 @@ def test_market_price_endpoint_reports_oca_canceled_siblings(tmp_path):
     audit_event = client.get("/audit").json()["events"][-1]
     assert audit_event["event_type"] == "exit.triggered"
     assert audit_event["data"]["triggered"][0]["canceled_exit_orders"][0]["kind"] == "stop_loss"
+
+
+def test_custom_oca_group_is_used_for_paper_bracket_legs_and_cancel_metadata(tmp_path):
+    repo = SQLiteRepository(tmp_path / "custom_oca.sqlite3")
+    app = create_app(repository=repo)
+    client = TestClient(app)
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "grouped-entry",
+            "symbol": "BTCUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "bracket": {
+                "stop_loss_pct": "5",
+                "take_profit_pct": "10",
+                "oca_group": "desk-alpha-001",
+            },
+        },
+    )
+
+    status = client.get("/brackets/grouped-entry").json()
+    closed = client.post(
+        "/market/price",
+        json={"symbol": "BTCUSDT", "price": "110", "include_order_metadata": True},
+    ).json()
+
+    assert {exit_order["oca_group"] for exit_order in status["active_exits"]} == {"desk-alpha-001"}
+    assert closed["triggered"][0]["oca_group"] == "desk-alpha-001"
+    assert closed["triggered"][0]["canceled_exit_orders"][0]["oca_group"] == "desk-alpha-001"
+
+
+def test_market_price_metadata_reports_trigger_gap_for_price_overshoot(tmp_path):
+    repo = SQLiteRepository(tmp_path / "trigger_gap.sqlite3")
+    app = create_app(repository=repo)
+    client = TestClient(app)
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "gap-entry",
+            "symbol": "SOLUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "10",
+        },
+    )
+
+    response = client.post(
+        "/market/price",
+        json={"symbol": "SOLUSDT", "price": "92", "include_order_metadata": True},
+    )
+
+    assert response.status_code == 200
+    triggered = response.json()["triggered"][0]
+    assert triggered["kind"] == "stop_loss"
+    assert triggered["trigger_price"] == "95.00"
+    assert triggered["trigger_gap"] == "3.00000000"
 
 
 def test_market_price_exit_reduces_open_notional_for_future_risk(tmp_path):
@@ -231,6 +293,50 @@ def test_market_price_preview_reports_simulated_trailing_ratchet_without_mutatin
     assert preview_trailing["high_water_mark"] == "110"
     assert state_trailing["trigger_price"] == "95.00"
     assert len(state_after_preview["orders"]) == 1
+    assert body["trailing_ratchets"] == [
+        {
+            "signal_id": "preview-trail-entry",
+            "before_trigger_price": "95.00",
+            "after_trigger_price": "104.50",
+            "trigger_change": "9.50",
+            "status_before": "open",
+            "status_after": "open",
+        }
+    ]
+
+
+def test_market_price_response_reports_applied_trailing_ratchet(tmp_path):
+    repo = SQLiteRepository(tmp_path / "market_ratchet.sqlite3")
+    app = create_app(repository=repo)
+    client = TestClient(app)
+    client.post(
+        "/webhooks/tradingview",
+        json={
+            "signal_id": "mark-ratchet-entry",
+            "symbol": "ETHUSDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "take_profit_pct": "20",
+            "trailing_stop_pct": "5",
+        },
+    )
+
+    response = client.post("/market/price", json={"symbol": "ETHUSDT", "price": "110"})
+
+    assert response.status_code == 200
+    assert response.json()["triggered"] == []
+    assert response.json()["trailing_ratchets"] == [
+        {
+            "signal_id": "mark-ratchet-entry",
+            "before_trigger_price": "95.00",
+            "after_trigger_price": "104.50",
+            "trigger_change": "9.50",
+            "status_before": "open",
+            "status_after": "open",
+        }
+    ]
 
 
 def test_bracket_preview_reports_one_signal_trigger_distance_without_mutating_state(tmp_path):

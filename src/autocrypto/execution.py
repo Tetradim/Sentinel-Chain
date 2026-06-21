@@ -1511,7 +1511,7 @@ def build_exit_orders(signal: CryptoSignal) -> list[ExitOrder]:
         return []
 
     exits: list[ExitOrder] = []
-    oca_group = f"oca-{_order_fragment(signal.signal_id)}"
+    oca_group = signal.oca_group or f"oca-{_order_fragment(signal.signal_id)}"
     if signal.stop_loss_price is not None:
         exits.append(ExitOrder(kind="stop_loss", trigger_price=_money(signal.stop_loss_price), oca_group=oca_group))
     elif signal.stop_loss_pct is not None:

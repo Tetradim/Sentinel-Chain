@@ -50,6 +50,7 @@ class CryptoSignal:
     breakeven_after_take_profit: bool = False
     profit_lock_after_take_profit_pct: Decimal | None = None
     max_hold_marks: int | None = None
+    oca_group: str | None = None
     leverage: Decimal = Decimal("1")
     max_slippage_bps: int = 100
     reduce_only: bool = False
@@ -156,6 +157,7 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         )
     )
     max_hold_marks = _optional_positive_int(_field(payload, bracket, "max_hold_marks", "time_stop_marks"))
+    oca_group = _optional_identifier(_field(payload, bracket, "oca_group", "oco_group", "order_group"))
     leverage = _optional_positive_decimal(payload.get("leverage")) or Decimal("1")
     max_slippage_bps = _non_negative_int(payload.get("max_slippage_bps"), default=100)
     exchange = str(payload.get("exchange") or payload.get("venue") or "paper").strip().lower()
@@ -213,6 +215,7 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         if profit_lock_after_take_profit_pct is not None
         else None,
         "max_hold_marks": max_hold_marks,
+        "oca_group": oca_group,
         "leverage": str(leverage),
         "max_slippage_bps": max_slippage_bps,
         "reduce_only": reduce_only,
@@ -251,6 +254,7 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         breakeven_after_take_profit=breakeven_after_take_profit,
         profit_lock_after_take_profit_pct=profit_lock_after_take_profit_pct,
         max_hold_marks=max_hold_marks,
+        oca_group=oca_group,
         leverage=leverage,
         max_slippage_bps=max_slippage_bps,
         reduce_only=reduce_only,
@@ -352,6 +356,19 @@ def _optional_positive_int(value: Any) -> int | None:
     if parsed <= 0:
         raise SignalValidationError("integer value must be positive")
     return parsed
+
+
+def _optional_identifier(value: Any) -> str | None:
+    if value is None or value == "":
+        return None
+    identifier = str(value).strip()
+    if not identifier:
+        return None
+    if len(identifier) > 80:
+        raise SignalValidationError("oca_group cannot exceed 80 characters")
+    if any(char.isspace() for char in identifier):
+        raise SignalValidationError("oca_group cannot contain whitespace")
+    return identifier
 
 
 def _bool(value: Any, *, default: bool) -> bool:
