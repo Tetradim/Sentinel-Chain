@@ -68,6 +68,15 @@ def test_parse_text_signal_accepts_breakeven_after_take_profit_flag():
     assert signal.trail_after_take_profit is True
 
 
+def test_parse_text_signal_accepts_profit_lock_after_take_profit_pct():
+    signal = parse_text_signal(
+        "BUY BTCUSDT $100 @ 50000 SL 2% TP1 4% 50% TP2 8% 50% TRAIL 4% LOCKAFTERTP 1.5%",
+        source="discord",
+    )
+
+    assert signal.profit_lock_after_take_profit_pct == Decimal("1.5")
+
+
 def test_parse_text_signal_accepts_absolute_bracket_prices():
     signal = parse_text_signal("BUY BTCUSDT $125 @ 50000 SL @ 49000 TP @ 51500 TRAIL 3%", source="discord")
 

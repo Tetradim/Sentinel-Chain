@@ -25,7 +25,7 @@ def parse_text_signal(message: str, *, source: str) -> CryptoSignal:
     if not match:
         raise SignalValidationError(
             "text signal must match: BUY BTCUSDT $100 @ 50000 SL 2% TP 5% TRAIL 3% "
-            "STEP 1% ACT 2% BE 2% BEAFTERTP TRAILAFTERTP"
+            "STEP 1% ACT 2% BE 2% BEAFTERTP LOCKAFTERTP 1% TRAILAFTERTP"
         )
 
     size = match.group("size")
@@ -70,6 +70,11 @@ def parse_text_signal(message: str, *, source: str) -> CryptoSignal:
         rest,
         flags=re.IGNORECASE,
     )
+    profit_lock_after_take_profit = re.search(
+        r"\b(?:LOCKAFTERTP|LOCK-AFTER-TP|PROFITLOCK-AFTER-TP|PROFIT-LOCK-AFTER-TP)\s*(\d+(?:\.\d+)?)\s*%",
+        rest,
+        flags=re.IGNORECASE,
+    )
     trail_after_take_profit = re.search(
         r"\b(?:TRAILAFTERTP|TRAIL-AFTER-TP|TRAILING-AFTER-TP|TRAIL-AFTER-TAKE-PROFIT)\b",
         rest,
@@ -103,6 +108,8 @@ def parse_text_signal(message: str, *, source: str) -> CryptoSignal:
         payload["breakeven_trigger_pct"] = breakeven.group(1)
     if breakeven_after_take_profit:
         payload["breakeven_after_take_profit"] = True
+    if profit_lock_after_take_profit:
+        payload["profit_lock_after_take_profit_pct"] = profit_lock_after_take_profit.group(1)
     if trail_after_take_profit:
         payload["trail_after_take_profit"] = True
 

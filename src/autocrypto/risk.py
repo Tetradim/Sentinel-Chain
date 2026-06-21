@@ -177,6 +177,10 @@ def evaluate_signal(
         reasons.append("breakeven_requires_protective_exit")
     if signal.breakeven_after_take_profit and not signal.take_profit_targets:
         reasons.append("breakeven_after_take_profit_requires_take_profit")
+    if signal.profit_lock_after_take_profit_pct is not None and stop_loss_pct is None and trailing_stop_pct is None:
+        reasons.append("profit_lock_requires_protective_exit")
+    if signal.profit_lock_after_take_profit_pct is not None and not signal.take_profit_targets:
+        reasons.append("profit_lock_after_take_profit_requires_take_profit")
     if (
         stop_loss_pct is not None
         and take_profit_pct is not None
@@ -243,6 +247,7 @@ def _opens_position(signal: CryptoSignal) -> bool:
         or signal.trailing_activation_price is not None
         or signal.breakeven_trigger_pct is not None
         or signal.breakeven_after_take_profit
+        or signal.profit_lock_after_take_profit_pct is not None
     )
 
 

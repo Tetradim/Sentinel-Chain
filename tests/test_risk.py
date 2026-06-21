@@ -743,6 +743,41 @@ def test_risk_rejects_pending_trailing_without_fixed_stop_by_default():
     assert "pending_trailing_requires_fixed_stop" in decision.reason_codes
 
 
+def test_risk_rejects_profit_lock_after_take_profit_without_target_or_protection():
+    missing_target = normalize_signal(
+        {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "stop_loss_pct": "5",
+            "profit_lock_after_take_profit_pct": "2",
+        },
+        source="test",
+    )
+    missing_protection = normalize_signal(
+        {
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quote_amount": "100",
+            "price": "100",
+            "take_profit_pct": "5",
+            "profit_lock_after_take_profit_pct": "2",
+        },
+        source="test",
+    )
+
+    target_decision = evaluate_signal(missing_target, RiskConfig(), AccountState())
+    protection_decision = evaluate_signal(
+        missing_protection,
+        RiskConfig(require_stop_loss=False),
+        AccountState(),
+    )
+
+    assert "profit_lock_after_take_profit_requires_take_profit" in target_decision.reason_codes
+    assert "profit_lock_requires_protective_exit" in protection_decision.reason_codes
+
+
 def test_risk_can_allow_pending_trailing_without_fixed_stop_when_configured():
     signal = normalize_signal(
         {

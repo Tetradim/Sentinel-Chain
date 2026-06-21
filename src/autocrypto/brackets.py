@@ -107,6 +107,9 @@ def active_exit_payload(
         "high_water_mark": str(lot.high_water_mark) if is_trailing and lot.high_water_mark else None,
         "low_water_mark": str(lot.low_water_mark) if is_trailing and lot.low_water_mark else None,
         "breakeven_after_take_profit": bool_value(lot.breakeven_after_take_profit, style=bool_style),
+        "profit_lock_after_take_profit_pct": str(lot.profit_lock_after_take_profit_pct)
+        if lot.profit_lock_after_take_profit_pct
+        else None,
         "breakeven_applied": bool_value(lot.breakeven_applied, style=bool_style),
         "max_hold_marks": lot.max_hold_marks if exit_order.kind == "time_exit" else None,
         "marks_seen": lot.marks_seen if exit_order.kind == "time_exit" else None,

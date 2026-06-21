@@ -48,6 +48,7 @@ class CryptoSignal:
     trail_after_take_profit: bool = False
     breakeven_trigger_pct: Decimal | None = None
     breakeven_after_take_profit: bool = False
+    profit_lock_after_take_profit_pct: Decimal | None = None
     max_hold_marks: int | None = None
     leverage: Decimal = Decimal("1")
     max_slippage_bps: int = 100
@@ -145,6 +146,15 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         _field(payload, bracket, "breakeven_after_take_profit", "move_stop_to_breakeven_after_tp"),
         default=False,
     )
+    profit_lock_after_take_profit_pct = _optional_positive_decimal(
+        _field(
+            payload,
+            bracket,
+            "profit_lock_after_take_profit_pct",
+            "lock_profit_after_take_profit_pct",
+            "profit_lock_after_tp_pct",
+        )
+    )
     max_hold_marks = _optional_positive_int(_field(payload, bracket, "max_hold_marks", "time_stop_marks"))
     leverage = _optional_positive_decimal(payload.get("leverage")) or Decimal("1")
     max_slippage_bps = _non_negative_int(payload.get("max_slippage_bps"), default=100)
@@ -199,6 +209,9 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         "trail_after_take_profit": trail_after_take_profit,
         "breakeven_trigger_pct": str(breakeven_trigger_pct) if breakeven_trigger_pct is not None else None,
         "breakeven_after_take_profit": breakeven_after_take_profit,
+        "profit_lock_after_take_profit_pct": str(profit_lock_after_take_profit_pct)
+        if profit_lock_after_take_profit_pct is not None
+        else None,
         "max_hold_marks": max_hold_marks,
         "leverage": str(leverage),
         "max_slippage_bps": max_slippage_bps,
@@ -236,6 +249,7 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
         trail_after_take_profit=trail_after_take_profit,
         breakeven_trigger_pct=breakeven_trigger_pct,
         breakeven_after_take_profit=breakeven_after_take_profit,
+        profit_lock_after_take_profit_pct=profit_lock_after_take_profit_pct,
         max_hold_marks=max_hold_marks,
         leverage=leverage,
         max_slippage_bps=max_slippage_bps,

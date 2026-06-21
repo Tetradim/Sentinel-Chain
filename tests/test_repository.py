@@ -50,6 +50,7 @@ def test_sqlite_repository_persists_signals_orders_and_audit_events(tmp_path):
     assert persisted_order["trail_after_take_profit"] is False
     assert persisted_order["breakeven_trigger_pct"] is None
     assert persisted_order["breakeven_after_take_profit"] is False
+    assert persisted_order["profit_lock_after_take_profit_pct"] is None
     assert persisted_order["exit_kind"] is None
     assert persisted_order["canceled_exit_orders"] == []
     audit_event = reopened.list_audit()[0]
@@ -94,6 +95,7 @@ def test_sqlite_repository_persists_and_pops_pending_approval(tmp_path):
             "trailing_activation_pct": None,
             "breakeven_trigger_pct": "2",
             "breakeven_after_take_profit": True,
+            "profit_lock_after_take_profit_pct": "1.5",
         },
         source="test",
     )
@@ -130,6 +132,7 @@ def test_sqlite_repository_persists_and_pops_pending_approval(tmp_path):
             "trail_after_take_profit": False,
             "breakeven_trigger_pct": "2",
             "breakeven_after_take_profit": True,
+            "profit_lock_after_take_profit_pct": "1.5",
             "max_hold_marks": None,
             "strategy_id": "manual",
             "reduce_only": False,

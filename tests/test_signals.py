@@ -131,6 +131,7 @@ def test_normalizes_nested_bracket_order_payload():
                 "trail_after_take_profit": True,
                 "breakeven_trigger_pct": "1.5",
                 "breakeven_after_take_profit": True,
+                "profit_lock_after_tp_pct": "1",
             },
         },
         source="test",
@@ -147,6 +148,7 @@ def test_normalizes_nested_bracket_order_payload():
     assert signal.trail_after_take_profit is True
     assert signal.breakeven_trigger_pct == Decimal("1.5")
     assert signal.breakeven_after_take_profit is True
+    assert signal.profit_lock_after_take_profit_pct == Decimal("1")
 
 
 def test_normalizes_exact_initial_trailing_stop_price_from_nested_bracket():

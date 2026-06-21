@@ -56,6 +56,7 @@ class PaperLot:
     low_water_mark: Decimal | None = None
     breakeven_trigger_pct: Decimal | None = None
     breakeven_after_take_profit: bool = False
+    profit_lock_after_take_profit_pct: Decimal | None = None
     breakeven_applied: bool = False
     max_hold_marks: int | None = None
     marks_seen: int = 0
@@ -132,6 +133,7 @@ class PaperOrder:
     trail_after_take_profit: bool = False
     breakeven_trigger_pct: Decimal | None = None
     breakeven_after_take_profit: bool = False
+    profit_lock_after_take_profit_pct: Decimal | None = None
     max_hold_marks: int | None = None
     exit_kind: str | None = None
     amend_target_index: int | None = None
@@ -170,6 +172,9 @@ class PaperOrder:
             if self.breakeven_trigger_pct is not None
             else None,
             "breakeven_after_take_profit": self.breakeven_after_take_profit,
+            "profit_lock_after_take_profit_pct": str(self.profit_lock_after_take_profit_pct)
+            if self.profit_lock_after_take_profit_pct is not None
+            else None,
             "max_hold_marks": self.max_hold_marks,
             "exit_kind": self.exit_kind,
             "amend_target_index": self.amend_target_index,
@@ -249,6 +254,7 @@ class PaperExchange:
             trail_after_take_profit=signal.trail_after_take_profit,
             breakeven_trigger_pct=signal.breakeven_trigger_pct,
             breakeven_after_take_profit=signal.breakeven_after_take_profit,
+            profit_lock_after_take_profit_pct=signal.profit_lock_after_take_profit_pct,
             max_hold_marks=signal.max_hold_marks,
             reduce_only=signal.reduce_only,
             fee=fee,
@@ -307,9 +313,9 @@ class PaperExchange:
                     lot.exit_orders = [order for order in lot.exit_orders if order is not exit_order]
                     lot.take_profit_filled = True
                     self._release_trailing_after_take_profit(lot, price)
-                    breakeven_amended = self._apply_take_profit_breakeven(lot)
+                    protective_lock = self._apply_take_profit_protective_lock(lot)
                 else:
-                    breakeven_amended = False
+                    protective_lock = None
                 if exit_order.kind == "trailing_stop" and lot.remaining_quantity > 0:
                     lot.exit_orders = [order for order in lot.exit_orders if order is not exit_order]
                 canceled_exit_orders = self._canceled_sibling_exits(lot, exit_order)
@@ -343,8 +349,10 @@ class PaperExchange:
                 if self.costs.fee_bps > 0 or self.costs.slippage_bps > 0:
                     trigger_payload["mark_price"] = _fixed8(price)
                     trigger_payload["fee"] = _fixed8(exit_fee)
-                if breakeven_amended:
+                if protective_lock == "breakeven":
                     trigger_payload["breakeven_after_take_profit"] = "true"
+                if protective_lock == "profit_lock":
+                    trigger_payload["profit_lock_after_take_profit_pct"] = str(lot.profit_lock_after_take_profit_pct)
                 triggered.append(trigger_payload)
                 if exit_order.kind != "take_profit":
                     break
@@ -875,6 +883,7 @@ class PaperExchange:
                     else None,
                     breakeven_trigger_pct=signal.breakeven_trigger_pct,
                     breakeven_after_take_profit=signal.breakeven_after_take_profit,
+                    profit_lock_after_take_profit_pct=signal.profit_lock_after_take_profit_pct,
                     max_hold_marks=signal.max_hold_marks,
                     entry_fee_remaining=fee,
                 )
@@ -916,6 +925,7 @@ class PaperExchange:
                     else None,
                     breakeven_trigger_pct=signal.breakeven_trigger_pct,
                     breakeven_after_take_profit=signal.breakeven_after_take_profit,
+                    profit_lock_after_take_profit_pct=signal.profit_lock_after_take_profit_pct,
                     max_hold_marks=signal.max_hold_marks,
                     entry_fee_remaining=fee,
                 )
@@ -984,6 +994,7 @@ class PaperExchange:
                     else None,
                     breakeven_trigger_pct=order.breakeven_trigger_pct,
                     breakeven_after_take_profit=order.breakeven_after_take_profit,
+                    profit_lock_after_take_profit_pct=order.profit_lock_after_take_profit_pct,
                     max_hold_marks=order.max_hold_marks,
                     entry_fee_remaining=order.fee,
                 )
@@ -1025,6 +1036,7 @@ class PaperExchange:
                     else None,
                     breakeven_trigger_pct=order.breakeven_trigger_pct,
                     breakeven_after_take_profit=order.breakeven_after_take_profit,
+                    profit_lock_after_take_profit_pct=order.profit_lock_after_take_profit_pct,
                     max_hold_marks=order.max_hold_marks,
                     entry_fee_remaining=order.fee,
                 )
@@ -1273,18 +1285,28 @@ class PaperExchange:
         ]
         lot.breakeven_applied = True
 
-    def _apply_take_profit_breakeven(self, lot: PaperLot) -> bool:
-        if not lot.breakeven_after_take_profit or lot.breakeven_applied:
-            return False
-        updated_exit_orders, amendments = _breakeven_exit_amendments(lot)
+    def _apply_take_profit_protective_lock(self, lot: PaperLot) -> str | None:
+        lock_kind = "breakeven"
+        if lot.profit_lock_after_take_profit_pct is not None:
+            updated_exit_orders, amendments = _profit_lock_exit_amendments(
+                lot,
+                lot.profit_lock_after_take_profit_pct,
+            )
+            lock_kind = "profit_lock"
+        elif lot.breakeven_after_take_profit:
+            if lot.breakeven_applied:
+                return None
+            updated_exit_orders, amendments = _breakeven_exit_amendments(lot)
+        else:
+            return None
         if not amendments:
-            return False
+            return None
         lot.exit_orders = updated_exit_orders
         lot.breakeven_applied = True
         for amendment in amendments:
             if amendment.kind == "trailing_stop":
                 _sync_trailing_water_mark(lot, amendment.trigger_price)
-        return True
+        return lock_kind
 
     def _exit_quantity(self, lot: PaperLot, exit_order: ExitOrder) -> Decimal:
         if exit_order.kind not in {"take_profit", "trailing_stop"}:
@@ -1511,6 +1533,7 @@ def _has_exit_plan(signal: CryptoSignal) -> bool:
         or signal.trailing_stop_price is not None
         or signal.trailing_activation_price is not None
         or signal.breakeven_trigger_pct is not None
+        or signal.profit_lock_after_take_profit_pct is not None
         or signal.max_hold_marks is not None
     )
 
@@ -1905,6 +1928,9 @@ def _paper_order_from_dict(payload: dict) -> PaperOrder:
         if payload.get("breakeven_trigger_pct") is not None
         else None,
         breakeven_after_take_profit=_bool_from_payload(payload.get("breakeven_after_take_profit")),
+        profit_lock_after_take_profit_pct=Decimal(str(payload["profit_lock_after_take_profit_pct"]))
+        if payload.get("profit_lock_after_take_profit_pct") is not None
+        else None,
         max_hold_marks=int(payload["max_hold_marks"]) if payload.get("max_hold_marks") is not None else None,
         exit_kind=payload.get("exit_kind"),
         amend_target_index=int(payload["amend_target_index"])

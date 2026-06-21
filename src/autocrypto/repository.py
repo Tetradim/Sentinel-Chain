@@ -254,6 +254,9 @@ def _signal_to_dict(signal: CryptoSignal) -> dict[str, Any]:
         if signal.breakeven_trigger_pct is not None
         else None,
         "breakeven_after_take_profit": signal.breakeven_after_take_profit,
+        "profit_lock_after_take_profit_pct": str(signal.profit_lock_after_take_profit_pct)
+        if signal.profit_lock_after_take_profit_pct is not None
+        else None,
         "max_hold_marks": signal.max_hold_marks,
         "leverage": str(signal.leverage),
         "max_slippage_bps": signal.max_slippage_bps,
@@ -307,6 +310,9 @@ def _pending_summary(signal: CryptoSignal, *, created_at: str | None = None) -> 
         if signal.breakeven_trigger_pct is not None
         else None,
         "breakeven_after_take_profit": signal.breakeven_after_take_profit,
+        "profit_lock_after_take_profit_pct": str(signal.profit_lock_after_take_profit_pct)
+        if signal.profit_lock_after_take_profit_pct is not None
+        else None,
         "max_hold_marks": signal.max_hold_marks,
         "strategy_id": signal.strategy_id,
         "reduce_only": signal.reduce_only,
