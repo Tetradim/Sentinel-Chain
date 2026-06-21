@@ -10,6 +10,7 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Accepts TradingView/custom JSON alerts at `POST /webhooks/tradingview`
 - Accepts strict text crypto alerts at `POST /webhooks/text-alert`
 - Parses text alerts without ordering at `POST /signals/parse-text`
+- Parses text-alert trailing stops as percentages, fixed quote-distance amounts, exact starting trigger prices, exact activation prices, and partial trailing close sizes
 - Normalizes crypto pairs such as `BTCUSDT`, `BTC/USDT`, `ETH-USDC`, and `SOL_USDT`
 - Blocks duplicate signal IDs across restarts with SQLite-backed idempotency
 - Applies pre-trade risk checks for stop loss, maximum stop width, first-target and total staged reward/risk, staged target count, max order notional, max open notional, per-symbol concentration, per-trade stop-risk amount, volatility regime, equity-percent position size, leverage, slippage, allowed exchanges, blocked symbols, daily loss, and consecutive losing exits
@@ -379,6 +380,8 @@ Supported examples:
 ```text
 BUY BTCUSDT $125 @ 50000 SL 2.5% TP 5% TRAIL 3% ACT 2% BE 2%
 BUY BTCUSDT $125 @ 50000 SL @ 49000 TP @ 51500 TRAIL 3%
+BUY BTCUSDT $125 @ 50000 SL @ 49000 TP @ 51500 TRAIL @ 48750 ACT @ 50750
+BUY BTCUSDT $125 @ 50000 SL 2.5% TP 5% TRAILAMT 250 TRAILCLOSE 40%
 BUY BTCUSDT $125 @ 50000 SL 2% TP1 3% 50% TP2 @ 53000 50%
 BUY BTCUSDT $100 @ 50000 SL 2% TP1 4% 50% TP2 8% 50% TRAIL 4% BEAFTERTP TRAILAFTERTP
 BUY SOLUSDT $50 @ 150 SL 3% TP 8% TS 4% BE 3%
@@ -386,7 +389,7 @@ SELL ETH/USDT 0.25 @ 3000
 SHORT ETHUSDT $75 @ 3000 SL 2% TP 4% TRAIL 3% ACT 1%
 ```
 
-Text alerts support percentage brackets (`SL 2%`, `TP 5%`), absolute brackets (`SL @ 49000`, `TP @ 51500`), trailing steps (`TRAIL 4% STEP 1%`), breakeven triggers (`BE 2%`), breakeven-after-target locks (`BEAFTERTP`), take-profit-gated trailing stops (`TRAILAFTERTP`), and staged take-profit targets such as `TP1 3% 50% TP2 @ 53000 50%`. Staged text targets map to the same `take_profit_targets` structure as JSON alerts, and the parser rejects ambiguous prose rather than guessing.
+Text alerts support percentage brackets (`SL 2%`, `TP 5%`), absolute brackets (`SL @ 49000`, `TP @ 51500`), percentage trailing stops (`TRAIL 4%` or `TS 4%`), fixed-distance trailing stops (`TRAILAMT 250` or `TRAIL 250 USDT`), exact starting trailing triggers (`TRAIL @ 48750`), exact trailing activation marks (`ACT @ 50750`), partial trailing close sizes (`TRAILCLOSE 40%`), trailing steps (`TRAIL 4% STEP 1%`), breakeven triggers (`BE 2%`), breakeven-after-target locks (`BEAFTERTP`), take-profit-gated trailing stops (`TRAILAFTERTP`), and staged take-profit targets such as `TP1 3% 50% TP2 @ 53000 50%`. Staged text targets map to the same `take_profit_targets` structure as JSON alerts, and the parser rejects ambiguous prose rather than guessing.
 
 Validate text without placing an order:
 
@@ -583,6 +586,7 @@ Current bot work is guided by paper-first risk controls and exchange order behav
 - Current 2026 bot-setting guidance still treats stop loss, take profit, demo testing, and backtesting as core setup work, so the decision-support endpoint surfaces exit health and trigger sequencing before any live venue mapping: <https://bitsgap.com/blog/how-to-choose-crypto-trading-bot-settings-in-2026-range-investment-stop-loss-and-take-profit>
 - Walk-forward/backtesting guidance warns against false confidence from one fixed historical test, so Auto-Crypto exposes next-trailing-ratchet telemetry on active snapshots and path previews to make paper assumptions auditable mark by mark: <https://blog.quantinsti.com/walk-forward-optimization-introduction/>
 - Recent backtesting guidance emphasizes measuring worst-case scenarios and drawdowns before sizing or trusting a strategy; Auto-Crypto's bracket candle preview therefore uses an adverse-first same-candle policy for active paper brackets instead of assuming a take-profit filled before a stop inside the same OHLC range: <https://blog.traderspost.io/article/how-to-backtest-trading-strategies>
+- Current CCXT docs describe trailing orders by percentage or quote amount and as exchange-dependent with optional `reduceOnly`, while current crypto-bot risk guidance recommends pairing trailing logic with fixed initial stops; Auto-Crypto therefore lets strict text alerts express fixed trail amounts, exact trail/activation prices, and partial paper trailing closes while keeping execution synthetic and risk-gated: <https://docs.ccxt.com/docs/faq> and <https://cryptorobot.ai/blog/essential-tips-managing-risks-crypto-trading-bots>
 
 ## Environment Variables
 

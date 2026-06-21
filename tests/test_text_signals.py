@@ -34,6 +34,30 @@ def test_parse_text_signal_accepts_trailing_step_pct():
     assert signal.trailing_step_pct == Decimal("1")
 
 
+def test_parse_text_signal_accepts_fixed_amount_trailing_stop():
+    signal = parse_text_signal("BUY BTCUSDT $100 @ 50000 SL 2% TP 5% TRAIL 250 USDT", source="discord")
+
+    assert signal.trailing_stop_amount == Decimal("250")
+    assert signal.trailing_stop_pct is None
+
+
+def test_parse_text_signal_accepts_exact_trailing_and_activation_prices():
+    signal = parse_text_signal("BUY BTCUSDT $100 @ 50000 SL @ 49000 TP @ 52000 TRAIL @ 48750 ACT @ 50750", source="discord")
+
+    assert signal.trailing_stop_price == Decimal("48750")
+    assert signal.trailing_activation_price == Decimal("50750")
+
+
+def test_parse_text_signal_accepts_partial_trailing_close_pct():
+    signal = parse_text_signal(
+        "SHORT ETHUSDT $100 @ 3000 SL @ 3060 TP1 3% 50% TP2 6% 50% TRAIL 2% TRAILCLOSE 40%",
+        source="discord",
+    )
+
+    assert signal.trailing_stop_pct == Decimal("2")
+    assert signal.trailing_stop_close_pct == Decimal("40")
+
+
 def test_parse_text_signal_accepts_breakeven_after_take_profit_flag():
     signal = parse_text_signal(
         "BUY BTCUSDT $100 @ 50000 SL 2% TP1 4% 50% TP2 8% 50% TRAIL 4% BEAFTERTP TRAILAFTERTP",
