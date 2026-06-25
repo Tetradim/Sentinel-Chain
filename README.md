@@ -71,6 +71,22 @@ Live trading is intentionally disabled by default. Use exchange API keys with tr
 - Tracks a curated BTC/ETH/SOL platform registry for Coinbase, Kraken, Binance.US, Binance, Gemini, Bitstamp, Alpaca, Robinhood, Crypto.com, OKX, Bybit, KuCoin, Bitget, Gate.io, MEXC, Phemex, BitMEX, Deribit, and Bitunix
 - Provides a minimal Discord slash-command client for `/health` and `/signal_test`
 
+## Windows Beta Installer
+
+For non-technical beta testers, download and run `AutoCrypto-Setup-<version>.exe` from the Windows release artifact.
+
+After installation, double-click **Auto-Crypto** from the Desktop or Start Menu. The installed launcher downloads missing runtime dependencies on first launch, including the Microsoft Visual C++ Runtime when Windows does not already have it. The installed beta build runs the packaged API in paper mode with local SQLite storage and opens the operator UI.
+
+Installed beta testers do not need to install Python, Node.js, npm, or MongoDB. If startup fails, send a screenshot of the launcher window and the Desktop log file named `Auto-Crypto.log`.
+
+Default installed URLs:
+
+| Service | URL |
+| --- | --- |
+| Operator UI | `http://127.0.0.1:8004/ui` |
+| API docs | `http://127.0.0.1:8004/docs` |
+| Health check | `http://127.0.0.1:8004/health` |
+
 ## Windows Launcher
 
 Double-click:

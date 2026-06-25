@@ -1,0 +1,196 @@
+name: Build Auto-Crypto Windows Installer
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Custom version
+        required: false
+        default: ''
+
+env:
+  VERSION: ${{ github.event.inputs.version || '1.0.0-beta' }}
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          $version = "${{ github.ref }}" -replace 'refs/tags/v', ''
+          echo "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip wheel
+          python -m pip install -e ".[dev,exchange]"
+          python -m pip install pyinstaller
+
+      - name: Run static tests
+        run: python -m pytest tests/test_windows_installer_bootstrap_static.py -q
+
+      - name: Build executable
+        run: |
+          Remove-Item build -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item "dist\AutoCrypto" -Recurse -Force -ErrorAction SilentlyContinue
+          python -m PyInstaller `
+            --clean `
+            --name AutoCrypto `
+            --onedir `
+            --console `
+            --paths src `
+            --collect-data autocrypto `
+            --hidden-import uvicorn `
+            --hidden-import dotenv `
+            --hidden-import discord `
+            --hidden-import ccxt `
+            --collect-all discord `
+            --noconfirm `
+            windows_entrypoint.py
+
+      - name: Copy launchers into package
+        run: |
+          $package = "dist\AutoCrypto"
+          Copy-Item "Launch-Auto-Crypto.bat" -Destination $package -Force
+          Copy-Item "Launch-Auto-Crypto.ps1" -Destination $package -Force
+          Copy-Item ".env.example" -Destination $package -Force -ErrorAction SilentlyContinue
+
+      - name: Verify package
+        run: |
+          if (!(Test-Path "dist\AutoCrypto\AutoCrypto.exe")) {
+            Write-Host "ERROR: AutoCrypto.exe not found"
+            exit 1
+          }
+          if (!(Test-Path "dist\AutoCrypto\_internal\autocrypto\static\index.html") -and !(Test-Path "dist\AutoCrypto\autocrypto\static\index.html")) {
+            Write-Host "ERROR: packaged Auto-Crypto static index.html not found"
+            exit 1
+          }
+          if (!(Test-Path "dist\AutoCrypto\Launch-Auto-Crypto.bat")) {
+            Write-Host "ERROR: Launch-Auto-Crypto.bat not found"
+            exit 1
+          }
+          if (!(Test-Path "dist\AutoCrypto\Launch-Auto-Crypto.ps1")) {
+            Write-Host "ERROR: Launch-Auto-Crypto.ps1 not found"
+            exit 1
+          }
+
+      - name: Create Inno Setup script
+        run: |
+          $iss = @"
+          #define MyAppName "Auto-Crypto"
+          #define MyAppVersion "${{ env.VERSION }}"
+          #define MyAppPublisher "Tetradim / SignalForge Lab"
+          #define MyAppURL "https://github.com/Tetradim/Auto-Crypto"
+          #define MyAppExeName "AutoCrypto.exe"
+
+          [Setup]
+          AppId={{0D9559D9-273D-4958-9D18-7D206B3E5E0E}
+          AppName={#MyAppName}
+          AppVersion={#MyAppVersion}
+          AppVerName={#MyAppName} {#MyAppVersion}
+          AppPublisher={#MyAppPublisher}
+          AppPublisherURL={#MyAppURL}
+          AppSupportURL={#MyAppURL}/issues
+          AppUpdatesURL={#MyAppURL}/releases
+          DefaultDirName={autopf}\{#MyAppName}
+          DefaultGroupName={#MyAppName}
+          OutputDir=installer-dist
+          OutputBaseFilename=AutoCrypto-Setup-{#MyAppVersion}
+          UninstallDisplayName={#MyAppName}
+          UninstallDisplayIcon={app}\{#MyAppExeName}
+          Compression=lzma2
+          SolidCompression=yes
+          WizardStyle=modern
+          MinVersion=10.0.18362
+          PrivilegesRequired=admin
+          ArchitecturesAllowed=x64compatible
+          ArchitecturesInstallIn64BitMode=x64compatible
+
+          [Languages]
+          Name: "english"; MessagesFile: "compiler:Default.isl"
+
+          [Tasks]
+          Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
+          Name: "launchapp"; Description: "Launch Auto-Crypto after install"; GroupDescription: "Startup"; Flags: checkedonce
+
+          [Files]
+          Source: "dist\AutoCrypto\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+          [Icons]
+          Name: "{group}\{#MyAppName}"; Filename: "{app}\Launch-Auto-Crypto.bat"; WorkingDir: "{app}"
+          Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
+          Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\Launch-Auto-Crypto.bat"; WorkingDir: "{app}"; Tasks: desktopicon
+
+          [Run]
+          Filename: "{app}\Launch-Auto-Crypto.bat"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent shellexec; Tasks: launchapp; WorkingDir: "{app}"
+
+          [UninstallDelete]
+          Type: filesandordirs; Name: "{app}"
+          Type: files; Name: "{userdesktop}\Auto-Crypto.log"
+
+          [Code]
+          procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+          var
+            ResultCode: Integer;
+          begin
+            if CurUninstallStep = usUninstall then
+            begin
+              Exec('taskkill', '/F /IM AutoCrypto.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+            end;
+          end;
+          "@
+          $iss | Out-File -Encoding ASCII setup.iss
+
+      - name: Build installer
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
+        with:
+          path: setup.iss
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: AutoCrypto-Setup-${{ env.VERSION }}
+          path: installer-dist/AutoCrypto-Setup*.exe
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+
+    steps:
+      - name: Download installer
+        uses: actions/download-artifact@v4
+        with:
+          pattern: AutoCrypto-Setup-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/AutoCrypto-Setup*.exe
+          draft: false
+          prerelease: ${{ contains(github.ref, 'beta') }}
+          generate_release_notes: true

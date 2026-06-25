@@ -23,6 +23,12 @@ $LogFile = Join-Path $DesktopPath "Auto-Crypto.log"
 $OwnedProcesses = New-Object System.Collections.Generic.List[System.Diagnostics.Process]
 $ShutdownStarted = $false
 $CancelKeyPressHandler = $null
+$VcRedistUrl = "https://aka.ms/vc14/vc_redist.x64.exe"
+$DependencyRoot = if ($env:LOCALAPPDATA) {
+    Join-Path $env:LOCALAPPDATA "Auto-Crypto\dependencies"
+} else {
+    Join-Path $ProjectRoot ".dependencies"
+}
 
 function Write-Status {
     param([string]$Message, [string]$Level = "INFO")
@@ -83,6 +89,59 @@ function Wait-AutoCryptoHealth {
         Start-Sleep -Milliseconds 750
     }
     return $false
+}
+
+function Test-VcRuntimeInstalled {
+    $keys = @(
+        "HKLM:\SOFTWARE\Microsoft\VisualStudio\14.0\VC\Runtimes\x64",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\VisualStudio\14.0\VC\Runtimes\x64"
+    )
+
+    foreach ($key in $keys) {
+        try {
+            $runtime = Get-ItemProperty -Path $key -ErrorAction SilentlyContinue
+            if ($runtime -and $runtime.Installed -eq 1) { return $true }
+        } catch {
+        }
+    }
+    return $false
+}
+
+function Invoke-DependencyDownload {
+    param(
+        [string]$Url,
+        [string]$OutFile,
+        [string]$Label
+    )
+
+    New-Item -ItemType Directory -Path (Split-Path -Parent $OutFile) -Force | Out-Null
+    if (Test-Path -LiteralPath $OutFile) {
+        Write-Status "$Label already downloaded"
+        return $OutFile
+    }
+
+    Write-Status "Downloading $Label"
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    } catch {
+    }
+    Invoke-WebRequest -Uri $Url -OutFile $OutFile -UseBasicParsing -TimeoutSec 180
+    return $OutFile
+}
+
+function Ensure-InstalledRuntimeDependencies {
+    if (Test-VcRuntimeInstalled) {
+        Write-Status "Microsoft Visual C++ Runtime is installed" "OK"
+        return
+    }
+
+    Write-Status "Microsoft Visual C++ Runtime was not found; installing it automatically" "WARN"
+    $installer = Join-Path $DependencyRoot "vc_redist.x64.exe"
+    Invoke-DependencyDownload -Url $VcRedistUrl -OutFile $installer -Label "Microsoft Visual C++ Runtime" | Out-Null
+    $process = Start-Process -FilePath $installer -ArgumentList "/install", "/quiet", "/norestart" -Wait -PassThru
+    if (-not (@(0, 3010, 1638) -contains $process.ExitCode)) {
+        Write-Status "Microsoft Visual C++ Runtime installer exited with code $($process.ExitCode). Auto-Crypto will continue and report any startup error." "WARN"
+    }
 }
 
 function Get-PythonVersion {
@@ -175,6 +234,39 @@ function Start-OwnedProcess {
     return $process
 }
 
+function Start-InstalledAutoCrypto {
+    param(
+        [string]$InstalledExe,
+        [int]$PortToUse,
+        [string]$HostToUse,
+        [string]$DatabasePath
+    )
+
+    Ensure-InstalledRuntimeDependencies
+    if (Test-PortOpen -PortToCheck $PortToUse) {
+        if (Test-AutoCryptoHealth -PortToCheck $PortToUse) {
+            Write-Status "Auto-Crypto is already running on port $PortToUse" "OK"
+            return
+        }
+        throw "Port $PortToUse is already in use by another service. Stop that service or pass -Port <free port>."
+    }
+
+    New-Item -ItemType Directory -Path (Split-Path -Parent $DatabasePath) -Force | Out-Null
+    $env:AUTO_CRYPTO_HOST = $HostToUse
+    $env:AUTO_CRYPTO_PORT = "$PortToUse"
+    $env:AUTO_CRYPTO_DB_PATH = $DatabasePath
+    if (-not $env:AUTO_CRYPTO_ALLOWED_EXCHANGES) {
+        $env:AUTO_CRYPTO_ALLOWED_EXCHANGES = "paper"
+    }
+
+    Write-Status "Starting packaged AutoCrypto.exe on $HostToUse`:$PortToUse"
+    Start-OwnedProcess -FilePath $InstalledExe -ArgumentList @() -WorkingDirectory $ProjectRoot | Out-Null
+    if (-not (Wait-AutoCryptoHealth -PortToCheck $PortToUse -Seconds 75)) {
+        throw "Auto-Crypto did not become healthy at http://127.0.0.1:$PortToUse/health. Check $LogFile."
+    }
+    Write-Status "Auto-Crypto API is healthy" "OK"
+}
+
 function Stop-ProcessTree {
     param([int]$ProcessId)
     try {
@@ -218,6 +310,10 @@ function Register-LauncherShutdownHandlers {
     }
 }
 
+function Start-SourceAutoCrypto {
+    Write-Status "Starting Auto-Crypto Launcher - Local Source"
+}
+
 if ($SmokeTest) {
     Write-Status "Running launcher smoke test"
     $quoted = Join-ProcessArguments -Arguments @("-m", "uvicorn", "autocrypto.app:create_app_from_env", "--factory", "--port", "8004")
@@ -245,6 +341,56 @@ try {
     Write-Host ""
     Write-Status "Project root: $ProjectRoot"
     Write-Status "Launcher log: $LogFile"
+
+    $installedExe = Join-Path $ProjectRoot "AutoCrypto.exe"
+    if (Test-Path -LiteralPath $installedExe) {
+        Write-Host "  Auto-Crypto Launcher - Installed App" -ForegroundColor Cyan
+        if (-not $DbPath) {
+            $DbPath = Join-Path $ProjectRoot "data\auto_crypto.sqlite3"
+        }
+
+        $healthUrl = "http://127.0.0.1:$Port/health"
+        $uiUrl = "http://127.0.0.1:$Port/ui"
+        $docsUrl = "http://127.0.0.1:$Port/docs"
+
+        Start-InstalledAutoCrypto -InstalledExe $installedExe -PortToUse $Port -HostToUse $HostName -DatabasePath $DbPath
+
+        if ($StartDiscord) {
+            if (-not $env:DISCORD_BOT_TOKEN) {
+                throw "DISCORD_BOT_TOKEN is required when using -StartDiscord."
+            }
+            Write-Status "Starting packaged Discord slash-command bot"
+            Start-OwnedProcess -FilePath $installedExe -ArgumentList @("--discord") -WorkingDirectory $ProjectRoot | Out-Null
+        }
+
+        if (-not $NoBrowser) {
+            Write-Status "Opening Auto-Crypto operator UI"
+            Start-Process $uiUrl | Out-Null
+        }
+
+        Write-Host ""
+        Write-Host "Ready: $uiUrl" -ForegroundColor Green
+        Write-Host "API docs: $docsUrl" -ForegroundColor Gray
+        Write-Host "Health: $healthUrl" -ForegroundColor Gray
+        Write-Host "Database: $DbPath" -ForegroundColor Gray
+        if (-not $StartDiscord) {
+            Write-Host "Discord bot: pass -StartDiscord after setting DISCORD_BOT_TOKEN." -ForegroundColor Gray
+        }
+        Write-Host "Close this window or press Ctrl+C to stop processes started by this launcher." -ForegroundColor Gray
+        Write-Host ""
+
+        while ($true) {
+            foreach ($process in @($OwnedProcesses)) {
+                if ($process.HasExited) {
+                    throw "Process $($process.Id) exited unexpectedly."
+                }
+            }
+            Start-Sleep -Seconds 1
+        }
+        exit 0
+    }
+
+    Start-SourceAutoCrypto
 
     if (-not (Test-Path (Join-Path $ProjectRoot "pyproject.toml"))) {
         throw "pyproject.toml not found. Run this launcher from the Auto-Crypto checkout."
