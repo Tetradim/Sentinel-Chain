@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sentinel Chain Trading War Room</title>
+  <link rel="stylesheet" href="/war-room/static/war_room.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-block">
+        <div class="brand-orb">SC</div>
+        <div>
+          <strong>Sentinel Chain</strong>
+          <span>Trading War Room</span>
+        </div>
+      </div>
+      <div id="tickerStrip" class="ticker-strip" aria-live="polite"></div>
+      <div class="top-actions">
+        <span class="mode-pill paper">Paper-first</span>
+        <span id="apiState" class="mode-pill">API checking</span>
+        <a href="/ui" class="ghost-link">Classic UI</a>
+        <a href="/futures/ui" class="ghost-link">Futures</a>
+      </div>
+    </header>
+
+    <aside class="left-rail">
+      <button class="rail-btn active" data-panel="automap" title="Auto Map">⌁<span>Map</span></button>
+      <button class="rail-btn" data-panel="ticket" title="Trade Ticket">⇅<span>Trade</span></button>
+      <button class="rail-btn" data-panel="playbooks" title="Playbooks">◎<span>Why</span></button>
+      <button class="rail-btn" data-panel="backtest" title="Backtest">▥<span>Test</span></button>
+      <button class="rail-btn" data-panel="data" title="Data Loader">⇪<span>Data</span></button>
+    </aside>
+
+    <main class="workspace">
+      <section class="market-header glass-panel">
+        <div class="symbol-card">
+          <label>Symbol</label>
+          <input id="symbolInput" value="BTCUSDT" autocomplete="off" />
+        </div>
+        <div class="symbol-card compact">
+          <label>Timeframe</label>
+          <select id="timeframeInput">
+            <option>1m</option><option>3m</option><option>5m</option><option selected>15m</option>
+            <option>1h</option><option>4h</option><option>1d</option><option>1w</option>
+          </select>
+        </div>
+        <div class="symbol-card compact">
+          <label>Bars</label>
+          <input id="barsInput" type="number" min="80" max="1200" value="280" />
+        </div>
+        <div class="symbol-card wide">
+          <label>Strategy posture</label>
+          <select id="postureInput">
+            <option value="balanced">Balanced auto-confluence</option>
+            <option value="breakout">Breakout / retest</option>
+            <option value="reversal">Sweep / reversal</option>
+            <option value="trend">Trend continuation</option>
+            <option value="range">Range fade</option>
+            <option value="squeeze">Squeeze expansion</option>
+          </select>
+        </div>
+        <button id="loadDemoBtn" class="primary-btn">Load Auto Map</button>
+        <button id="analyzeBtn" class="secondary-btn">Re-analyze</button>
+        <button id="autoBtn" class="secondary-btn" aria-pressed="false">Auto off</button>
+      </section>
+
+      <section class="main-grid">
+        <div class="chart-stage glass-panel">
+          <div class="chart-toolbar">
+            <div>
+              <h1 id="chartTitle">BTCUSDT Auto Map</h1>
+              <p id="chartSubtitle">Inflection lines, liquidity, S/R, indicators, and bracket logic.</p>
+            </div>
+            <div class="tool-pills">
+              <label><input type="checkbox" class="layer-toggle" data-layer="sr" checked /> S/R</label>
+              <label><input type="checkbox" class="layer-toggle" data-layer="trend" checked /> Trendlines</label>
+              <label><input type="checkbox" class="layer-toggle" data-layer="fvg" checked /> FVG</label>
+              <label><input type="checkbox" class="layer-toggle" data-layer="ob" checked /> Blocks</label>
+              <label><input type="checkbox" class="layer-toggle" data-layer="fib" checked /> Fib</label>
+              <label><input type="checkbox" class="layer-toggle" data-layer="vp" checked /> Volume</label>
+              <label><input type="checkbox" class="layer-toggle" data-layer="markers" checked /> Signals</label>
+            </div>
+          </div>
+          <div class="canvas-wrap">
+            <canvas id="mainCanvas" width="1240" height="620"></canvas>
+            <div id="crosshairReadout" class="crosshair-readout">Move over chart</div>
+          </div>
+          <div class="indicator-grid">
+            <div class="mini-chart"><div class="mini-title">RSI / Stochastic</div><canvas id="rsiCanvas" width="610" height="140"></canvas></div>
+            <div class="mini-chart"><div class="mini-title">MACD / Volume</div><canvas id="macdCanvas" width="610" height="140"></canvas></div>
+          </div>
+        </div>
+
+        <aside class="right-stack">
+          <section class="score-panel glass-panel">
+            <div class="score-header">
+              <div>
+                <h2 id="recommendation">WAIT</h2>
+                <span id="recommendationSub">Waiting for analysis</span>
+              </div>
+              <div class="score-ring"><span id="confidenceValue">0</span><small>%</small></div>
+            </div>
+            <div class="bias-bars">
+              <div><span>Long</span><meter id="longMeter" min="0" max="100" value="0"></meter><b id="longScore">0</b></div>
+              <div><span>Short</span><meter id="shortMeter" min="0" max="100" value="0"></meter><b id="shortScore">0</b></div>
+            </div>
+            <div id="whyHeadline" class="why-headline">The bot will explain why a trade is or is not justified.</div>
+          </section>
+
+          <section class="dom-panel glass-panel">
+            <div class="panel-title"><h2>DOM Ladder Projection</h2><span id="domSpread">synthetic</span></div>
+            <div id="domLadder" class="dom-ladder"></div>
+          </section>
+
+          <section class="levels-panel glass-panel">
+            <div class="panel-title"><h2>Nearest Levels</h2><span>auto</span></div>
+            <div id="nearestLevels" class="level-list"></div>
+          </section>
+        </aside>
+      </section>
+    </main>
+
+    <section id="automapPanel" class="drawer active glass-panel side-drawer">
+      <div class="drawer-head"><h2>Auto Charting Engine</h2><button class="drawer-close">×</button></div>
+      <div class="metric-grid" id="metricGrid"></div>
+      <h3>Confluence Evidence</h3>
+      <div id="reasonList" class="reason-list"></div>
+      <h3>Detected Patterns</h3>
+      <div id="patternList" class="tag-cloud"></div>
+      <h3>Mapped Features</h3>
+      <div id="featureList" class="feature-list"></div>
+    </section>
+
+    <section id="ticketPanel" class="drawer glass-panel side-drawer">
+      <div class="drawer-head"><h2>Bracket / Futures Ticket</h2><button class="drawer-close">×</button></div>
+      <div class="ticket-grid">
+        <label>Venue<select id="venueInput"><option>paper</option><option>bitunix</option><option>binanceusdm</option><option>bybit</option><option>okx</option><option>coinbase</option><option>kraken</option></select></label>
+        <label>Market<select id="marketTypeInput"><option value="spot">Spot bracket</option><option value="swap" selected>Perpetual futures</option><option value="future">Dated futures</option></select></label>
+        <label>Side<select id="sideInput"><option value="auto">Auto</option><option value="long">Buy / Long</option><option value="short">Sell / Short</option></select></label>
+        <label>Margin<select id="marginModeInput"><option>isolated</option><option>cross</option></select></label>
+        <label>Equity<input id="equityInput" type="number" value="10000" step="100" /></label>
+        <label>Risk %<input id="riskPctInput" type="number" value="1" step="0.1" min="0.05" max="10" /></label>
+        <label>Leverage<input id="leverageInput" type="number" value="3" step="1" min="1" max="125" /></label>
+        <label>Order style<select id="orderStyleInput"><option>limit_retest</option><option>market_confirmation</option><option>stop_breakout</option><option>scale_grid</option></select></label>
+      </div>
+      <button id="buildTicketBtn" class="primary-btn full">Build Ticket From Current Map</button>
+      <div class="ticket-preview">
+        <h3>Paper Submit Payload</h3>
+        <pre id="ticketJson">{}</pre>
+        <div class="ticket-actions">
+          <button id="copyTicketBtn" class="secondary-btn">Copy JSON</button>
+          <button id="submitPaperBtn" class="danger-btn">Submit Paper Signal</button>
+        </div>
+      </div>
+      <div id="planSummary" class="plan-summary"></div>
+    </section>
+
+    <section id="playbooksPanel" class="drawer glass-panel side-drawer">
+      <div class="drawer-head"><h2>How / When / Why</h2><button class="drawer-close">×</button></div>
+      <div id="whyBlocks" class="why-blocks"></div>
+      <h3>Trading Playbooks</h3>
+      <div id="playbookList" class="playbook-list"></div>
+    </section>
+
+    <section id="backtestPanel" class="drawer glass-panel side-drawer">
+      <div class="drawer-head"><h2>Quick Backtest</h2><button class="drawer-close">×</button></div>
+      <div class="ticket-grid">
+        <label>Fast EMA<input id="fastEmaInput" type="number" value="20" /></label>
+        <label>Slow EMA<input id="slowEmaInput" type="number" value="50" /></label>
+        <label>Risk %<input id="btRiskInput" type="number" value="1" step="0.1" /></label>
+        <label>Max bars<input id="maxBarsInput" type="number" value="48" /></label>
+      </div>
+      <button id="runBacktestBtn" class="primary-btn full">Run Fast EMA / RSI Backtest</button>
+      <div id="backtestMetrics" class="metric-grid"></div>
+      <canvas id="equityCanvas" width="620" height="220"></canvas>
+      <div id="tradeList" class="trade-list"></div>
+    </section>
+
+    <section id="dataPanel" class="drawer glass-panel side-drawer">
+      <div class="drawer-head"><h2>Data Loader</h2><button class="drawer-close">×</button></div>
+      <p class="muted">Paste JSON candles or CSV with columns time,open,high,low,close,volume. The backend will auto-map it without touching an exchange.</p>
+      <textarea id="dataInput" spellcheck="false" placeholder='[{"time":0,"open":100,"high":105,"low":97,"close":103,"volume":1200}]'></textarea>
+      <div class="ticket-actions">
+        <button id="loadDataBtn" class="primary-btn">Analyze Pasted Data</button>
+        <button id="sampleDataBtn" class="secondary-btn">Copy Current Candles</button>
+      </div>
+    </section>
+
+    <footer class="statusbar">
+      <span id="statusLine">Ready.</span>
+      <span>Paper-first decision support. Live execution remains gated by Sentinel Chain risk controls.</span>
+    </footer>
+  </div>
+
+  <script src="/war-room/static/war_room.js"></script>
+</body>
+</html>
