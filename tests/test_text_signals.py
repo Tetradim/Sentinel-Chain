@@ -2,8 +2,8 @@ from decimal import Decimal
 
 import pytest
 
-from autocrypto.signals import SignalValidationError
-from autocrypto.text_signals import parse_text_signal
+from sentinel_chain.signals import SignalValidationError
+from sentinel_chain.text_signals import parse_text_signal
 
 
 def test_parse_text_signal_accepts_common_crypto_alert_format():

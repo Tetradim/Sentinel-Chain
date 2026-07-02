@@ -55,7 +55,7 @@ def main() -> int:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run a real-browser smoke pass against the Auto-Crypto operator UI.")
+    parser = argparse.ArgumentParser(description="Run a real-browser smoke pass against the Sentinel-Chain operator UI.")
     parser.add_argument("--host", default=DEFAULT_HOST, help="Server bind host for the temporary app.")
     parser.add_argument("--port", type=int, default=0, help="Server port. Defaults to a free local port.")
     parser.add_argument("--reuse-server", action="store_true", help="Use an already running server at host/port.")
@@ -87,7 +87,7 @@ def start_server(host: str, port: int, db_path: Path) -> subprocess.Popen[str]:
             sys.executable,
             "-m",
             "uvicorn",
-            "autocrypto.app:create_app_from_env",
+            "sentinel_chain.app:create_app_from_env",
             "--factory",
             "--host",
             host,

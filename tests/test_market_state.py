@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from autocrypto.market_state import MarketStatePolicy, MarketStateSnapshot, evaluate_market_state
+from sentinel_chain.market_state import MarketStatePolicy, MarketStateSnapshot, evaluate_market_state
 
 
 def test_market_state_normal_allows_entries():

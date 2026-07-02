@@ -1,4 +1,4 @@
-from autocrypto.idempotency import InMemoryIdempotencyStore
+from sentinel_chain.idempotency import InMemoryIdempotencyStore
 
 
 def test_idempotency_store_claims_key_once_until_expired_clock_advances():

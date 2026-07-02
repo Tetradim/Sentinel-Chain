@@ -1,4 +1,4 @@
-"""Windows packaged entrypoint for Auto-Crypto."""
+"""Windows packaged entrypoint for Sentinel Chain."""
 from __future__ import annotations
 
 import os
@@ -16,11 +16,11 @@ def load_installed_environment() -> None:
 def run_api() -> None:
     host = os.getenv("AUTO_CRYPTO_HOST", "127.0.0.1")
     port = int(os.getenv("AUTO_CRYPTO_PORT", "8004"))
-    uvicorn.run("autocrypto.app:create_app_from_env", host=host, port=port, reload=False, factory=True)
+    uvicorn.run("sentinel_chain.app:create_app_from_env", host=host, port=port, reload=False, factory=True)
 
 
 def run_discord() -> None:
-    from autocrypto.discord_bot import run_from_env
+    from sentinel_chain.discord_bot import run_from_env
 
     run_from_env()
 

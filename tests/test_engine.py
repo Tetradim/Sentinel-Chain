@@ -1,10 +1,10 @@
 from decimal import Decimal
 
-from autocrypto.engine import TradingEngine
-from autocrypto.execution import PaperExchange
-from autocrypto.idempotency import InMemoryIdempotencyStore
-from autocrypto.risk import AccountState, RiskConfig
-from autocrypto.signals import normalize_signal
+from sentinel_chain.engine import TradingEngine
+from sentinel_chain.execution import PaperExchange
+from sentinel_chain.idempotency import InMemoryIdempotencyStore
+from sentinel_chain.risk import AccountState, RiskConfig
+from sentinel_chain.signals import normalize_signal
 
 
 def test_engine_executes_approved_signal_in_paper_with_bracket_exits():

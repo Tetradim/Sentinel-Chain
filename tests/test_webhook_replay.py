@@ -4,7 +4,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
+from sentinel_chain.app import create_app
 
 
 def test_signed_webhook_rejects_stale_timestamp_and_replayed_payload():
@@ -51,7 +51,7 @@ def _signed_headers(secret: str, timestamp: str, body: bytes) -> dict[str, str]:
     digest = hmac.new(secret.encode(), timestamp.encode() + b"." + body, hashlib.sha256).hexdigest()
     return {
         "content-type": "application/json",
-        "x-auto-crypto-timestamp": timestamp,
-        "x-auto-crypto-signature": f"sha256={digest}",
+        "x-sentinel-chain-timestamp": timestamp,
+        "x-sentinel-chain-signature": f"sha256={digest}",
     }
 

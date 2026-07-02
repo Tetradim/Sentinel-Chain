@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
-from autocrypto.repository import SQLiteRepository
+from sentinel_chain.app import create_app
+from sentinel_chain.repository import SQLiteRepository
 
 
 def test_scalper_rebracket_apply_persists_state_and_revert_restores_previous_band(tmp_path):

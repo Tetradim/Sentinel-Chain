@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from autocrypto.signals import SignalValidationError, normalize_signal
+from sentinel_chain.signals import SignalValidationError, normalize_signal
 
 
 def test_normalizes_tradingview_crypto_signal_with_stable_id():

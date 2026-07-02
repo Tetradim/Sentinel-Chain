@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from autocrypto.advisory_risk import AdvisoryRiskInput, score_advisory_risk
+from sentinel_chain.advisory_risk import AdvisoryRiskInput, score_advisory_risk
 
 
 def test_advisory_risk_score_is_explainable_but_not_a_hard_gate():

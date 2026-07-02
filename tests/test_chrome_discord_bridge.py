@@ -2,7 +2,7 @@ import os
 
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
+from sentinel_chain.app import create_app
 
 
 def test_chrome_bridge_message_publishes_signal_observed(tmp_path):
@@ -17,8 +17,8 @@ def test_chrome_bridge_message_publishes_signal_observed(tmp_path):
                 "channel_id": "123",
                 "channel_name": "mike-alerts",
                 "channel_url": "https://discord.com/channels/1/123",
-                "bridge_target_id": "auto-crypto",
-                "bridge_target_name": "Auto-Crypto",
+                "bridge_target_id": "sentinel-chain",
+                "bridge_target_name": "Sentinel Chain",
                 "author_name": "MikeInvesting [MIKE]",
                 "content": "$SPY\n$744 PUTS\nEXPIRATION 6/22/2026\n$.4 Entry\n@everyone alert",
                 "observed_at": "2026-06-22T14:23:00+00:00",
@@ -29,9 +29,9 @@ def test_chrome_bridge_message_publishes_signal_observed(tmp_path):
         assert response.status_code == 200, response.text
         assert response.json()["status"] == "accepted"
         assert events[0]["source_bot"] == "chrome-discord-bridge"
-        assert events[0]["target_bots"] == ["auto-crypto"]
+        assert events[0]["target_bots"] == ["sentinel-chain"]
         assert events[0]["payload"]["contract_version"] == "chrome.discord.message.v1"
-        assert events[0]["payload"]["bridge_target_id"] == "auto-crypto"
+        assert events[0]["payload"]["bridge_target_id"] == "sentinel-chain"
         assert "$SPY" in events[0]["payload"]["raw_text"]
     finally:
         if old_event_dir is None:
@@ -52,7 +52,7 @@ def test_chrome_bridge_heartbeat_records_health(tmp_path):
                 "bridge_enabled": True,
                 "channel_id": "123",
                 "channel_url": "https://discord.com/channels/1/123",
-                "bridge_target_id": "auto-crypto",
+                "bridge_target_id": "sentinel-chain",
                 "observed_at": "2026-06-22T14:23:30+00:00",
             },
         )
@@ -62,8 +62,8 @@ def test_chrome_bridge_heartbeat_records_health(tmp_path):
         assert response.status_code == 200, response.text
         assert response.json()["status"] == "healthy"
         assert health["healthy"] is True
-        assert health["last_heartbeat"]["bridge_target_id"] == "auto-crypto"
-        assert events[0]["payload"]["bridge_target_id"] == "auto-crypto"
+        assert health["last_heartbeat"]["bridge_target_id"] == "sentinel-chain"
+        assert events[0]["payload"]["bridge_target_id"] == "sentinel-chain"
     finally:
         if old_event_dir is None:
             os.environ.pop("BOT_EVENT_BUS_DIR", None)

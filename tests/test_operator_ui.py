@@ -4,8 +4,8 @@ import json
 
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
-from autocrypto.repository import SQLiteRepository
+from sentinel_chain.app import create_app
+from sentinel_chain.repository import SQLiteRepository
 
 
 def _signed_json(secret: str, payload: dict, timestamp: str = "2000000000") -> tuple[bytes, dict[str, str]]:
@@ -13,8 +13,8 @@ def _signed_json(secret: str, payload: dict, timestamp: str = "2000000000") -> t
     digest = hmac.new(secret.encode("utf-8"), timestamp.encode("utf-8") + b"." + body, hashlib.sha256).hexdigest()
     return body, {
         "content-type": "application/json",
-        "x-auto-crypto-timestamp": timestamp,
-        "x-auto-crypto-signature": f"sha256={digest}",
+        "x-sentinel-chain-timestamp": timestamp,
+        "x-sentinel-chain-signature": f"sha256={digest}",
     }
 
 
@@ -30,7 +30,7 @@ def test_operator_ui_is_served_from_backend():
     script = client.get("/ui/static/app.js")
 
     assert ui.status_code == 200
-    assert "Auto-Crypto Operator" in ui.text
+    assert "Sentinel Chain Operator" in ui.text
     assert "Trading Platforms" in ui.text
     assert "Bitunix Futures" in ui.text
     assert "Risk Preview" in ui.text
@@ -77,12 +77,12 @@ def test_operator_ui_is_served_from_backend():
     assert ui.text.index("/ui/static/api.js") < ui.text.index("/ui/static/app.js")
     assert ui.text.index("/ui/static/catalog.js") < ui.text.index("/ui/static/app.js")
     assert formatters.status_code == 200
-    assert "window.AutoCryptoFormatters" in formatters.text
+    assert "window.SentinelChainFormatters" in formatters.text
     assert "escapeHtml" in formatters.text
     assert "prettySymbol" in formatters.text
     assert "formatAuditTime" in formatters.text
     assert storage.status_code == 200
-    assert "window.AutoCryptoStorage" in storage.text
+    assert "window.SentinelChainStorage" in storage.text
     assert "STRATEGY_PIN_STORAGE_KEY" in storage.text
     assert "STRATEGY_BACKTEST_STORAGE_KEY" in storage.text
     assert "TICKET_DRAFT_STORAGE_KEY" in storage.text
@@ -91,20 +91,20 @@ def test_operator_ui_is_served_from_backend():
     assert "writeStoredBacktests" in storage.text
     assert "readAutoRefreshEnabled" in storage.text
     assert api.status_code == 200
-    assert "window.AutoCryptoApi" in api.text
+    assert "window.SentinelChainApi" in api.text
     assert "async function api" in api.text
     assert 'credentials: "same-origin"' in api.text
     assert "Request failed" in api.text
     assert catalog.status_code == 200
-    assert "window.AutoCryptoCatalog" in catalog.text
+    assert "window.SentinelChainCatalog" in catalog.text
     assert "defaultMarkets" in catalog.text
     assert "strategies" in catalog.text
     assert "Breakout Guard" in catalog.text
     assert script.status_code == 200
-    assert "AutoCryptoFormatters" in script.text
-    assert "AutoCryptoStorage" in script.text
-    assert "AutoCryptoApi" in script.text
-    assert "AutoCryptoCatalog" in script.text
+    assert "SentinelChainFormatters" in script.text
+    assert "SentinelChainStorage" in script.text
+    assert "SentinelChainApi" in script.text
+    assert "SentinelChainCatalog" in script.text
     assert "submitSignal" in script.text
     assert "previewSignal" in script.text
     assert "orderDeskRow" in script.text

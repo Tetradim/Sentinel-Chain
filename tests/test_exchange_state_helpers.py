@@ -1,11 +1,11 @@
 from decimal import Decimal
 
-from autocrypto.execution import PaperExchange
+from sentinel_chain.execution import PaperExchange
 
 
 def test_exchange_state_helpers_are_outside_app_module():
-    import autocrypto.app as app_module
-    from autocrypto.exchange_state import adapter_status_for_exchange, paper_capabilities
+    import sentinel_chain.app as app_module
+    from sentinel_chain.exchange_state import adapter_status_for_exchange, paper_capabilities
 
     assert not hasattr(app_module, "_paper_capabilities")
 

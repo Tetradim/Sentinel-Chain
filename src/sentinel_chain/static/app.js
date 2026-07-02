@@ -15,7 +15,7 @@ const {
   formatAuditTime,
   csvCell,
   formatDraftTime,
-} = window.AutoCryptoFormatters;
+} = window.SentinelChainFormatters;
 const {
   readPinnedStrategies,
   writePinnedStrategies,
@@ -28,9 +28,9 @@ const {
   writeAutoRefreshEnabled,
   readImportedStrategy,
   writeImportedStrategy,
-} = window.AutoCryptoStorage;
-const { api } = window.AutoCryptoApi;
-const { defaultMarkets, strategies: fallbackStrategies } = window.AutoCryptoCatalog;
+} = window.SentinelChainStorage;
+const { api } = window.SentinelChainApi;
+const { defaultMarkets, strategies: fallbackStrategies } = window.SentinelChainCatalog;
 
 const appState = {
   data: null,
@@ -85,7 +85,7 @@ async function loadState(showStatus = true) {
     await loadPlatforms(false);
     await loadStrategyPresets(false);
     renderAll();
-    if (showStatus) setStatus("State refreshed from Auto-Crypto API.", "ok");
+    if (showStatus) setStatus("State refreshed from Sentinel Chain API.", "ok");
   } catch (error) {
     setStatus(`Unable to load API state: ${error.message}`, "error");
   } finally {
@@ -1810,7 +1810,7 @@ function exportState() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `auto-crypto-state-${new Date().toISOString().replaceAll(":", "-")}.json`;
+  link.download = `sentinel-chain-state-${new Date().toISOString().replaceAll(":", "-")}.json`;
   link.click();
   URL.revokeObjectURL(url);
   setStatus("Exported current UI state JSON.", "ok");
@@ -1827,7 +1827,7 @@ function exportAuditCsv() {
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `auto-crypto-audit-${new Date().toISOString().replaceAll(":", "-")}.csv`;
+  link.download = `sentinel-chain-audit-${new Date().toISOString().replaceAll(":", "-")}.csv`;
   link.click();
   URL.revokeObjectURL(url);
   setStatus(`Exported ${events.length} audit events to CSV.`, "ok");

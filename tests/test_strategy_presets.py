@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
-from autocrypto.strategy_presets import apply_strategy_preset, list_strategy_presets
+from sentinel_chain.app import create_app
+from sentinel_chain.strategy_presets import apply_strategy_preset, list_strategy_presets
 
 
 def test_strategy_preset_catalog_is_preview_only():

@@ -1,6 +1,6 @@
 # Chrome Discord Bridge
 
-Auto-Crypto accepts local Chrome bridge traffic at:
+Sentinel Chain accepts local Chrome bridge traffic at:
 
 ```text
 POST /api/discord/chrome-bridge/message

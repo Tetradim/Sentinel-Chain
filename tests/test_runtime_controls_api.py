@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
-from autocrypto.repository import SQLiteRepository
+from sentinel_chain.app import create_app
+from sentinel_chain.repository import SQLiteRepository
 
 
 def _entry_payload(signal_id="entry"):

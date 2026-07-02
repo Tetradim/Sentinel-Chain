@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from autocrypto.scalper import (
+from sentinel_chain.scalper import (
     PriceBand,
     RebracketRuntimeState,
     ScalperBracketConfig,

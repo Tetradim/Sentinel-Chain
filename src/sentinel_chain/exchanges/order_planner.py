@@ -126,7 +126,7 @@ def plan_bracket_execution(signal: CryptoSignal, capabilities: ExchangeCapabilit
     if strategy.startswith("paper_required"):
         notes = notes + ("Venue capabilities do not prove a portable live bracket/trailing mapping.",)
     elif strategy != "paper_synthetic_bracket" and exit_orders:
-        notes = notes + ("This is a planning preview only; Auto-Crypto still does not submit live orders.",)
+        notes = notes + ("This is a planning preview only; Sentinel Chain still does not submit live orders.",)
 
     return BracketExecutionPlan(
         exchange_id=capabilities.exchange_id,

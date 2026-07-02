@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
-from autocrypto.bracket_templates import apply_bracket_template, list_bracket_templates
+from sentinel_chain.app import create_app
+from sentinel_chain.bracket_templates import apply_bracket_template, list_bracket_templates
 
 
 def test_bracket_template_catalog_exposes_paper_only_presets():

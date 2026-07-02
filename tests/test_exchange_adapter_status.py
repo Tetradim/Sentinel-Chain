@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
+from sentinel_chain.app import create_app
 
 
 def test_paper_adapter_status_exposes_control_plane_contract():

@@ -1,5 +1,5 @@
 [project]
-name = "auto-crypto"
+name = "sentinel-chain"
 version = "0.1.0"
 description = "Discord and webhook controlled crypto trading automation with paper-first execution."
 readme = "README.md"
@@ -22,4 +22,4 @@ pythonpath = ["src"]
 addopts = "-q"
 
 [tool.setuptools.package-data]
-autocrypto = ["static/**/*"]
+sentinel_chain = ["static/**/*"]

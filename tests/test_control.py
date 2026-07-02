@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
-from autocrypto.repository import SQLiteRepository
+from sentinel_chain.app import create_app
+from sentinel_chain.repository import SQLiteRepository
 
 
 def test_halt_blocks_new_orders_until_resumed_and_records_audit(tmp_path):

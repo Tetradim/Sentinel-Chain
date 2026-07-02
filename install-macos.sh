@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-APP_NAME="Auto-Crypto"
-DESKTOP_COMMAND_NAME="Auto-Crypto.command"
+APP_NAME="Sentinel Chain"
+DESKTOP_COMMAND_NAME="Sentinel Chain.command"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-LOG_FILE="${HOME}/Desktop/Auto-Crypto.log"
+LOG_FILE="${HOME}/Desktop/Sentinel-Chain.log"
 PORT=8004
 HOST_NAME="127.0.0.1"
 DB_PATH="${ROOT_DIR}/data/auto_crypto.sqlite3"
@@ -169,12 +169,12 @@ launch_app() {
   export PYTHONPATH="${ROOT_DIR}/src"
 
   log "Starting API on ${base_url}"
-  (cd "$ROOT_DIR" && "$venv_python" -m uvicorn autocrypto.app:create_app_from_env --factory --host "$HOST_NAME" --port "$PORT") >> "$LOG_FILE" 2>&1 &
+  (cd "$ROOT_DIR" && "$venv_python" -m uvicorn sentinel_chain.app:create_app_from_env --factory --host "$HOST_NAME" --port "$PORT") >> "$LOG_FILE" 2>&1 &
   pids+=("$!")
 
   if [[ "$START_DISCORD" -eq 1 ]]; then
     log "Starting Discord bot"
-    (cd "$ROOT_DIR" && "$venv_python" -c "from autocrypto.discord_bot import run_from_env; run_from_env()") >> "$LOG_FILE" 2>&1 &
+    (cd "$ROOT_DIR" && "$venv_python" -c "from sentinel_chain.discord_bot import run_from_env; run_from_env()") >> "$LOG_FILE" 2>&1 &
     pids+=("$!")
   fi
 

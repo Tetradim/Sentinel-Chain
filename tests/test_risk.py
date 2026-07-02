@@ -2,8 +2,8 @@ from decimal import Decimal
 
 import pytest
 
-from autocrypto.risk import AccountState, RiskConfig, evaluate_signal
-from autocrypto.signals import SignalValidationError, normalize_signal
+from sentinel_chain.risk import AccountState, RiskConfig, evaluate_signal
+from sentinel_chain.signals import SignalValidationError, normalize_signal
 
 
 def test_risk_rejects_signal_without_required_stop_loss():

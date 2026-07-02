@@ -35,7 +35,7 @@ def verify_webhook_signature(
     tolerance_seconds: int | None = None,
     replay_store: InMemoryWebhookReplayStore | None = None,
 ) -> None:
-    """Verify an Auto-Crypto HMAC signature.
+    """Verify an Sentinel Chain HMAC signature.
 
     Signature format: sha256=<hex digest>
     Signed payload: <timestamp>.<raw request body>

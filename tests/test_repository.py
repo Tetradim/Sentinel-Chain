@@ -2,9 +2,9 @@ import json
 import sqlite3
 from decimal import Decimal
 
-from autocrypto.execution import ExitOrder, PaperOrder
-from autocrypto.repository import SQLiteRepository
-from autocrypto.signals import normalize_signal
+from sentinel_chain.execution import ExitOrder, PaperOrder
+from sentinel_chain.repository import SQLiteRepository
+from sentinel_chain.signals import normalize_signal
 
 
 def test_sqlite_repository_persists_signals_orders_and_audit_events(tmp_path):

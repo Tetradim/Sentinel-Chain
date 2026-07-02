@@ -85,7 +85,7 @@
     return `saved ${parsed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`;
   }
 
-  window.AutoCryptoFormatters = {
+  window.SentinelChainFormatters = {
     escapeHtml,
     money,
     percent,

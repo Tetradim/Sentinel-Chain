@@ -111,7 +111,7 @@ def create_app(
     repository: SQLiteRepository | None = None,
     require_approval: bool = False,
 ) -> FastAPI:
-    app = FastAPI(title="Auto-Crypto", version="0.1.0")
+    app = FastAPI(title="Sentinel Chain", version="0.1.0")
     static_dir = Path(__file__).with_name("static")
     if static_dir.exists():
         app.mount("/ui/static", StaticFiles(directory=static_dir), name="ui-static")
@@ -220,8 +220,8 @@ def create_app(
             verify_webhook_signature(
                 secret=secret,
                 body=body,
-                timestamp=request.headers.get("x-auto-crypto-timestamp"),
-                signature=request.headers.get("x-auto-crypto-signature"),
+                timestamp=request.headers.get("x-sentinel-chain-timestamp"),
+                signature=request.headers.get("x-sentinel-chain-signature"),
                 clock=webhook_clock,
                 tolerance_seconds=webhook_tolerance_seconds,
                 replay_store=replay_store,
@@ -292,7 +292,7 @@ def create_app(
                 source_bot="sentinel-edge",
                 correlation_id=str(payload.get("idempotency_key") or ""),
                 dedupe_key=str(payload.get("idempotency_key") or ""),
-                target_bots=["auto-crypto"],
+                target_bots=["sentinel-chain"],
                 payload={"contract_version": "edge.action.v1", **payload},
             )
         )

@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Add Sentinel Pulse-style tight-loop scalper rebracket planning to Auto-Crypto without adding live exchange execution.
+**Goal:** Add Sentinel Pulse-style tight-loop scalper rebracket planning to Sentinel Chain without adding live exchange execution.
 
-**Architecture:** Add a pure `autocrypto.scalper` module that owns price-band rebracketing, suggested signal payload creation, and re-entry cooldown math. Expose a preview-only FastAPI route that operators and future UI controls can call before any signal submission or bracket amendment.
+**Architecture:** Add a pure `sentinel_chain.scalper` module that owns price-band rebracketing, suggested signal payload creation, and re-entry cooldown math. Expose a preview-only FastAPI route that operators and future UI controls can call before any signal submission or bracket amendment.
 
 **Tech Stack:** Python 3.11, dataclasses, `Decimal`, FastAPI, pytest, TestClient.
 
@@ -13,7 +13,7 @@
 ### Task 1: Pure Scalper Domain Module
 
 **Files:**
-- Create: `src/autocrypto/scalper.py`
+- Create: `src/sentinel_chain/scalper.py`
 - Test: `tests/test_scalper.py`
 
 - [x] **Step 1: Write failing tests**
@@ -22,7 +22,7 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
-from autocrypto.scalper import (
+from sentinel_chain.scalper import (
     PriceBand,
     RebracketRuntimeState,
     ScalperBracketConfig,
@@ -111,11 +111,11 @@ def test_reentry_cooldown_remaining_uses_last_exit_timestamp():
 
 Run: `pytest tests/test_scalper.py -q`
 
-Expected: FAIL with `ModuleNotFoundError: No module named 'autocrypto.scalper'`.
+Expected: FAIL with `ModuleNotFoundError: No module named 'sentinel_chain.scalper'`.
 
 - [x] **Step 3: Implement minimal module**
 
-Create `src/autocrypto/scalper.py` with dataclasses for `PriceBand`, `ScalperBracketConfig`, `RebracketRuntimeState`, `RebracketDecision`, plus `plan_rebracket`, `reentry_cooldown_remaining`, and `scalper_signal_payload`.
+Create `src/sentinel_chain/scalper.py` with dataclasses for `PriceBand`, `ScalperBracketConfig`, `RebracketRuntimeState`, `RebracketDecision`, plus `plan_rebracket`, `reentry_cooldown_remaining`, and `scalper_signal_payload`.
 
 - [x] **Step 4: Run test to verify it passes**
 
@@ -126,7 +126,7 @@ Expected: PASS.
 ### Task 2: Preview API
 
 **Files:**
-- Modify: `src/autocrypto/app.py`
+- Modify: `src/sentinel_chain/app.py`
 - Test: `tests/test_scalper_api.py`
 
 - [x] **Step 1: Write failing API test**
@@ -134,7 +134,7 @@ Expected: PASS.
 ```python
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
+from sentinel_chain.app import create_app
 
 
 def test_scalper_rebracket_preview_returns_decision_and_suggested_signal():

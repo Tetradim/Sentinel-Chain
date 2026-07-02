@@ -44,7 +44,7 @@ class BitunixRestClient:
 
     Live order placement is intentionally not exposed here yet. The adapter
     verifies credentials and market/account connectivity behind the same
-    exchange boundary the rest of Auto-Crypto already uses.
+    exchange boundary the rest of Sentinel Chain already uses.
     """
 
     def __init__(

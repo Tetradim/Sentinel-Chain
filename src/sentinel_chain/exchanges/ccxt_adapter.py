@@ -93,7 +93,7 @@ def _load_ccxt() -> Any:
     try:
         import ccxt  # type: ignore
     except ImportError as exc:
-        raise CcxtNotInstalledError("Install auto-crypto[exchange] to enable CCXT adapters") from exc
+        raise CcxtNotInstalledError("Install sentinel-chain[exchange] to enable CCXT adapters") from exc
     return ccxt
 
 

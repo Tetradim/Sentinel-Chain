@@ -12,7 +12,7 @@ from .bot_event_bus import publish_event
 
 
 LOCAL_CLIENT_HOSTS = {"127.0.0.1", "::1", "localhost", "testclient"}
-DEFAULT_TARGET = "auto-crypto"
+DEFAULT_TARGET = "sentinel-chain"
 _lock = Lock()
 _last_heartbeat: dict[str, Any] | None = None
 

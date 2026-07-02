@@ -1,11 +1,11 @@
 (function () {
   "use strict";
 
-  const STRATEGY_PIN_STORAGE_KEY = "autoCryptoPinnedStrategies";
-  const STRATEGY_BACKTEST_STORAGE_KEY = "autoCryptoBacktests";
-  const TICKET_DRAFT_STORAGE_KEY = "autoCryptoTicketDraft";
-  const AUTO_REFRESH_STORAGE_KEY = "autoCryptoAutoRefresh";
-  const IMPORTED_STRATEGY_STORAGE_KEY = "autoCryptoImportedStrategy";
+  const STRATEGY_PIN_STORAGE_KEY = "sentinelChainPinnedStrategies";
+  const STRATEGY_BACKTEST_STORAGE_KEY = "sentinelChainBacktests";
+  const TICKET_DRAFT_STORAGE_KEY = "sentinelChainTicketDraft";
+  const AUTO_REFRESH_STORAGE_KEY = "sentinelChainAutoRefresh";
+  const IMPORTED_STRATEGY_STORAGE_KEY = "sentinelChainImportedStrategy";
 
   function readJson(key, fallback) {
     try {
@@ -67,7 +67,7 @@
     localStorage.setItem(IMPORTED_STRATEGY_STORAGE_KEY, JSON.stringify(strategy));
   }
 
-  window.AutoCryptoStorage = {
+  window.SentinelChainStorage = {
     STRATEGY_PIN_STORAGE_KEY,
     STRATEGY_BACKTEST_STORAGE_KEY,
     TICKET_DRAFT_STORAGE_KEY,

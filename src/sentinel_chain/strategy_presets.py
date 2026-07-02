@@ -80,7 +80,7 @@ STRATEGY_PRESETS: dict[str, StrategyPreset] = {
         entry_logic=(
             "Use only where shorting is supported in the selected paper/backtest venue model.",
             "Prefer liquid pairs and conservative slippage assumptions.",
-            "Check funding and borrow constraints outside Auto-Crypto before any live mapping.",
+            "Check funding and borrow constraints outside Sentinel Chain before any live mapping.",
         ),
         signal_defaults={
             "side": "sell",

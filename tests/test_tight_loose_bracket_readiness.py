@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
+from sentinel_chain.app import create_app
 
 
 def _preview(payload):

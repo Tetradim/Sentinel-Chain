@@ -1,4 +1,4 @@
-"""Auto-Crypto core package."""
+"""Sentinel Chain core package."""
 
 __all__ = ["__version__"]
 

@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from autocrypto.futures_risk import FuturesRiskConfig, FuturesTradeContext, assess_futures_trade
+from sentinel_chain.futures_risk import FuturesRiskConfig, FuturesTradeContext, assess_futures_trade
 
 
 def test_futures_risk_estimates_isolated_long_liquidation_buffer():

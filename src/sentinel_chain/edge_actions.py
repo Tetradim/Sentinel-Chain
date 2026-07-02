@@ -44,7 +44,7 @@ def apply_edge_action(
             "status": "ignored",
             "effect": "no_auto_crypto_mapping",
             "halted": engine.halted,
-            "reason": f"no Auto-Crypto mapping for Edge action: {action}",
+            "reason": f"no Sentinel Chain mapping for Edge action: {action}",
             "action": action,
             "symbol": symbol,
             "event_id": event.event_id,
@@ -67,7 +67,7 @@ def apply_edge_action(
         "auto_crypto.edge_action.applied",
         payload=result,
         correlation_id=event.correlation_id or event.event_id,
-        dedupe_key=f"auto-crypto:{event.event_id}:{result['status']}",
+        dedupe_key=f"sentinel-chain:{event.event_id}:{result['status']}",
         target_bots=["sentinel-edge", "openclaw"],
         trace={"source_event_id": event.event_id},
     )

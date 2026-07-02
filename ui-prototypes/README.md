@@ -1,4 +1,4 @@
-# Auto-Crypto UI Prototype Gallery
+# Sentinel-Chain UI Prototype Gallery
 
 This folder contains five static UI iterations for selecting the first production interface direction. It is intentionally separate from the FastAPI trading engine while the design is being reviewed.
 

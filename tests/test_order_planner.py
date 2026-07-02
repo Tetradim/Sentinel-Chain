@@ -2,11 +2,11 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
-from autocrypto.exchanges.ccxt_adapter import ExchangeCapabilities
-from autocrypto.exchanges.order_planner import plan_bracket_execution
-from autocrypto.execution import build_exit_orders
-from autocrypto.signals import normalize_signal
+from sentinel_chain.app import create_app
+from sentinel_chain.exchanges.ccxt_adapter import ExchangeCapabilities
+from sentinel_chain.exchanges.order_planner import plan_bracket_execution
+from sentinel_chain.execution import build_exit_orders
+from sentinel_chain.signals import normalize_signal
 
 
 def test_order_planner_keeps_paper_bracket_synthetic_and_not_live_safe():

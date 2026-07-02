@@ -3,9 +3,9 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
-from autocrypto.bot_event_bus import BotEvent, EventBusStore
-from autocrypto.repository import SQLiteRepository
+from sentinel_chain.app import create_app
+from sentinel_chain.bot_event_bus import BotEvent, EventBusStore
+from sentinel_chain.repository import SQLiteRepository
 
 
 def test_event_bus_store_publishes_and_reads_recent_events(tmp_path):
@@ -14,7 +14,7 @@ def test_event_bus_store_publishes_and_reads_recent_events(tmp_path):
         BotEvent(
             event_type="edge.action",
             source_bot="sentinel-edge",
-            target_bots=["auto-crypto"],
+            target_bots=["sentinel-chain"],
             payload={"contract_version": "edge.action.v1", "action": "stop_buying"},
         )
     )

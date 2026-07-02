@@ -1,4 +1,4 @@
-name: Build Auto-Crypto Windows Installer
+name: Build Sentinel Chain Windows Installer
 
 on:
   push:
@@ -52,14 +52,14 @@ jobs:
       - name: Build executable
         run: |
           Remove-Item build -Recurse -Force -ErrorAction SilentlyContinue
-          Remove-Item "dist\AutoCrypto" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item "dist\SentinelChain" -Recurse -Force -ErrorAction SilentlyContinue
           python -m PyInstaller `
             --clean `
-            --name AutoCrypto `
+            --name SentinelChain `
             --onedir `
             --console `
             --paths src `
-            --collect-data autocrypto `
+            --collect-data sentinel_chain `
             --hidden-import uvicorn `
             --hidden-import dotenv `
             --hidden-import discord `
@@ -70,38 +70,38 @@ jobs:
 
       - name: Copy launchers into package
         run: |
-          $package = "dist\AutoCrypto"
-          Copy-Item "Launch-Auto-Crypto.bat" -Destination $package -Force
-          Copy-Item "Launch-Auto-Crypto.ps1" -Destination $package -Force
+          $package = "dist\SentinelChain"
+          Copy-Item "Launch-Sentinel-Chain.bat" -Destination $package -Force
+          Copy-Item "Launch-Sentinel-Chain.ps1" -Destination $package -Force
           Copy-Item ".env.example" -Destination $package -Force -ErrorAction SilentlyContinue
 
       - name: Verify package
         run: |
-          if (!(Test-Path "dist\AutoCrypto\AutoCrypto.exe")) {
-            Write-Host "ERROR: AutoCrypto.exe not found"
+          if (!(Test-Path "dist\SentinelChain\SentinelChain.exe")) {
+            Write-Host "ERROR: SentinelChain.exe not found"
             exit 1
           }
-          if (!(Test-Path "dist\AutoCrypto\_internal\autocrypto\static\index.html") -and !(Test-Path "dist\AutoCrypto\autocrypto\static\index.html")) {
-            Write-Host "ERROR: packaged Auto-Crypto static index.html not found"
+          if (!(Test-Path "dist\SentinelChain\_internal\sentinel_chain\static\index.html") -and !(Test-Path "dist\SentinelChain\sentinel_chain\static\index.html")) {
+            Write-Host "ERROR: packaged Sentinel Chain static index.html not found"
             exit 1
           }
-          if (!(Test-Path "dist\AutoCrypto\Launch-Auto-Crypto.bat")) {
-            Write-Host "ERROR: Launch-Auto-Crypto.bat not found"
+          if (!(Test-Path "dist\SentinelChain\Launch-Sentinel-Chain.bat")) {
+            Write-Host "ERROR: Launch-Sentinel-Chain.bat not found"
             exit 1
           }
-          if (!(Test-Path "dist\AutoCrypto\Launch-Auto-Crypto.ps1")) {
-            Write-Host "ERROR: Launch-Auto-Crypto.ps1 not found"
+          if (!(Test-Path "dist\SentinelChain\Launch-Sentinel-Chain.ps1")) {
+            Write-Host "ERROR: Launch-Sentinel-Chain.ps1 not found"
             exit 1
           }
 
       - name: Create Inno Setup script
         run: |
           $iss = @"
-          #define MyAppName "Auto-Crypto"
+          #define MyAppName "Sentinel Chain"
           #define MyAppVersion "${{ env.VERSION }}"
           #define MyAppPublisher "Tetradim / SignalForge Lab"
-          #define MyAppURL "https://github.com/Tetradim/Auto-Crypto"
-          #define MyAppExeName "AutoCrypto.exe"
+          #define MyAppURL "https://github.com/Tetradim/Sentinel-Chain"
+          #define MyAppExeName "SentinelChain.exe"
 
           [Setup]
           AppId={{0D9559D9-273D-4958-9D18-7D206B3E5E0E}
@@ -115,7 +115,7 @@ jobs:
           DefaultDirName={autopf}\{#MyAppName}
           DefaultGroupName={#MyAppName}
           OutputDir=installer-dist
-          OutputBaseFilename=AutoCrypto-Setup-{#MyAppVersion}
+          OutputBaseFilename=SentinelChain-Setup-{#MyAppVersion}
           UninstallDisplayName={#MyAppName}
           UninstallDisplayIcon={app}\{#MyAppExeName}
           Compression=lzma2
@@ -131,22 +131,22 @@ jobs:
 
           [Tasks]
           Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
-          Name: "launchapp"; Description: "Launch Auto-Crypto after install"; GroupDescription: "Startup"; Flags: checkedonce
+          Name: "launchapp"; Description: "Launch Sentinel Chain after install"; GroupDescription: "Startup"; Flags: checkedonce
 
           [Files]
-          Source: "dist\AutoCrypto\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+          Source: "dist\SentinelChain\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
           [Icons]
-          Name: "{group}\{#MyAppName}"; Filename: "{app}\Launch-Auto-Crypto.bat"; WorkingDir: "{app}"
+          Name: "{group}\{#MyAppName}"; Filename: "{app}\Launch-Sentinel-Chain.bat"; WorkingDir: "{app}"
           Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
-          Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\Launch-Auto-Crypto.bat"; WorkingDir: "{app}"; Tasks: desktopicon
+          Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\Launch-Sentinel-Chain.bat"; WorkingDir: "{app}"; Tasks: desktopicon
 
           [Run]
-          Filename: "{app}\Launch-Auto-Crypto.bat"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent shellexec; Tasks: launchapp; WorkingDir: "{app}"
+          Filename: "{app}\Launch-Sentinel-Chain.bat"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent shellexec; Tasks: launchapp; WorkingDir: "{app}"
 
           [UninstallDelete]
           Type: filesandordirs; Name: "{app}"
-          Type: files; Name: "{userdesktop}\Auto-Crypto.log"
+          Type: files; Name: "{userdesktop}\Sentinel-Chain.log"
 
           [Code]
           procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -155,7 +155,7 @@ jobs:
           begin
             if CurUninstallStep = usUninstall then
             begin
-              Exec('taskkill', '/F /IM AutoCrypto.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+              Exec('taskkill', '/F /IM SentinelChain.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
             end;
           end;
           "@
@@ -169,8 +169,8 @@ jobs:
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: AutoCrypto-Setup-${{ env.VERSION }}
-          path: installer-dist/AutoCrypto-Setup*.exe
+          name: SentinelChain-Setup-${{ env.VERSION }}
+          path: installer-dist/SentinelChain-Setup*.exe
           if-no-files-found: error
           retention-days: 90
 
@@ -183,14 +183,14 @@ jobs:
       - name: Download installer
         uses: actions/download-artifact@v4
         with:
-          pattern: AutoCrypto-Setup-*
+          pattern: SentinelChain-Setup-*
           path: artifacts
           merge-multiple: true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: artifacts/AutoCrypto-Setup*.exe
+          files: artifacts/SentinelChain-Setup*.exe
           draft: false
           prerelease: ${{ contains(github.ref, 'beta') }}
           generate_release_notes: true

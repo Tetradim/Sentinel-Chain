@@ -1,4 +1,4 @@
-# Auto-Crypto Launcher
+# Sentinel Chain Launcher
 # Runs the local source checkout with persistent paper-mode SQLite storage.
 
 param(
@@ -19,13 +19,13 @@ if (-not $ProjectRoot) { $ProjectRoot = (Get-Location).Path }
 
 $DesktopPath = [Environment]::GetFolderPath("Desktop")
 if (-not $DesktopPath) { $DesktopPath = Join-Path $HOME "Desktop" }
-$LogFile = Join-Path $DesktopPath "Auto-Crypto.log"
+$LogFile = Join-Path $DesktopPath "Sentinel-Chain.log"
 $OwnedProcesses = New-Object System.Collections.Generic.List[System.Diagnostics.Process]
 $ShutdownStarted = $false
 $CancelKeyPressHandler = $null
 $VcRedistUrl = "https://aka.ms/vc14/vc_redist.x64.exe"
 $DependencyRoot = if ($env:LOCALAPPDATA) {
-    Join-Path $env:LOCALAPPDATA "Auto-Crypto\dependencies"
+    Join-Path $env:LOCALAPPDATA "Sentinel Chain\\dependencies"
 } else {
     Join-Path $ProjectRoot ".dependencies"
 }
@@ -71,7 +71,7 @@ function Test-PortOpen {
     }
 }
 
-function Test-AutoCryptoHealth {
+function Test-SentinelChainHealth {
     param([int]$PortToCheck)
     try {
         $health = Invoke-RestMethod -Uri "http://127.0.0.1:$PortToCheck/health" -Method Get -TimeoutSec 3
@@ -81,11 +81,11 @@ function Test-AutoCryptoHealth {
     }
 }
 
-function Wait-AutoCryptoHealth {
+function Wait-SentinelChainHealth {
     param([int]$PortToCheck, [int]$Seconds = 45)
     $deadline = (Get-Date).AddSeconds($Seconds)
     while ((Get-Date) -lt $deadline) {
-        if (Test-AutoCryptoHealth -PortToCheck $PortToCheck) { return $true }
+        if (Test-SentinelChainHealth -PortToCheck $PortToCheck) { return $true }
         Start-Sleep -Milliseconds 750
     }
     return $false
@@ -140,7 +140,7 @@ function Ensure-InstalledRuntimeDependencies {
     Invoke-DependencyDownload -Url $VcRedistUrl -OutFile $installer -Label "Microsoft Visual C++ Runtime" | Out-Null
     $process = Start-Process -FilePath $installer -ArgumentList "/install", "/quiet", "/norestart" -Wait -PassThru
     if (-not (@(0, 3010, 1638) -contains $process.ExitCode)) {
-        Write-Status "Microsoft Visual C++ Runtime installer exited with code $($process.ExitCode). Auto-Crypto will continue and report any startup error." "WARN"
+        Write-Status "Microsoft Visual C++ Runtime installer exited with code $($process.ExitCode). Sentinel Chain will continue and report any startup error." "WARN"
     }
 }
 
@@ -234,7 +234,7 @@ function Start-OwnedProcess {
     return $process
 }
 
-function Start-InstalledAutoCrypto {
+function Start-InstalledSentinelChain {
     param(
         [string]$InstalledExe,
         [int]$PortToUse,
@@ -244,8 +244,8 @@ function Start-InstalledAutoCrypto {
 
     Ensure-InstalledRuntimeDependencies
     if (Test-PortOpen -PortToCheck $PortToUse) {
-        if (Test-AutoCryptoHealth -PortToCheck $PortToUse) {
-            Write-Status "Auto-Crypto is already running on port $PortToUse" "OK"
+        if (Test-SentinelChainHealth -PortToCheck $PortToUse) {
+            Write-Status "Sentinel Chain is already running on port $PortToUse" "OK"
             return
         }
         throw "Port $PortToUse is already in use by another service. Stop that service or pass -Port <free port>."
@@ -259,12 +259,12 @@ function Start-InstalledAutoCrypto {
         $env:AUTO_CRYPTO_ALLOWED_EXCHANGES = "paper"
     }
 
-    Write-Status "Starting packaged AutoCrypto.exe on $HostToUse`:$PortToUse"
+    Write-Status "Starting packaged SentinelChain.exe on $HostToUse`:$PortToUse"
     Start-OwnedProcess -FilePath $InstalledExe -ArgumentList @() -WorkingDirectory $ProjectRoot | Out-Null
-    if (-not (Wait-AutoCryptoHealth -PortToCheck $PortToUse -Seconds 75)) {
-        throw "Auto-Crypto did not become healthy at http://127.0.0.1:$PortToUse/health. Check $LogFile."
+    if (-not (Wait-SentinelChainHealth -PortToCheck $PortToUse -Seconds 75)) {
+        throw "Sentinel Chain did not become healthy at http://127.0.0.1:$PortToUse/health. Check $LogFile."
     }
-    Write-Status "Auto-Crypto API is healthy" "OK"
+    Write-Status "Sentinel Chain API is healthy" "OK"
 }
 
 function Stop-ProcessTree {
@@ -301,7 +301,7 @@ function Register-LauncherShutdownHandlers {
         $script:CancelKeyPressHandler = [ConsoleCancelEventHandler]{
             param($sender, $eventArgs)
             $eventArgs.Cancel = $true
-            Write-Status "Shutdown requested; stopping Auto-Crypto" "WARN"
+            Write-Status "Shutdown requested; stopping Sentinel Chain" "WARN"
             Invoke-LauncherCleanup
             exit 0
         }
@@ -310,14 +310,14 @@ function Register-LauncherShutdownHandlers {
     }
 }
 
-function Start-SourceAutoCrypto {
-    Write-Status "Starting Auto-Crypto Launcher - Local Source"
+function Start-SourceSentinelChain {
+    Write-Status "Starting Sentinel Chain Launcher - Local Source"
 }
 
 if ($SmokeTest) {
     Write-Status "Running launcher smoke test"
-    $quoted = Join-ProcessArguments -Arguments @("-m", "uvicorn", "autocrypto.app:create_app_from_env", "--factory", "--port", "8004")
-    if (-not $quoted.Contains("autocrypto.app:create_app_from_env")) {
+    $quoted = Join-ProcessArguments -Arguments @("-m", "uvicorn", "sentinel_chain.app:create_app_from_env", "--factory", "--port", "8004")
+    if (-not $quoted.Contains("sentinel_chain.app:create_app_from_env")) {
         throw "Argument joining smoke test failed."
     }
     $spaced = Join-ProcessArguments -Arguments @("--db", "C:\Users\Lite OS\Desktop\auto crypto.sqlite3")
@@ -336,15 +336,15 @@ Register-LauncherShutdownHandlers
 try {
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Cyan
-    Write-Host "  Auto-Crypto Launcher" -ForegroundColor Cyan
+    Write-Host "  Sentinel Chain Launcher" -ForegroundColor Cyan
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host ""
     Write-Status "Project root: $ProjectRoot"
     Write-Status "Launcher log: $LogFile"
 
-    $installedExe = Join-Path $ProjectRoot "AutoCrypto.exe"
+    $installedExe = Join-Path $ProjectRoot "SentinelChain.exe"
     if (Test-Path -LiteralPath $installedExe) {
-        Write-Host "  Auto-Crypto Launcher - Installed App" -ForegroundColor Cyan
+        Write-Host "  Sentinel Chain Launcher - Installed App" -ForegroundColor Cyan
         if (-not $DbPath) {
             $DbPath = Join-Path $ProjectRoot "data\auto_crypto.sqlite3"
         }
@@ -353,7 +353,7 @@ try {
         $uiUrl = "http://127.0.0.1:$Port/ui"
         $docsUrl = "http://127.0.0.1:$Port/docs"
 
-        Start-InstalledAutoCrypto -InstalledExe $installedExe -PortToUse $Port -HostToUse $HostName -DatabasePath $DbPath
+        Start-InstalledSentinelChain -InstalledExe $installedExe -PortToUse $Port -HostToUse $HostName -DatabasePath $DbPath
 
         if ($StartDiscord) {
             if (-not $env:DISCORD_BOT_TOKEN) {
@@ -364,7 +364,7 @@ try {
         }
 
         if (-not $NoBrowser) {
-            Write-Status "Opening Auto-Crypto operator UI"
+            Write-Status "Opening Sentinel Chain Operator UI"
             Start-Process $uiUrl | Out-Null
         }
 
@@ -390,10 +390,10 @@ try {
         exit 0
     }
 
-    Start-SourceAutoCrypto
+    Start-SourceSentinelChain
 
     if (-not (Test-Path (Join-Path $ProjectRoot "pyproject.toml"))) {
-        throw "pyproject.toml not found. Run this launcher from the Auto-Crypto checkout."
+        throw "pyproject.toml not found. Run this launcher from the Sentinel Chain checkout."
     }
 
     if (-not $DbPath) {
@@ -415,7 +415,7 @@ try {
 
     if ($InstallDeps) {
         $installTarget = if ($ExchangeDeps) { ".[exchange]" } else { "." }
-        Write-Status "Installing Auto-Crypto dependencies ($installTarget)"
+        Write-Status "Installing Sentinel Chain dependencies ($installTarget)"
         & $venvPython -m pip install --upgrade pip
         & $venvPython -m pip install -e $installTarget
     }
@@ -432,17 +432,17 @@ try {
     $docsUrl = "http://127.0.0.1:$Port/docs"
 
     if (Test-PortOpen -PortToCheck $Port) {
-        if (-not (Test-AutoCryptoHealth -PortToCheck $Port)) {
+        if (-not (Test-SentinelChainHealth -PortToCheck $Port)) {
             throw "Port $Port is already in use by another service. Stop that service or pass -Port <free port>."
         }
-        Write-Status "Auto-Crypto is already running on port $Port" "WARN"
+        Write-Status "Sentinel Chain is already running on port $Port" "WARN"
     } else {
-        Write-Status "Starting Auto-Crypto API on $HostName`:$Port"
-        Start-OwnedProcess -FilePath $venvPython -ArgumentList @("-m", "uvicorn", "autocrypto.app:create_app_from_env", "--factory", "--host", $HostName, "--port", "$Port") -WorkingDirectory $ProjectRoot | Out-Null
-        if (-not (Wait-AutoCryptoHealth -PortToCheck $Port -Seconds 60)) {
-            throw "Auto-Crypto did not become healthy at $healthUrl. Check $LogFile."
+        Write-Status "Starting Sentinel Chain API on $HostName`:$Port"
+        Start-OwnedProcess -FilePath $venvPython -ArgumentList @("-m", "uvicorn", "sentinel_chain.app:create_app_from_env", "--factory", "--host", $HostName, "--port", "$Port") -WorkingDirectory $ProjectRoot | Out-Null
+        if (-not (Wait-SentinelChainHealth -PortToCheck $Port -Seconds 60)) {
+            throw "Sentinel Chain did not become healthy at $healthUrl. Check $LogFile."
         }
-        Write-Status "Auto-Crypto API is healthy" "OK"
+        Write-Status "Sentinel Chain API is healthy" "OK"
     }
 
     if ($StartDiscord) {
@@ -450,11 +450,11 @@ try {
             throw "DISCORD_BOT_TOKEN is required when using -StartDiscord."
         }
         Write-Status "Starting Discord slash-command bot"
-        Start-OwnedProcess -FilePath $venvPython -ArgumentList @("-c", "from autocrypto.discord_bot import run_from_env; run_from_env()") -WorkingDirectory $ProjectRoot | Out-Null
+        Start-OwnedProcess -FilePath $venvPython -ArgumentList @("-c", "from sentinel_chain.discord_bot import run_from_env; run_from_env()") -WorkingDirectory $ProjectRoot | Out-Null
     }
 
     if (-not $NoBrowser) {
-        Write-Status "Opening Auto-Crypto operator UI"
+        Write-Status "Opening Sentinel Chain Operator UI"
         Start-Process $uiUrl | Out-Null
     }
 

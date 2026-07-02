@@ -1,4 +1,4 @@
-from autocrypto.repository import SQLiteRepository
+from sentinel_chain.repository import SQLiteRepository
 
 
 def test_sqlite_repository_persists_runtime_state(tmp_path):

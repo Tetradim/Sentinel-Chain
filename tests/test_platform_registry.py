@@ -1,4 +1,4 @@
-from autocrypto.exchanges.platform_registry import get_platform, platform_rows
+from sentinel_chain.exchanges.platform_registry import get_platform, platform_rows
 
 
 EXPECTED_PLATFORM_IDS = {

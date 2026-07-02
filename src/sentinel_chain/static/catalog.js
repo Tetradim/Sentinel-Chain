@@ -56,5 +56,5 @@
     },
   ];
 
-  window.AutoCryptoCatalog = { defaultMarkets, strategies };
+  window.SentinelChainCatalog = { defaultMarkets, strategies };
 })();

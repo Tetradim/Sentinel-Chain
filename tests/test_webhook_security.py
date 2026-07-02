@@ -4,7 +4,7 @@ import json
 
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
+from sentinel_chain.app import create_app
 
 
 def test_signed_webhook_rejects_missing_or_bad_signature_then_accepts_valid_signature():
@@ -32,8 +32,8 @@ def test_signed_webhook_rejects_missing_or_bad_signature_then_accepts_valid_sign
         content=body,
         headers={
             "content-type": "application/json",
-            "x-auto-crypto-timestamp": timestamp,
-            "x-auto-crypto-signature": "sha256=bad",
+            "x-sentinel-chain-timestamp": timestamp,
+            "x-sentinel-chain-signature": "sha256=bad",
         },
     )
     assert bad.status_code == 401
@@ -44,8 +44,8 @@ def test_signed_webhook_rejects_missing_or_bad_signature_then_accepts_valid_sign
         content=body,
         headers={
             "content-type": "application/json",
-            "x-auto-crypto-timestamp": timestamp,
-            "x-auto-crypto-signature": f"sha256={digest}",
+            "x-sentinel-chain-timestamp": timestamp,
+            "x-sentinel-chain-signature": f"sha256={digest}",
         },
     )
 

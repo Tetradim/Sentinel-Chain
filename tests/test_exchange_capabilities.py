@@ -3,9 +3,9 @@ from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
-import autocrypto.exchanges.ccxt_adapter as ccxt_adapter
-import autocrypto.app as app_module
+from sentinel_chain.app import create_app
+import sentinel_chain.exchanges.ccxt_adapter as ccxt_adapter
+import sentinel_chain.app as app_module
 
 
 def clear_bitunix_env(monkeypatch):

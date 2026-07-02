@@ -1,10 +1,10 @@
-# Auto-Crypto First-Run Installer Implementation Plan
+# Sentinel Chain First-Run Installer Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build an installed Windows launcher and setup artifact that repair missing runtime dependencies on first launch.
 
-**Architecture:** Source checkouts continue through the current virtual environment launcher. Installed packages are detected by `AutoCrypto.exe`; that path repairs VC++ runtime, sets paper-mode local environment variables, starts the packaged API, and optionally starts the packaged Discord process.
+**Architecture:** Source checkouts continue through the current virtual environment launcher. Installed packages are detected by `SentinelChain.exe`; that path repairs VC++ runtime, sets paper-mode local environment variables, starts the packaged API, and optionally starts the packaged Discord process.
 
 **Tech Stack:** PowerShell, FastAPI, PyInstaller, Inno Setup, pytest static checks.
 
@@ -30,13 +30,13 @@
 ### Task 3: Launcher and workflow
 
 **Files:**
-- Modify: `Launch-Auto-Crypto.bat`
-- Modify: `Launch-Auto-Crypto.ps1`
+- Modify: `Launch-Sentinel Chain.bat`
+- Modify: `Launch-Sentinel Chain.ps1`
 - Create: `.github/workflows/build.yml`
 - Modify: `README.md`
 
 - [ ] Harden the batch wrapper for partial extracts.
 - [ ] Add installed launcher mode with VC++ runtime repair and `/health` wait.
-- [ ] Package `AutoCrypto.exe`, package static assets, and launcher pair.
-- [ ] Build/upload `AutoCrypto-Setup-<version>.exe`.
+- [ ] Package `SentinelChain.exe`, package static assets, and launcher pair.
+- [ ] Build/upload `SentinelChain-Setup-<version>.exe`.
 - [ ] Document beta installer behavior and support logs.

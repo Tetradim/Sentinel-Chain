@@ -21,10 +21,10 @@ def build_discord_client(engine: TradingEngine | None = None) -> discord.Client:
     tree = app_commands.CommandTree(client)
     trading_engine = engine or TradingEngine()
 
-    @tree.command(name="health", description="Show Auto-Crypto health and paper-order count.")
+    @tree.command(name="health", description="Show Sentinel Chain health and paper-order count.")
     async def health(interaction: discord.Interaction) -> None:
         await interaction.response.send_message(
-            f"Auto-Crypto online. Paper orders: {len(trading_engine.exchange.orders)}",
+            f"Sentinel Chain online. Paper orders: {len(trading_engine.exchange.orders)}",
             ephemeral=True,
         )
 

@@ -4,7 +4,7 @@ from urllib.error import URLError
 
 import pytest
 
-from autocrypto.exchanges.bitunix_adapter import (
+from sentinel_chain.exchanges.bitunix_adapter import (
     BitunixConfigurationError,
     BitunixCredentials,
     BitunixRequestError,

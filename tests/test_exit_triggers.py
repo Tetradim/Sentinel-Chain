@@ -1,8 +1,8 @@
 from decimal import Decimal
 
-from autocrypto.engine import TradingEngine
-from autocrypto.execution import PaperExchange
-from autocrypto.signals import normalize_signal
+from sentinel_chain.engine import TradingEngine
+from sentinel_chain.execution import PaperExchange
+from sentinel_chain.signals import normalize_signal
 
 
 def test_paper_take_profit_trigger_closes_position_and_records_exit_order():

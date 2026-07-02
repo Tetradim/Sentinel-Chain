@@ -4,7 +4,7 @@ Date: 2026-06-23
 
 ## Summary
 
-Sentinel Pulse has useful scalper-loop mechanics, but its bracket implementation is tightly coupled to stock tickers, MongoDB ticker documents, websocket broadcasts, Telegram alerts, and broker-account routing. Auto-Crypto should not copy that implementation directly. The right migration path is to port the deterministic ideas into small crypto-native modules and keep Auto-Crypto's existing paper-first bracket engine as the execution source of truth.
+Sentinel Pulse has useful scalper-loop mechanics, but its bracket implementation is tightly coupled to stock tickers, MongoDB ticker documents, websocket broadcasts, Telegram alerts, and broker-account routing. Sentinel Chain should not copy that implementation directly. The right migration path is to port the deterministic ideas into small crypto-native modules and keep Sentinel Chain's existing paper-first bracket engine as the execution source of truth.
 
 ## Sentinel Code Reviewed
 
@@ -16,7 +16,7 @@ Sentinel Pulse has useful scalper-loop mechanics, but its bracket implementation
 - `backend/advanced_risk.py`: explainable risk score, liquidity-aware size recommendation, VaR/CVaR estimate, and stress-adjusted circuit breaker recommendations.
 - Sentinel tests around `test_engine_stress_simulation.py`, `test_reentry_cooldown.py`, `test_pre_trade_projected_exposure.py`, and `test_trade_accounting_exposure.py`.
 
-## Port To Auto-Crypto
+## Port To Sentinel Chain
 
 1. **Drift-based rebracket planner**
    - Port the idea, not the Mongo-dependent code.
@@ -30,22 +30,22 @@ Sentinel Pulse has useful scalper-loop mechanics, but its bracket implementation
    - Add a reusable profile that maps a center price plus tight spread/buffer into a safe crypto bracket plan.
    - Support long and short directions.
    - Use percent or quote-distance controls because crypto symbols vary widely in price.
-   - Feed Auto-Crypto's existing `CryptoSignal`/`PaperExchange` path rather than creating a separate position model.
+   - Feed Sentinel Chain's existing `CryptoSignal`/`PaperExchange` path rather than creating a separate position model.
 
 3. **Re-entry cooldown**
    - Port Sentinel's "after an exit, block fresh entry for N seconds" guard.
    - Apply per symbol and optionally per strategy.
    - Allow reduce-only exits during cooldown.
-   - Persist cooldown state through Auto-Crypto's SQLite repository before using it for live paths.
+   - Persist cooldown state through Sentinel Chain's SQLite repository before using it for live paths.
 
 4. **Projected exposure checks**
-   - Auto-Crypto already checks open notional and bracket risk, but Sentinel's projected pre-trade checks are useful.
+   - Sentinel Chain already checks open notional and bracket risk, but Sentinel's projected pre-trade checks are useful.
    - Add projected portfolio/symbol checks that account for the new order before accepting it.
    - Keep decisions explainable through reason codes.
 
 5. **Hierarchical restrictions**
    - Port the concepts of `no_new_entries`, `close_only`, and `hard_block`.
-   - Map them into Auto-Crypto's existing global halt and risk decision model.
+   - Map them into Sentinel Chain's existing global halt and risk decision model.
    - This is important for funding windows, liquidation danger, exchange degradation, and operator controls.
 
 6. **Risk score as advisory metadata**
@@ -64,12 +64,12 @@ Sentinel Pulse has useful scalper-loop mechanics, but its bracket implementation
    - For crypto, replace with market-state-based stop tightening during high-volatility or liquidation-risk states.
 
 3. **Mongo ticker document mutation**
-   - Auto-Crypto uses normalized signals, paper orders, brackets, and SQLite persistence.
+   - Sentinel Chain uses normalized signals, paper orders, brackets, and SQLite persistence.
    - Do not introduce Sentinel's ticker-doc-as-strategy-state pattern.
 
 4. **Direct broker routing logic**
    - Sentinel's broker allocation and live broker execution code is not portable to crypto exchanges.
-   - Auto-Crypto should keep exchange adapters behind a clean venue interface and keep live execution disabled by default.
+   - Sentinel Chain should keep exchange adapters behind a clean venue interface and keep live execution disabled by default.
 
 5. **Compounding buy power**
    - Automatically increasing position size after wins is risky for leveraged crypto.
@@ -92,25 +92,25 @@ Sentinel Pulse has useful scalper-loop mechanics, but its bracket implementation
 
 Implemented in this slice:
 
-- `autocrypto.scalper`: pure Sentinel-style rebracket planner, tight price-band signal payload generator, and re-entry cooldown utility.
-- `POST /scalper/rebracket/preview`: preview-only API for drift-based band moves and suggested Auto-Crypto signal payloads.
-- `autocrypto.futures_risk`: futures liquidation, stop-before-liquidation, leverage, and adverse-funding checks.
+- `sentinel_chain.scalper`: pure Sentinel-style rebracket planner, tight price-band signal payload generator, and re-entry cooldown utility.
+- `POST /scalper/rebracket/preview`: preview-only API for drift-based band moves and suggested Sentinel Chain signal payloads.
+- `sentinel_chain.futures_risk`: futures liquidation, stop-before-liquidation, leverage, and adverse-funding checks.
 - `POST /futures/risk/preview`: preview-only futures risk assessment endpoint.
-- `autocrypto.market_state`: 24/7 crypto market-state evaluator for normal, stressed, and halted entry states.
+- `sentinel_chain.market_state`: 24/7 crypto market-state evaluator for normal, stressed, and halted entry states.
 - `POST /market/state/preview`: preview-only market-state endpoint for entry controls and sizing multiplier.
 
 ## Backend Migration Slice
 
 Implemented after the first safe slice:
 
-- `autocrypto.protections`: scoped `no_new_entries`, `close_only`, and `hard_block` rules with expiry, precedence, and reason codes.
+- `sentinel_chain.protections`: scoped `no_new_entries`, `close_only`, and `hard_block` rules with expiry, precedence, and reason codes.
 - Repository runtime state: generic persisted JSON state for protections, runtime config, cooldown timestamps, and scalper bracket state.
 - Runtime controls in signal previews and intake:
   - protection rules block or allow entries/reduce-only signals consistently;
   - re-entry cooldowns persist across restarts and block fresh entries after reduce-only exits;
   - market-state snapshots can force no-new-entry rejection or require approval;
   - futures risk runs against swap/futures signals when entry, stop, notional, and leverage are available.
-- `autocrypto.advisory_risk`: explainable advisory score for leverage, liquidation distance, funding, volatility, spread, market state, and exchange degradation. It is metadata only and does not replace deterministic hard gates.
+- `sentinel_chain.advisory_risk`: explainable advisory score for leverage, liquidation distance, funding, volatility, spread, market state, and exchange degradation. It is metadata only and does not replace deterministic hard gates.
 - Scalper state APIs:
   - `GET /scalper/state/{symbol}`;
   - `POST /scalper/rebracket/apply`;

@@ -2,9 +2,9 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
-from autocrypto.repository import SQLiteRepository
-from autocrypto.risk import RiskConfig
+from sentinel_chain.app import create_app
+from sentinel_chain.repository import SQLiteRepository
+from sentinel_chain.risk import RiskConfig
 
 
 def test_market_price_endpoint_triggers_paper_exit_and_audit_event(tmp_path):

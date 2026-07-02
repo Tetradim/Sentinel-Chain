@@ -21,5 +21,5 @@
     return payload;
   }
 
-  window.AutoCryptoApi = { api };
+  window.SentinelChainApi = { api };
 })();

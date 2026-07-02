@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from autocrypto.config import load_settings
+from sentinel_chain.config import load_settings
 
 
 def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(monkeypatch, tmp_path):
@@ -81,7 +81,7 @@ def test_docker_entrypoint_uses_env_backed_app_factory():
 
     text = dockerfile.read_text(encoding="utf-8")
 
-    assert "autocrypto.app:create_app_from_env" in text
+    assert "sentinel_chain.app:create_app_from_env" in text
     assert "--factory" in text
 
 

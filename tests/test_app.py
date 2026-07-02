@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
-from autocrypto.risk import RiskConfig
+from sentinel_chain.app import create_app
+from sentinel_chain.risk import RiskConfig
 
 
 def test_webhook_test_mode_returns_paper_order_without_live_execution():
@@ -674,7 +674,7 @@ def test_bitunix_kline_backtest_uses_native_candles_without_mutating_live_engine
                 "msg": "Success",
             }
 
-    monkeypatch.setattr("autocrypto.app.BitunixRestClient", FakeBitunixClient)
+    monkeypatch.setattr("sentinel_chain.app.BitunixRestClient", FakeBitunixClient)
     app = create_app()
     client = TestClient(app)
     client.get("/ui")

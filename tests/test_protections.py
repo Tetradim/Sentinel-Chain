@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
-from autocrypto.protections import ProtectionRule, ProtectionState, evaluate_protections
-from autocrypto.signals import normalize_signal
+from sentinel_chain.protections import ProtectionRule, ProtectionState, evaluate_protections
+from sentinel_chain.signals import normalize_signal
 
 
 def test_symbol_no_new_entries_allows_reduce_only_but_blocks_fresh_entry():

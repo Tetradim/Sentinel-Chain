@@ -2,8 +2,8 @@ from decimal import Decimal
 
 from fastapi.testclient import TestClient
 
-from autocrypto.app import create_app
-from autocrypto.repository import SQLiteRepository
+from sentinel_chain.app import create_app
+from sentinel_chain.repository import SQLiteRepository
 
 
 def test_approval_required_mode_queues_signal_until_operator_approves(tmp_path):
