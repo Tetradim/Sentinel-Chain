@@ -3451,41 +3451,6 @@ def _lot_total_target_reward(lot: Any) -> Decimal | None:
         return None
     return sum(rewards, Decimal("0"))
 
-# BEGIN SENTINEL CHAIN FUTURES ADDON ROUTES
-try:
-    from sentinel_chain.futures_api import register_futures_routes as _sc_register_futures_routes
-except Exception as _sc_futures_exc:  # pragma: no cover - defensive startup logging only.
-    import logging as _sc_futures_logging
-    _sc_futures_logging.getLogger(__name__).warning("Sentinel Chain futures routes were not registered: %s", _sc_futures_exc)
-else:
-    def _sc_wire_futures_routes(_sc_app):
-        try:
-            return _sc_register_futures_routes(_sc_app)
-        except Exception as _sc_route_exc:  # pragma: no cover - defensive startup logging only.
-            import logging as _sc_futures_logging
-            _sc_futures_logging.getLogger(__name__).exception("Failed to register Sentinel Chain futures routes: %s", _sc_route_exc)
-            return _sc_app
-
-    if "create_app_from_env" in globals() and not getattr(create_app_from_env, "_sc_futures_wrapped", False):
-        _sc_original_create_app_from_env = create_app_from_env
-
-        def create_app_from_env(*args, **kwargs):
-            return _sc_wire_futures_routes(_sc_original_create_app_from_env(*args, **kwargs))
-
-        create_app_from_env._sc_futures_wrapped = True
-
-    if "create_app" in globals() and not getattr(create_app, "_sc_futures_wrapped", False):
-        _sc_original_create_app = create_app
-
-        def create_app(*args, **kwargs):
-            return _sc_wire_futures_routes(_sc_original_create_app(*args, **kwargs))
-
-        create_app._sc_futures_wrapped = True
-
-    if "app" in globals():
-        app = _sc_wire_futures_routes(app)
-# END SENTINEL CHAIN FUTURES ADDON ROUTES
-
 # BEGIN SENTINEL CHAIN WAR ROOM ADDON ROUTES
 try:
     from sentinel_chain.charting.routes import register_war_room_routes as _sc_register_war_room_routes

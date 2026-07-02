@@ -48,7 +48,7 @@ class TicketPayload(BaseModel):
 
 
 def _static_file(name: str) -> Path:
-    allowed = {"war_room.html", "war_room.css", "war_room.js", "futures.html", "futures.css", "futures.js"}
+    allowed = {"war_room.html", "war_room.css", "war_room.js"}
     if name not in allowed:
         raise HTTPException(status_code=404, detail="Unknown War Room asset")
     path = STATIC_DIR / name

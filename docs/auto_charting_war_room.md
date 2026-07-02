@@ -10,7 +10,7 @@ After installing and restarting Sentinel Chain, open:
 http://127.0.0.1:8004/war-room/ui
 ```
 
-The classic UI remains available at `/ui`; the futures add-on UI remains available at `/futures/ui` when installed.
+The classic UI remains available at `/ui`.
 
 ## Backend routes
 
