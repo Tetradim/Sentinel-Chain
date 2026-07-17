@@ -147,6 +147,66 @@ async function loadStrategyPresets(showStatus = true) {
   }
 }
 
+function generalApiFormPayload() {
+  const payload = {
+    enabled: $("#generalApiEnabled").checked,
+    base_url: $("#generalApiBaseUrl").value.trim(),
+    run_id: $("#generalApiRunId").value.trim(),
+    participant_id: $("#generalApiParticipantId").value.trim(),
+    subscribed_symbols: $("#generalApiSymbols").value.split(",").map((value) => value.trim()).filter(Boolean),
+    starting_cash: Number($("#generalApiStartingCash").value),
+    commission_per_order: Number($("#generalApiCommission").value),
+    slippage_bps: Number($("#generalApiSlippage").value),
+    timeout_seconds: Number($("#generalApiTimeout").value),
+  };
+  const token = $("#generalApiToken").value.trim();
+  if (token) payload.api_token = token;
+  return payload;
+}
+
+function renderGeneralApiSettings(settings) {
+  $("#generalApiEnabled").checked = Boolean(settings.enabled);
+  $("#generalApiBaseUrl").value = settings.base_url || "";
+  $("#generalApiRunId").value = settings.run_id || "";
+  $("#generalApiParticipantId").value = settings.participant_id || "sentinel-chain";
+  $("#generalApiSymbols").value = (settings.subscribed_symbols || []).join(", ");
+  $("#generalApiStartingCash").value = settings.starting_cash ?? 100000;
+  $("#generalApiCommission").value = settings.commission_per_order ?? 0;
+  $("#generalApiSlippage").value = settings.slippage_bps ?? 0;
+  $("#generalApiTimeout").value = settings.timeout_seconds ?? 5;
+  $("#generalApiToken").value = "";
+  $("#generalApiTokenState").textContent = settings.token_configured ? "Token configured" : "Token not configured";
+}
+
+async function loadGeneralApiSettings(showStatus = false) {
+  const payload = await api("/api/general-api");
+  renderGeneralApiSettings(payload.settings || {});
+  $("#generalApiResult").textContent = JSON.stringify({
+    contract: payload.contract,
+    boundary: payload.boundary,
+  }, null, 2);
+  if (showStatus) setStatus("General API settings loaded.", "ok");
+}
+
+async function saveGeneralApiSettings(showStatus = true) {
+  const payload = await api("/api/general-api", { method: "PUT", body: generalApiFormPayload() });
+  renderGeneralApiSettings(payload.settings || {});
+  $("#generalApiResult").textContent = JSON.stringify(payload, null, 2);
+  if (showStatus) setStatus("General API settings saved.", "ok");
+  return payload;
+}
+
+async function runGeneralApiAction(action) {
+  await saveGeneralApiSettings(false);
+  const payload = await api(`/api/general-api/${action}`, { method: "POST" });
+  $("#generalApiResult").textContent = JSON.stringify(payload, null, 2);
+  const ok = action === "test" ? Boolean(payload.ok) : Boolean(payload.token_saved);
+  $("#generalApiConnectionState").textContent = ok ? (action === "test" ? "Connected" : "Registered") : "Check result";
+  $("#generalApiConnectionState").classList.toggle("live", ok);
+  await loadGeneralApiSettings(false);
+  setStatus(action === "test" ? "Archive General API connection succeeded." : "Sentinel Chain registered with the Archive run.", "ok");
+}
+
 function strategyPresetCard(preset) {
   const defaults = preset.signal_defaults || {};
   const backtest = preset.backtest_defaults || {};
@@ -1609,6 +1669,9 @@ function activateView(viewName) {
   $$(".view").forEach((view) => view.classList.toggle("is-active", view.dataset.view === viewName));
   $$(".nav-item").forEach((item) => item.classList.toggle("is-active", item.dataset.view === viewName));
   history.replaceState(null, "", `#${viewName}`);
+  if (viewName === "general-api") {
+    loadGeneralApiSettings(false).catch((error) => setStatus(`General API settings failed: ${error.message}`, "error"));
+  }
   drawAllCharts();
 }
 
@@ -1915,6 +1978,9 @@ function bindEvents() {
     renderDashboard();
   });
   $("#refreshAuditButton").addEventListener("click", loadState);
+  $("#generalApiSaveButton").addEventListener("click", () => saveGeneralApiSettings().catch((error) => setStatus(`General API save failed: ${error.message}`, "error")));
+  $("#generalApiTestButton").addEventListener("click", () => runGeneralApiAction("test").catch((error) => setStatus(`General API test failed: ${error.message}`, "error")));
+  $("#generalApiRegisterButton").addEventListener("click", () => runGeneralApiAction("register").catch((error) => setStatus(`General API registration failed: ${error.message}`, "error")));
   $("#exchangeSearch").addEventListener("input", renderExchanges);
   $("#auditSearch").addEventListener("input", renderAudit);
   $("#signalSearch").addEventListener("input", renderSignalHistory);

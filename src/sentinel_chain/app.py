@@ -10,11 +10,12 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .approvals import ApprovalQueue
+from .archive_general_api import GeneralApiConfigStore, GeneralApiDefaults, create_fastapi_router
 from .backtest import run_signal_backtest, run_signal_candle_backtest, run_signal_stress_backtest
 from .brackets import (
     active_exit_payload,
@@ -1854,6 +1855,20 @@ def create_app(
     @app.get("/audit")
     def audit() -> dict[str, Any]:
         return {"events": [event.to_dict() for event in repository.list_audit()] if repository else []}
+
+    general_api_store = GeneralApiConfigStore(
+        Path.cwd() / "data" / "general_api.json",
+        GeneralApiDefaults(
+            bot_id="sentinel-chain",
+            display_name="Sentinel Chain",
+            roles=("trader",),
+        ),
+    )
+    app.include_router(
+        create_fastapi_router(general_api_store),
+        prefix="/api",
+        dependencies=[Depends(verify_signed_operator_request)],
+    )
 
     return app
 

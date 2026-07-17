@@ -24,7 +24,8 @@
         <button class="nav-item" type="button" data-view="strategies"><span>04</span> Strategies</button>
         <button class="nav-item" type="button" data-view="portfolio"><span>05</span> Portfolio</button>
         <button class="nav-item" type="button" data-view="exchanges"><span>06</span> Exchanges</button>
-        <button class="nav-item" type="button" data-view="audit"><span>07</span> Audit</button>
+        <button class="nav-item" type="button" data-view="general-api"><span>07</span> General API</button>
+        <button class="nav-item" type="button" data-view="audit"><span>08</span> Audit</button>
       </nav>
 
       <div class="rail-card">
@@ -522,6 +523,49 @@
               </div>
               <pre class="payload-view compact-payload" id="bitunixView">{}</pre>
             </div>
+          </section>
+        </div>
+      </section>
+
+      <section class="view" data-view="general-api">
+        <div class="view-head">
+          <div>
+            <p>Archive Connection</p>
+            <h1>General API</h1>
+          </div>
+          <div class="mode-pills">
+            <span class="pill paper">archive.general.v1</span>
+            <span class="pill" id="generalApiConnectionState">Not tested</span>
+          </div>
+        </div>
+        <div class="general-api-grid">
+          <section class="panel span-2">
+            <div class="panel-title">
+              <h2>Replay broker connection</h2>
+              <span id="generalApiTokenState">Token not configured</span>
+            </div>
+            <p class="general-api-boundary">Archive replays market data and records broker activity. Sentinel Chain alone recognizes patterns and decides whether to trade.</p>
+            <div class="general-api-form">
+              <label class="general-api-enabled"><input id="generalApiEnabled" type="checkbox" /> Enable General API</label>
+              <label>Archive base URL<input id="generalApiBaseUrl" type="url" placeholder="http://127.0.0.1:9200/api/general" /></label>
+              <label>Replay run ID<input id="generalApiRunId" placeholder="run identifier from Archive" /></label>
+              <label>Participant ID<input id="generalApiParticipantId" placeholder="sentinel-chain" /></label>
+              <label>Subscribed symbols<input id="generalApiSymbols" placeholder="BTCUSDT, ETHUSDT" /></label>
+              <label>Participant token<input id="generalApiToken" type="password" autocomplete="off" placeholder="Leave blank to keep saved token" /></label>
+              <label>Starting cash<input id="generalApiStartingCash" type="number" min="0.01" step="0.01" /></label>
+              <label>Commission per order<input id="generalApiCommission" type="number" min="0" step="0.01" /></label>
+              <label>Slippage (basis points)<input id="generalApiSlippage" type="number" min="0" step="0.01" /></label>
+              <label>Timeout (seconds)<input id="generalApiTimeout" type="number" min="0.1" step="0.1" /></label>
+            </div>
+            <div class="builder-actions general-api-actions">
+              <button type="button" id="generalApiSaveButton" class="primary">Save</button>
+              <button type="button" id="generalApiTestButton">Test Connection</button>
+              <button type="button" id="generalApiRegisterButton">Register With Run</button>
+            </div>
+          </section>
+          <section class="panel">
+            <div class="panel-title"><h2>Connection result</h2><span>Secrets hidden</span></div>
+            <pre class="payload-view" id="generalApiResult">{}</pre>
           </section>
         </div>
       </section>

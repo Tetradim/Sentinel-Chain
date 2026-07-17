@@ -465,6 +465,49 @@ pre {
   gap: 14px;
 }
 
+.general-api-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr);
+  gap: 14px;
+}
+
+.general-api-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0;
+}
+
+.general-api-enabled {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+}
+
+.general-api-enabled input {
+  width: auto;
+}
+
+.general-api-boundary {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.general-api-actions {
+  margin-top: 8px;
+}
+
+@media (max-width: 900px) {
+  .general-api-grid,
+  .general-api-form {
+    grid-template-columns: 1fr;
+  }
+
+  .general-api-enabled {
+    grid-column: auto;
+  }
+}
+
 .dashboard-grid > *,
 .signals-grid > *,
 .desk-grid > *,
