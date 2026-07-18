@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, Callable
 from uuid import uuid4
 import json
 import os
@@ -13,6 +13,8 @@ from pydantic import BaseModel, Field
 
 EVENT_SCHEMA_VERSION = "bot-event.v1"
 DEFAULT_EVENT_DIR = Path(__file__).resolve().parent / "data" / "event-bus"
+_EVENT_LISTENERS: list[Callable[["BotEvent"], None]] = []
+_LISTENER_LOCK = Lock()
 
 
 class BotEvent(BaseModel):
@@ -40,6 +42,15 @@ class EventBusStore:
         with self._lock:
             with self._path_for(event.created_at).open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(event.model_dump(mode="json"), sort_keys=True) + "\n")
+        with _LISTENER_LOCK:
+            listeners = list(_EVENT_LISTENERS)
+        for listener in listeners:
+            try:
+                listener(event)
+            except Exception:
+                # Event persistence is authoritative. A consumer failure must not
+                # make a successfully appended event appear unpublished.
+                continue
         return event
 
     def recent(self, limit: int = 100, event_type: str | None = None) -> list[dict[str, Any]]:
@@ -72,6 +83,12 @@ class EventBusStore:
 
 
 event_bus = EventBusStore()
+
+
+def register_event_listener(listener: Callable[[BotEvent], None]) -> None:
+    with _LISTENER_LOCK:
+        if listener not in _EVENT_LISTENERS:
+            _EVENT_LISTENERS.append(listener)
 
 
 def publish_event(
