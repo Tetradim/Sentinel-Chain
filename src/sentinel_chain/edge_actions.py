@@ -3,9 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 from .bot_event_bus import BotEvent, publish_event
+from .edge_strategy import register_with_event_bus
 from .engine import TradingEngine
 from .repository import SQLiteRepository
 
+
+register_with_event_bus()
 
 HALTING_EDGE_ACTIONS = {
     "stop_buying",
