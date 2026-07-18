@@ -4,6 +4,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .approvals import ApprovalQueue
+from .edge_strategy import ensure_authorized, record_signal_result
 from .engine import TradingEngine
 from .execution import ExecutionResult
 from .order_recorder import save_order_with_runtime_state
@@ -41,7 +42,8 @@ class SignalIntakeService:
                 self.repository.record_audit(
                     "order.halted",
                     {"signal_id": signal.signal_id, "reason": result.reason},
-            )
+                )
+            record_signal_result(signal, result)
             return result.to_dict()
 
         if self.repository:
@@ -85,7 +87,9 @@ class SignalIntakeService:
                 self.repository.record_audit("approval.requested", {"signal_id": signal.signal_id})
             else:
                 self.approvals.add(signal)
-            return {"status": "approval_required", "signal_id": signal.signal_id}
+            queued = {"status": "approval_required", "signal_id": signal.signal_id}
+            record_signal_result(signal, queued)
+            return queued
 
         result = self.engine.process_signal(signal)
         self._record_result(signal, result)
@@ -108,7 +112,6 @@ class SignalIntakeService:
             result = self.engine.process_signal(signal)
             self._record_result(signal, result)
             return result.to_dict()
-
         signal = (
             self.repository.pop_pending_approval(signal_id)
             if self.repository
@@ -139,12 +142,18 @@ class SignalIntakeService:
                 "approval.rejected",
                 {"signal_id": signal.signal_id, "reason": reason},
             )
-        return {"status": "rejected", "signal_id": signal.signal_id}
+        result = {"status": "rejected", "signal_id": signal.signal_id, "reason": reason or "operator_rejected"}
+        record_signal_result(signal, result)
+        return result
 
     def _pre_trade_decision(self, signal: CryptoSignal) -> RuntimeControlDecision:
-        if self.pre_trade_decision is None:
-            return RuntimeControlDecision()
-        return self.pre_trade_decision(signal)
+        base = self.pre_trade_decision(signal) if self.pre_trade_decision is not None else RuntimeControlDecision()
+        edge_reasons = ensure_authorized(signal)
+        return RuntimeControlDecision(
+            reason_codes=[*base.reason_codes, *edge_reasons],
+            approval_required=base.approval_required,
+            metadata={**base.metadata, "edge_authorization_required": not signal.reduce_only, "edge_reason_codes": edge_reasons},
+        )
 
     def _combined_rejection_decision(
         self,
@@ -162,6 +171,7 @@ class SignalIntakeService:
         )
 
     def _record_result(self, signal: CryptoSignal, result: Any) -> None:
+        record_signal_result(signal, result)
         if not self.repository:
             return
         if result.order:
