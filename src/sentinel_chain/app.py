@@ -1,32 +1,66 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import secrets
 from copy import deepcopy
 from collections.abc import Callable
 from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .approvals import ApprovalQueue
-from .backtest import run_signal_backtest, run_signal_candle_backtest, run_signal_stress_backtest
+from .api.parsing import (
+    batch_backtest_candidate_payload as _batch_backtest_candidate_payload,
+    bitunix_kline_query as _bitunix_kline_query,
+    candle_payload as _candle_payload,
+    decimal_value as _decimal,
+    execution_cost_payload as _execution_cost_payload,
+    non_negative_decimal as _non_negative_decimal,
+    non_negative_int as _non_negative_int,
+    optional_datetime as _optional_datetime,
+    optional_int as _optional_int,
+    optional_positive_decimal as _optional_positive_decimal,
+    positive_decimal as _positive_decimal,
+    stress_scenario_payload as _stress_scenario_payload,
+    truthy as _truthy,
+)
+from .api.bracket_views import (
+    active_brackets_to_dict as _active_brackets_to_dict,
+    active_exits_to_dict as _active_exits_to_dict,
+    bracket_coverage_to_dict as _bracket_coverage_to_dict,
+    bracket_decision_support_to_dict as _bracket_decision_support_to_dict,
+    bracket_exit_ladder_to_dict as _bracket_exit_ladder_to_dict,
+    bracket_health as _bracket_health,
+    bracket_oca_groups as _bracket_oca_groups,
+    bracket_preview_impact as _bracket_preview_impact,
+    bracket_risk_summary as _bracket_risk_summary,
+    bracket_summary as _bracket_summary,
+    trailing_preview_snapshot as _trailing_preview_snapshot,
+    trailing_snapshot_activated as _trailing_snapshot_activated,
+    trailing_snapshot_ratcheted as _trailing_snapshot_ratcheted,
+)
+from .api.serializers import (
+    account_state_to_dict as _account_state_to_dict,
+    bracket_plan_to_dict as _bracket_plan_to_dict,
+    decimal_to_plain as _decimal_to_plain,
+    money as _money,
+    risk_config_to_dict as _risk_config_to_dict,
+    risk_decision_to_dict as _risk_decision_to_dict,
+    signal_preview as _signal_preview,
+    signal_to_dict as _signal_to_dict,
+    target_reward as _target_reward,
+    total_target_reward as _total_target_reward,
+    worst_case_loss as _worst_case_loss,
+)
 from .brackets import (
-    active_exit_payload,
-    bracket_coverage_payload,
-    decimal_to_plain,
-    exit_close_quantity,
-    exit_distance,
-    exit_intent,
-    exit_ladder_sort_key,
     exit_order_payload,
-    exit_pnl,
-    trailing_activation_price,
     trailing_ratchet_impacts,
 )
 from .bracket_templates import apply_bracket_template, get_bracket_template, list_bracket_templates
@@ -47,15 +81,27 @@ from .exchanges.bitunix_adapter import (
     BitunixRequestError,
     BitunixRestClient,
     bitunix_kline_candles,
+    bitunix_leverage_bounds,
     load_bitunix_credentials_from_env,
 )
 from .exchanges.ccxt_adapter import (
+    CcxtExchangeAdapter,
     CcxtNotInstalledError,
+    ccxt_credentials_from_env,
+    ccxt_credentials_status,
+    ccxt_live_execution_enabled,
     list_ccxt_exchange_ids,
+    normalize_ccxt_exchange_id,
 )
 from .exchanges.order_planner import plan_bracket_execution
-from .execution import ExecutionCostConfig, PaperExchange, build_exit_orders
+from .execution import PaperExchange, build_exit_orders
 from .futures_risk import FuturesRiskConfig, FuturesTradeContext, assess_futures_trade
+from .live_execution import (
+    LIVE_ORDER_CONFIRMATION,
+    bitunix_live_order_preview,
+    live_execution_status_payload,
+)
+from .market_streaming import bitunix_ws_candles, normalize_bitunix_rest_candles
 from .intake import SignalIntakeService
 from .market_state import MarketStatePolicy, MarketStateSnapshot, evaluate_market_state
 from .order_recorder import cooldown_state_key, save_order_with_runtime_state
@@ -118,7 +164,7 @@ def create_app(
 
     paper_exchange = exchange
     if paper_exchange is None:
-        paper_exchange = PaperExchange.from_order_history(repository.list_orders()) if repository else PaperExchange()
+        paper_exchange = PaperExchange()
     if account_state is None:
         account_state = AccountState(
             open_notional=paper_exchange.open_notional(),
@@ -132,6 +178,13 @@ def create_app(
     secret = webhook_secret if webhook_secret is not None else os.getenv("AUTO_CRYPTO_WEBHOOK_SECRET")
     operator_session_token = secrets.token_urlsafe(32)
     replay_store = InMemoryWebhookReplayStore()
+    guardian_memory: dict[str, Any] = {
+        "drawings": {},
+        "edge": {},
+        "live_previews": {},
+        "live_orders": {},
+    }
+    edge_stream_clients: set[WebSocket] = set()
 
     def runtime_pre_trade_decision(signal: CryptoSignal) -> RuntimeControlDecision:
         summary = _runtime_control_summary(signal, engine=engine, repository=repository)
@@ -159,7 +212,7 @@ def create_app(
     def health() -> dict[str, Any]:
         return {
             "status": "ok",
-            "default_mode": "paper",
+            "default_mode": "live",
             "orders": len(engine.exchange.orders),
             "halted": engine.halted,
             "halt_reason": engine.halt_reason,
@@ -183,13 +236,32 @@ def create_app(
         )
         return response
 
+    @app.get("/guardian/ui", include_in_schema=False)
+    def guardian_ui_index() -> FileResponse:
+        guardian_path = static_dir / "sentinel_guardian.html"
+        if not guardian_path.exists():
+            raise HTTPException(status_code=404, detail="guardian UI is not installed")
+        response = FileResponse(guardian_path)
+        response.set_cookie(
+            OPERATOR_SESSION_COOKIE,
+            operator_session_token,
+            httponly=True,
+            max_age=12 * 60 * 60,
+            path="/",
+            samesite="strict",
+            secure=False,
+        )
+        return response
+
     @app.get("/ui/state")
     def ui_state() -> dict[str, Any]:
-        orders_payload = repository.list_orders() if repository else [order.to_dict() for order in engine.exchange.orders]
+        orders_payload = _live_runtime_records(
+            repository.list_orders() if repository else [order.to_dict() for order in engine.exchange.orders]
+        )
         return {
             "health": {
                 "status": "ok",
-                "default_mode": "paper",
+                "default_mode": "live",
                 "orders": len(engine.exchange.orders),
                 "halted": engine.halted,
                 "halt_reason": engine.halt_reason,
@@ -197,18 +269,24 @@ def create_app(
             "control": {"halted": engine.halted, "reason": engine.halt_reason},
             "execution": {
                 "require_approval": require_approval,
-                "submit_intent": "queue_for_approval" if require_approval else "paper_order",
+                "submit_intent": "queue_for_approval" if require_approval else "live_route_required",
             },
             "risk": _risk_config_to_dict(engine.risk_config),
             "account": _account_state_to_dict(engine.account_state),
             "orders": orders_payload,
             "positions": engine.exchange.list_positions(),
-            "signals": repository.list_signals() if repository else [],
+            "signals": _live_runtime_records(repository.list_signals() if repository else []),
             "approvals": intake.list_approvals(),
-            "audit": [event.to_dict() for event in repository.list_audit()] if repository else [],
-            "active_exits": _active_exits_to_dict(engine.exchange.lots),
+            "audit": _live_runtime_records([event.to_dict() for event in repository.list_audit()] if repository else []),
+            "active_exits": [],
             "runtime": _runtime_config(repository),
             "protections": _protection_state(repository).to_dict(),
+            "live": live_execution_status_payload(),
+            "guardian": {
+                "drawings_persisted": repository is not None,
+                "edge_streaming": True,
+                "candle_websocket": "/guardian/ws/candles",
+            },
         }
 
     @app.get("/control/status")
@@ -263,6 +341,599 @@ def create_app(
             raise HTTPException(status_code=401, detail="operator session is required for private exchange data")
         body = await request.body()
         verify_signed_request(request, body)
+
+    def _ws_operator_session_valid(websocket: WebSocket) -> bool:
+        session_cookie = websocket.cookies.get(OPERATOR_SESSION_COOKIE)
+        if not session_cookie or not secrets.compare_digest(session_cookie, operator_session_token):
+            return False
+        host = (websocket.headers.get("host") or "").lower()
+        origin = websocket.headers.get("origin")
+        if origin and (urlparse(origin).netloc or "").lower() != host:
+            return False
+        return True
+
+    def _guardian_key(prefix: str, *parts: str) -> str:
+        cleaned = [str(part).strip().replace("/", "_").replace(" ", "_") for part in parts if str(part).strip()]
+        return ":".join(["guardian", prefix, *cleaned])
+
+    def _guardian_symbol(value: Any, default: str = "BTCUSDT") -> str:
+        raw = str(value or default).strip().upper().replace("/", "").replace("-", "").replace("_", "")
+        if not raw:
+            raise ValueError("symbol is required")
+        if len(raw) > 32 or not raw.replace(".", "").isalnum():
+            raise ValueError(f"invalid guardian symbol: {value}")
+        return raw
+
+    def _runtime_get(key: str) -> dict[str, Any] | None:
+        if repository:
+            return repository.get_runtime_state(key)
+        bucket = guardian_memory.setdefault("runtime", {})
+        value = bucket.get(key)
+        return dict(value) if isinstance(value, dict) else None
+
+    def _runtime_set(key: str, value: dict[str, Any]) -> None:
+        if repository:
+            repository.set_runtime_state(key, value)
+        else:
+            guardian_memory.setdefault("runtime", {})[key] = value
+
+    def _runtime_delete(key: str) -> None:
+        if repository:
+            repository.delete_runtime_state(key)
+        else:
+            guardian_memory.setdefault("runtime", {}).pop(key, None)
+
+    def _runtime_list(prefix: str) -> dict[str, dict[str, Any]]:
+        if repository:
+            return repository.list_runtime_state(prefix)
+        return {
+            key: value
+            for key, value in guardian_memory.setdefault("runtime", {}).items()
+            if key.startswith(prefix) and isinstance(value, dict)
+        }
+
+    def _now_iso() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    def _drawing_payload(symbol: str) -> dict[str, Any]:
+        normalized = _guardian_symbol(symbol)
+        key = _guardian_key("drawings", normalized)
+        value = _runtime_get(key)
+        if value is None:
+            value = guardian_memory["drawings"].get(normalized) or {
+                "symbol": normalized,
+                "drawings": [],
+                "updated_at": None,
+                "count": 0,
+            }
+        return value
+
+    def _validate_drawings(payload: Any) -> list[dict[str, Any]]:
+        if not isinstance(payload, list):
+            raise ValueError("drawings must be a list")
+        if len(payload) > 500:
+            raise ValueError("drawings list is limited to 500 entries")
+        drawings: list[dict[str, Any]] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                raise ValueError("each drawing must be an object")
+            drawing_type = str(item.get("type") or "").strip()
+            if drawing_type not in {"line", "trend", "hline", "horizontal", "zone", "risk_reward", "note"}:
+                raise ValueError(f"unsupported drawing type: {drawing_type or 'missing'}")
+            drawings.append({str(key): value for key, value in item.items()})
+        return drawings
+
+    def _edge_snapshot_payload(payload: dict[str, Any]) -> dict[str, Any]:
+        symbol = _guardian_symbol(payload.get("symbol") or payload.get("ticker") or "EDGE")
+        mode = str(payload.get("mode") or payload.get("kind") or "EDGE").strip().upper()[:32] or "EDGE"
+        snapshot = {
+            **payload,
+            "symbol": symbol,
+            "mode": mode,
+            "received_at": _now_iso(),
+        }
+        return snapshot
+
+    async def _broadcast_edge_snapshot(snapshot: dict[str, Any]) -> None:
+        stale: list[WebSocket] = []
+        for client in list(edge_stream_clients):
+            try:
+                await client.send_json({"event": "edge_snapshot", "snapshot": snapshot})
+            except Exception:
+                stale.append(client)
+        for client in stale:
+            edge_stream_clients.discard(client)
+
+    def _live_preview_key(preview_id: str) -> str:
+        return _guardian_key("live_preview", preview_id)
+
+    def _live_order_key(client_id: str) -> str:
+        return _guardian_key("live_order", client_id)
+
+    def _normalize_live_signal_payload(payload: dict[str, Any], *, source: str) -> CryptoSignal:
+        raw_signal = payload.get("signal") if isinstance(payload.get("signal"), dict) else payload
+        if not isinstance(raw_signal, dict):
+            raise SignalValidationError("signal payload must be an object")
+        raw_signal = dict(raw_signal)
+        raw_signal.setdefault("exchange", "bitunix")
+        raw_signal.setdefault("market_type", "futures")
+        return normalize_signal(raw_signal, source=source)
+
+    def _live_preview_payload(signal: CryptoSignal) -> dict[str, Any]:
+        engine.account_state.open_notional = engine.exchange.open_notional()
+        engine.account_state.symbol_open_notional = engine.exchange.symbol_open_notional(signal.symbol)
+        engine.account_state.open_risk_amount = engine.exchange.open_risk_amount()
+        decision = evaluate_signal(signal, engine.risk_config, engine.account_state)
+        runtime_summary = _runtime_control_summary(signal, engine=engine, repository=repository)
+        runtime_blocked = bool(runtime_summary.get("reason_codes")) and not bool(runtime_summary.get("approval_required"))
+        preview = bitunix_live_order_preview(
+            signal,
+            decision,
+            engine_halted=engine.halted,
+            runtime_blocked=runtime_blocked,
+        )
+        signal_preview = _signal_preview(signal, engine, require_approval=require_approval)
+        _merge_runtime_controls(signal_preview, runtime_summary)
+        return {
+            "preview": preview.to_dict(),
+            "risk": {
+                "approved": decision.approved,
+                "reason_codes": list(decision.reason_codes),
+                "order_notional": str(decision.order_notional) if decision.order_notional is not None else None,
+            },
+            "runtime_controls": runtime_summary,
+            "paper_preview": signal_preview,
+            "signal": _signal_to_dict(signal),
+            "raw_signal": dict(signal.raw_payload),
+            "live_status": live_execution_status_payload(),
+        }
+
+    def _ccxt_preview_key(preview_id: str) -> str:
+        return _guardian_key("ccxt_preview", preview_id)
+
+    def _ccxt_order_key(exchange_id: str, client_id: str) -> str:
+        return _guardian_key("ccxt_order", exchange_id, client_id)
+
+    def _ccxt_exchange(exchange_id: str, *, authenticated: bool = False) -> CcxtExchangeAdapter:
+        normalized = normalize_ccxt_exchange_id(exchange_id)
+        credentials = ccxt_credentials_from_env(normalized) if authenticated else None
+        return CcxtExchangeAdapter(normalized, credentials)
+
+    def _normalize_ccxt_signal_payload(exchange_id: str, payload: dict[str, Any], *, source: str) -> CryptoSignal:
+        raw_signal = payload.get("signal") if isinstance(payload.get("signal"), dict) else payload
+        if not isinstance(raw_signal, dict):
+            raise SignalValidationError("signal payload must be an object")
+        raw_signal = dict(raw_signal)
+        raw_signal.setdefault("exchange", normalize_ccxt_exchange_id(exchange_id))
+        raw_signal.setdefault("market_type", payload.get("market_type") or "spot")
+        return normalize_signal(raw_signal, source=source)
+
+    def _ccxt_quantity_from_signal(signal: CryptoSignal, decision: RiskDecision) -> Decimal | None:
+        if signal.base_amount is not None:
+            return signal.base_amount
+        notional = decision.order_notional or signal.quote_amount
+        if notional is None or signal.price is None or signal.price <= 0:
+            return None
+        return (notional / signal.price).quantize(Decimal("0.00000001"))
+
+    def _ccxt_order_preview_payload(exchange_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        normalized = normalize_ccxt_exchange_id(exchange_id)
+        signal = _normalize_ccxt_signal_payload(normalized, payload, source=f"ccxt-{normalized}-preview")
+        engine.account_state.open_notional = engine.exchange.open_notional()
+        engine.account_state.symbol_open_notional = engine.exchange.symbol_open_notional(signal.symbol)
+        engine.account_state.open_risk_amount = engine.exchange.open_risk_amount()
+        decision = evaluate_signal(signal, engine.risk_config, engine.account_state)
+        runtime_summary = _runtime_control_summary(signal, engine=engine, repository=repository)
+        runtime_blocked = bool(runtime_summary.get("reason_codes")) and not bool(runtime_summary.get("approval_required"))
+        reasons: list[str] = []
+        warnings: list[str] = []
+        if engine.halted:
+            reasons.append("engine_halted")
+        if runtime_blocked:
+            reasons.append("runtime_controls_blocked")
+        if not decision.approved:
+            reasons.extend(str(code) for code in decision.reason_codes or ["risk_rejected"])
+        credential_status = ccxt_credentials_status(normalized)
+        if not credential_status["ccxt_configured"]:
+            reasons.append("ccxt_credentials_missing")
+        if not ccxt_live_execution_enabled(normalized):
+            reasons.append("ccxt_live_execution_disabled")
+        try:
+            capabilities = _ccxt_exchange(normalized).capabilities()
+            if not capabilities.create_order:
+                reasons.append("ccxt_create_order_not_supported")
+        except (CcxtNotInstalledError, ValueError) as exc:
+            capabilities = None
+            reasons.append(str(exc))
+        quantity = _ccxt_quantity_from_signal(signal, decision)
+        if quantity is None or quantity <= 0:
+            reasons.append("positive_base_quantity_required")
+        exit_orders = build_exit_orders(signal)
+        if exit_orders:
+            warnings.append("bracket_exits_require_exchange_specific_manager")
+            reasons.append("bracket_exits_not_generic_ccxt_live_safe")
+        order_type = str(payload.get("order_type") or payload.get("type") or ("limit" if signal.price is not None else "market")).lower()
+        if order_type not in {"market", "limit"}:
+            reasons.append("unsupported_ccxt_order_type")
+        params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+        if signal.reduce_only:
+            params = {**params, "reduceOnly": True}
+        order_payload = {
+            "exchange_id": normalized,
+            "symbol": signal.symbol,
+            "type": order_type,
+            "side": signal.side,
+            "amount": _decimal_to_plain(quantity) if quantity is not None else None,
+            "price": _decimal_to_plain(signal.price) if signal.price is not None else None,
+            "params": params,
+        }
+        return {
+            "exchange_id": normalized,
+            "preview": {
+                "exchange_id": normalized,
+                "live_order_safe": not reasons and quantity is not None and capabilities is not None,
+                "reason_codes": list(dict.fromkeys(reasons)),
+                "warnings": list(dict.fromkeys(warnings)),
+                "order_payload": order_payload,
+                "confirmation_phrase": LIVE_ORDER_CONFIRMATION,
+            },
+            "risk": {
+                "approved": decision.approved,
+                "reason_codes": list(decision.reason_codes),
+                "order_notional": str(decision.order_notional) if decision.order_notional is not None else None,
+            },
+            "runtime_controls": runtime_summary,
+            "credential_status": credential_status,
+            "capabilities": capabilities.to_dict() if capabilities is not None else None,
+            "signal": _signal_to_dict(signal),
+        }
+
+    @app.get("/guardian/drawings")
+    def guardian_drawings(symbol: str = "BTCUSDT") -> dict[str, Any]:
+        try:
+            return _drawing_payload(symbol)
+        except (SignalValidationError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/guardian/drawings")
+    async def save_guardian_drawings(request: Request) -> dict[str, Any]:
+        await verify_signed_operator_request(request)
+        payload = await request.json()
+        try:
+            symbol = _guardian_symbol(payload.get("symbol") or payload.get("ticker") or "BTCUSDT")
+            drawings = _validate_drawings(payload.get("drawings"))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        record = {
+            "symbol": symbol,
+            "drawings": drawings,
+            "updated_at": _now_iso(),
+            "count": len(drawings),
+        }
+        guardian_memory["drawings"][symbol] = record
+        _runtime_set(_guardian_key("drawings", symbol), record)
+        if repository:
+            repository.record_audit("guardian.drawings_saved", {"symbol": symbol, "count": len(drawings)})
+        return record
+
+    @app.delete("/guardian/drawings")
+    async def delete_guardian_drawings(request: Request, symbol: str = "BTCUSDT") -> dict[str, Any]:
+        await verify_signed_operator_request(request)
+        try:
+            normalized = _guardian_symbol(symbol)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        guardian_memory["drawings"].pop(normalized, None)
+        _runtime_delete(_guardian_key("drawings", normalized))
+        if repository:
+            repository.record_audit("guardian.drawings_deleted", {"symbol": normalized})
+        return {"symbol": normalized, "drawings": [], "deleted": True}
+
+    @app.get("/guardian/edge/latest")
+    def guardian_edge_latest(symbol: str | None = None, mode: str | None = None) -> dict[str, Any]:
+        prefix = _guardian_key("edge")
+        snapshots = list(_runtime_list(prefix).values())
+        if not snapshots:
+            snapshots = list(guardian_memory["edge"].values())
+        if symbol:
+            try:
+                normalized = _guardian_symbol(symbol)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            snapshots = [snap for snap in snapshots if snap.get("symbol") == normalized]
+        if mode:
+            wanted = mode.upper()
+            snapshots = [snap for snap in snapshots if str(snap.get("mode") or "").upper() == wanted]
+        snapshots.sort(key=lambda snap: str(snap.get("received_at") or snap.get("exported_at") or ""), reverse=True)
+        return {"snapshots": snapshots, "count": len(snapshots), "stream": "/guardian/ws/edge"}
+
+    @app.post("/guardian/edge/snapshot")
+    async def guardian_edge_snapshot(request: Request) -> dict[str, Any]:
+        await verify_signed_operator_request(request)
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="edge snapshot must be an object")
+        try:
+            snapshot = _edge_snapshot_payload(payload)
+        except (SignalValidationError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        key = _guardian_key("edge", str(snapshot["symbol"]), str(snapshot["mode"]))
+        guardian_memory["edge"][key] = snapshot
+        _runtime_set(key, snapshot)
+        if repository:
+            repository.record_audit(
+                "guardian.edge_snapshot",
+                {
+                    "symbol": snapshot.get("symbol"),
+                    "mode": snapshot.get("mode"),
+                    "risk_score": snapshot.get("risk_score"),
+                    "regime": snapshot.get("regime"),
+                },
+            )
+        await _broadcast_edge_snapshot(snapshot)
+        return {"status": "accepted", "snapshot": snapshot, "clients": len(edge_stream_clients)}
+
+    @app.websocket("/guardian/ws/edge")
+    async def guardian_edge_stream(websocket: WebSocket) -> None:
+        if not _ws_operator_session_valid(websocket):
+            await websocket.close(code=1008)
+            return
+        await websocket.accept()
+        edge_stream_clients.add(websocket)
+        try:
+            await websocket.send_json({"event": "connected", "stream": "edge", "snapshots": guardian_edge_latest()})
+            while True:
+                try:
+                    message = await asyncio.wait_for(websocket.receive_json(), timeout=30)
+                except asyncio.TimeoutError:
+                    await websocket.send_json({"event": "heartbeat", "stream": "edge", "time": _now_iso()})
+                    continue
+                if isinstance(message, dict) and message.get("op") == "publish" and isinstance(message.get("snapshot"), dict):
+                    snapshot = _edge_snapshot_payload(message["snapshot"])
+                    key = _guardian_key("edge", str(snapshot["symbol"]), str(snapshot["mode"]))
+                    guardian_memory["edge"][key] = snapshot
+                    _runtime_set(key, snapshot)
+                    await _broadcast_edge_snapshot(snapshot)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            edge_stream_clients.discard(websocket)
+
+    @app.websocket("/guardian/ws/candles")
+    async def guardian_candle_stream(
+        websocket: WebSocket,
+        symbol: str = "BTCUSDT",
+        interval: str = "1m",
+        transport: str = "rest_poll",
+        price_type: str = "market",
+        limit: int = 120,
+    ) -> None:
+        if not _ws_operator_session_valid(websocket):
+            await websocket.close(code=1008)
+            return
+        await websocket.accept()
+        try:
+            normalized_symbol = normalize_symbol(symbol).replace("/", "")
+        except SignalValidationError as exc:
+            await websocket.send_json({"event": "error", "detail": str(exc)})
+            await websocket.close(code=1008)
+            return
+        interval = str(interval or "1m")
+        limit = max(1, min(int(limit or 120), 500))
+        await websocket.send_json(
+            {
+                "event": "connected",
+                "stream": "candles",
+                "source": "bitunix",
+                "symbol": normalized_symbol,
+                "interval": interval,
+                "transport": transport,
+            }
+        )
+
+        async def send_rest_snapshot() -> None:
+            payload = await asyncio.to_thread(
+                BitunixRestClient(credentials=load_bitunix_credentials_from_env()).get_futures_klines,
+                normalized_symbol,
+                interval,
+                limit=limit,
+            )
+            candles = normalize_bitunix_rest_candles(bitunix_kline_candles(payload))
+            await websocket.send_json(
+                {
+                    "event": "snapshot",
+                    "source": "bitunix_rest",
+                    "symbol": normalized_symbol,
+                    "interval": interval,
+                    "candles": candles,
+                }
+            )
+
+        try:
+            await send_rest_snapshot()
+        except Exception as exc:
+            await websocket.send_json({"event": "warning", "source": "bitunix_rest", "detail": str(exc)})
+
+        try:
+            if str(transport).lower() in {"bitunix_ws", "ws", "websocket"}:
+                try:
+                    async for event in bitunix_ws_candles(
+                        symbol=normalized_symbol,
+                        interval=interval,
+                        price_type=price_type,
+                    ):
+                        await websocket.send_json(event)
+                except Exception as exc:
+                    await websocket.send_json(
+                        {
+                            "event": "warning",
+                            "source": "bitunix_ws",
+                            "detail": f"upstream websocket unavailable; falling back to REST polling: {exc}",
+                        }
+                    )
+            poll_seconds = max(2, int(os.getenv("AUTO_CRYPTO_CANDLE_STREAM_POLL_SECONDS", "5") or "5"))
+            while True:
+                await asyncio.sleep(poll_seconds)
+                try:
+                    await send_rest_snapshot()
+                except Exception as exc:
+                    await websocket.send_json({"event": "warning", "source": "bitunix_rest", "detail": str(exc)})
+        except WebSocketDisconnect:
+            return
+
+    @app.get("/guardian/live/status")
+    def guardian_live_status() -> dict[str, Any]:
+        return live_execution_status_payload()
+
+    @app.post("/guardian/live/preview")
+    async def guardian_live_preview(request: Request) -> dict[str, Any]:
+        await verify_signed_operator_request(request)
+        payload = await request.json()
+        try:
+            signal = _normalize_live_signal_payload(payload, source="guardian-live-preview")
+            preview = _live_preview_payload(signal)
+        except (SignalValidationError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        preview_id = secrets.token_urlsafe(12)
+        record = {
+            "preview_id": preview_id,
+            "created_at": _now_iso(),
+            "used": False,
+            **preview,
+        }
+        guardian_memory["live_previews"][preview_id] = record
+        _runtime_set(_live_preview_key(preview_id), record)
+        if repository:
+            repository.record_audit(
+                "guardian.live_preview",
+                {
+                    "preview_id": preview_id,
+                    "signal_id": preview["signal"].get("signal_id"),
+                    "symbol": preview["signal"].get("symbol"),
+                    "safe": preview["preview"].get("live_order_safe"),
+                    "reasons": preview["preview"].get("reason_codes"),
+                },
+            )
+        return record
+
+    @app.post("/guardian/live/submit")
+    async def guardian_live_submit(request: Request) -> dict[str, Any]:
+        await verify_signed_operator_request(request)
+        payload = await request.json()
+        preview_id = str(payload.get("preview_id") or "").strip()
+        confirmation = str(payload.get("confirmation") or payload.get("confirm") or "").strip()
+        if confirmation != LIVE_ORDER_CONFIRMATION:
+            raise HTTPException(status_code=400, detail=f"confirmation must equal {LIVE_ORDER_CONFIRMATION!r}")
+        if not preview_id:
+            raise HTTPException(status_code=400, detail="preview_id is required")
+        record = _runtime_get(_live_preview_key(preview_id)) or guardian_memory["live_previews"].get(preview_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="live preview ticket not found")
+        if record.get("used"):
+            raise HTTPException(status_code=409, detail="live preview ticket has already been used")
+        try:
+            signal = normalize_signal(dict(record.get("raw_signal") or record["signal"]), source="guardian-live-submit")
+            fresh = _live_preview_payload(signal)
+        except (SignalValidationError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not fresh["preview"].get("live_order_safe"):
+            raise HTTPException(status_code=409, detail={"message": "live order is not safe to submit", "preview": fresh["preview"]})
+        order_payload = fresh["preview"].get("order_payload")
+        if not isinstance(order_payload, dict):
+            raise HTTPException(status_code=409, detail="live order payload is missing")
+        try:
+            bitunix_client = BitunixRestClient(credentials=load_bitunix_credentials_from_env())
+            leverage_setting = fresh["preview"].get("leverage_setting")
+            leverage_response = None
+            if isinstance(leverage_setting, dict) and order_payload.get("tradeSide") == "OPEN":
+                leverage_response = bitunix_client.change_futures_leverage(
+                    str(leverage_setting["symbol"]),
+                    int(leverage_setting["leverage"]),
+                    str(leverage_setting.get("marginCoin") or "USDT"),
+                )
+            response = bitunix_client.place_futures_order(order_payload)
+        except BitunixConfigurationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except BitunixRequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        client_id = str(order_payload.get("clientId") or preview_id)
+        submitted = {
+            "status": "submitted",
+            "preview_id": preview_id,
+            "submitted_at": _now_iso(),
+            "signal": fresh["signal"],
+            "leverage_setting": fresh["preview"].get("leverage_setting"),
+            "leverage_response": leverage_response,
+            "order_payload": order_payload,
+            "exchange_response": response,
+        }
+        record["used"] = True
+        record["used_at"] = submitted["submitted_at"]
+        _runtime_set(_live_preview_key(preview_id), record)
+        guardian_memory["live_orders"][client_id] = submitted
+        _runtime_set(_live_order_key(client_id), submitted)
+        if repository:
+            repository.record_audit(
+                "guardian.live_order_submitted",
+                {
+                    "preview_id": preview_id,
+                    "client_id": client_id,
+                    "symbol": order_payload.get("symbol"),
+                    "side": order_payload.get("side"),
+                    "leverage": (fresh["preview"].get("leverage_setting") or {}).get("leverage")
+                    if isinstance(fresh["preview"].get("leverage_setting"), dict)
+                    else None,
+                    "order_type": order_payload.get("orderType"),
+                    "exchange_response": response,
+                },
+            )
+        return submitted
+
+    @app.post("/exchanges/bitunix/futures/order/preview")
+    async def bitunix_futures_order_preview(request: Request) -> dict[str, Any]:
+        return await guardian_live_preview(request)
+
+    @app.post("/exchanges/bitunix/futures/order")
+    async def bitunix_futures_order_submit(request: Request) -> dict[str, Any]:
+        return await guardian_live_submit(request)
+
+    @app.post("/exchanges/bitunix/futures/orders/cancel")
+    async def bitunix_futures_order_cancel(request: Request) -> dict[str, Any]:
+        await verify_signed_operator_request(request)
+        payload = await request.json()
+        confirmation = str(payload.get("confirmation") or payload.get("confirm") or "").strip()
+        if confirmation != LIVE_ORDER_CONFIRMATION:
+            raise HTTPException(status_code=400, detail=f"confirmation must equal {LIVE_ORDER_CONFIRMATION!r}")
+        if not live_execution_status_payload()["bitunix"]["live_execution_enabled"]:
+            raise HTTPException(status_code=409, detail="Bitunix live execution is not enabled")
+        try:
+            symbol = _guardian_symbol(payload.get("symbol") or payload.get("ticker") or "")
+        except (SignalValidationError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        order_list = payload.get("orderList") or payload.get("orders")
+        if not isinstance(order_list, list) or not order_list:
+            order_id = payload.get("orderId") or payload.get("order_id")
+            client_id = payload.get("clientId") or payload.get("client_id")
+            if not order_id and not client_id:
+                raise HTTPException(status_code=400, detail="orderId or clientId is required")
+            item: dict[str, Any] = {}
+            if order_id:
+                item["orderId"] = str(order_id)
+            if client_id:
+                item["clientId"] = str(client_id)
+            order_list = [item]
+        try:
+            response = BitunixRestClient(credentials=load_bitunix_credentials_from_env()).cancel_futures_orders(
+                symbol,
+                order_list,
+            )
+        except BitunixConfigurationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except BitunixRequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if repository:
+            repository.record_audit("guardian.live_order_cancel", {"symbol": symbol, "orders": order_list, "response": response})
+        return {"status": "submitted", "symbol": symbol, "orders": order_list, "exchange_response": response}
 
     @app.post("/bus/events")
     async def publish_bus_event(event: BotEvent, request: Request) -> dict[str, Any]:
@@ -429,6 +1100,221 @@ def create_app(
             return {"ccxt_available": False, "platforms": platform_state_rows(None)}
         return {"ccxt_available": True, "platforms": platform_state_rows(ccxt_exchange_ids)}
 
+    @app.get("/exchanges/ccxt/catalog")
+    def ccxt_catalog() -> dict[str, Any]:
+        try:
+            exchange_ids = list_ccxt_exchange_ids()
+        except CcxtNotInstalledError as exc:
+            return {"ccxt_available": False, "error": str(exc), "exchanges": []}
+        return {
+            "ccxt_available": True,
+            "count": len(exchange_ids),
+            "exchanges": [
+                {
+                    "exchange_id": exchange_id,
+                    "credential_status": ccxt_credentials_status(exchange_id),
+                }
+                for exchange_id in exchange_ids
+            ],
+        }
+
+    @app.get("/exchanges/{exchange_id}/ccxt/status")
+    def ccxt_exchange_status(exchange_id: str) -> dict[str, Any]:
+        normalized = normalize_ccxt_exchange_id(exchange_id)
+        try:
+            capabilities = _ccxt_exchange(normalized).capabilities().to_dict()
+        except CcxtNotInstalledError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return {
+            "exchange_id": normalized,
+            "driver": "ccxt",
+            "credential_status": ccxt_credentials_status(normalized),
+            "capabilities": capabilities,
+            "live_execution_model": {
+                "default": "locked",
+                "requires_operator_session": True,
+                "requires_preview_ticket": True,
+                "requires_manual_confirmation": LIVE_ORDER_CONFIRMATION,
+                "requires_global_readiness": True,
+            },
+        }
+
+    @app.get("/exchanges/{exchange_id}/ccxt/ticker")
+    async def ccxt_ticker(exchange_id: str, symbol: str) -> dict[str, Any]:
+        try:
+            payload = await asyncio.to_thread(_ccxt_exchange(exchange_id).fetch_ticker, symbol)
+        except CcxtNotInstalledError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - third-party exchange errors vary by ccxt version.
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"exchange_id": normalize_ccxt_exchange_id(exchange_id), "ticker": payload}
+
+    @app.get("/exchanges/{exchange_id}/ccxt/tickers")
+    async def ccxt_tickers(exchange_id: str, symbols: str | None = None) -> dict[str, Any]:
+        wanted = [item.strip() for item in str(symbols or "").split(",") if item.strip()] or None
+        try:
+            payload = await asyncio.to_thread(_ccxt_exchange(exchange_id).fetch_tickers, wanted)
+        except CcxtNotInstalledError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - third-party exchange errors vary by ccxt version.
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"exchange_id": normalize_ccxt_exchange_id(exchange_id), "tickers": payload}
+
+    @app.get("/exchanges/{exchange_id}/ccxt/balance")
+    async def ccxt_balance(exchange_id: str, request: Request) -> dict[str, Any]:
+        await verify_private_exchange_request(request)
+        status = ccxt_credentials_status(exchange_id)
+        if not status["ccxt_configured"]:
+            raise HTTPException(status_code=400, detail=f"CCXT credentials are not configured for {normalize_ccxt_exchange_id(exchange_id)}")
+        try:
+            payload = await asyncio.to_thread(_ccxt_exchange(exchange_id, authenticated=True).fetch_balance)
+        except CcxtNotInstalledError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - third-party exchange errors vary by ccxt version.
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        return {"exchange_id": normalize_ccxt_exchange_id(exchange_id), "balance": payload}
+
+    @app.post("/exchanges/{exchange_id}/ccxt/order/preview")
+    async def ccxt_order_preview(exchange_id: str, request: Request) -> dict[str, Any]:
+        await verify_signed_operator_request(request)
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise HTTPException(status_code=400, detail="order preview payload must be an object")
+        try:
+            preview = _ccxt_order_preview_payload(exchange_id, payload)
+        except (SignalValidationError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        preview_id = secrets.token_urlsafe(12)
+        record = {
+            "preview_id": preview_id,
+            "created_at": _now_iso(),
+            "used": False,
+            **preview,
+        }
+        guardian_memory.setdefault("ccxt_previews", {})[preview_id] = record
+        _runtime_set(_ccxt_preview_key(preview_id), record)
+        if repository:
+            repository.record_audit(
+                "ccxt.live_preview",
+                {
+                    "preview_id": preview_id,
+                    "exchange_id": preview["exchange_id"],
+                    "symbol": preview["signal"].get("symbol"),
+                    "safe": preview["preview"].get("live_order_safe"),
+                    "reasons": preview["preview"].get("reason_codes"),
+                },
+            )
+        return record
+
+    @app.post("/exchanges/{exchange_id}/ccxt/order")
+    async def ccxt_order_submit(exchange_id: str, request: Request) -> dict[str, Any]:
+        await verify_signed_operator_request(request)
+        payload = await request.json()
+        preview_id = str(payload.get("preview_id") or "").strip()
+        confirmation = str(payload.get("confirmation") or payload.get("confirm") or "").strip()
+        if confirmation != LIVE_ORDER_CONFIRMATION:
+            raise HTTPException(status_code=400, detail=f"confirmation must equal {LIVE_ORDER_CONFIRMATION!r}")
+        if not preview_id:
+            raise HTTPException(status_code=400, detail="preview_id is required")
+        record = _runtime_get(_ccxt_preview_key(preview_id)) or guardian_memory.setdefault("ccxt_previews", {}).get(preview_id)
+        if not record:
+            raise HTTPException(status_code=404, detail="CCXT live preview ticket not found")
+        if record.get("used"):
+            raise HTTPException(status_code=409, detail="CCXT live preview ticket has already been used")
+        normalized = normalize_ccxt_exchange_id(exchange_id)
+        if record.get("exchange_id") != normalized:
+            raise HTTPException(status_code=409, detail="preview exchange does not match submit exchange")
+        try:
+            fresh = _ccxt_order_preview_payload(normalized, {"signal": record["signal"], "params": record["preview"]["order_payload"].get("params") or {}})
+        except (SignalValidationError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not fresh["preview"].get("live_order_safe"):
+            raise HTTPException(status_code=409, detail={"message": "CCXT live order is not safe to submit", "preview": fresh["preview"]})
+        order_payload = fresh["preview"].get("order_payload")
+        if not isinstance(order_payload, dict):
+            raise HTTPException(status_code=409, detail="CCXT order payload is missing")
+        try:
+            response = await asyncio.to_thread(
+                _ccxt_exchange(normalized, authenticated=True).create_order,
+                order_payload["symbol"],
+                order_payload["type"],
+                order_payload["side"],
+                order_payload["amount"],
+                order_payload.get("price"),
+                order_payload.get("params") or {},
+            )
+        except CcxtNotInstalledError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - third-party exchange errors vary by ccxt version.
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        submitted = {
+            "status": "submitted",
+            "preview_id": preview_id,
+            "exchange_id": normalized,
+            "submitted_at": _now_iso(),
+            "signal": fresh["signal"],
+            "order_payload": order_payload,
+            "exchange_response": response,
+        }
+        record["used"] = True
+        record["used_at"] = submitted["submitted_at"]
+        _runtime_set(_ccxt_preview_key(preview_id), record)
+        client_id = str(response.get("clientOrderId") or response.get("clientId") or response.get("id") or preview_id)
+        guardian_memory.setdefault("ccxt_orders", {})[client_id] = submitted
+        _runtime_set(_ccxt_order_key(normalized, client_id), submitted)
+        if repository:
+            repository.record_audit(
+                "ccxt.live_order_submitted",
+                {
+                    "preview_id": preview_id,
+                    "exchange_id": normalized,
+                    "symbol": order_payload.get("symbol"),
+                    "side": order_payload.get("side"),
+                    "order_type": order_payload.get("type"),
+                    "exchange_response": response,
+                },
+            )
+        return submitted
+
+    @app.post("/exchanges/{exchange_id}/ccxt/order/cancel")
+    async def ccxt_order_cancel(exchange_id: str, request: Request) -> dict[str, Any]:
+        await verify_signed_operator_request(request)
+        payload = await request.json()
+        confirmation = str(payload.get("confirmation") or payload.get("confirm") or "").strip()
+        if confirmation != LIVE_ORDER_CONFIRMATION:
+            raise HTTPException(status_code=400, detail=f"confirmation must equal {LIVE_ORDER_CONFIRMATION!r}")
+        normalized = normalize_ccxt_exchange_id(exchange_id)
+        if not ccxt_live_execution_enabled(normalized):
+            raise HTTPException(status_code=409, detail=f"CCXT live execution is not enabled for {normalized}")
+        if not ccxt_credentials_status(normalized)["ccxt_configured"]:
+            raise HTTPException(status_code=400, detail=f"CCXT credentials are not configured for {normalized}")
+        order_id = str(payload.get("order_id") or payload.get("orderId") or "").strip()
+        symbol = str(payload.get("symbol") or "").strip() or None
+        params = payload.get("params") if isinstance(payload.get("params"), dict) else {}
+        if not order_id:
+            raise HTTPException(status_code=400, detail="order_id is required")
+        try:
+            response = await asyncio.to_thread(_ccxt_exchange(normalized, authenticated=True).cancel_order, order_id, symbol, params)
+        except CcxtNotInstalledError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except Exception as exc:  # pragma: no cover - third-party exchange errors vary by ccxt version.
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        if repository:
+            repository.record_audit("ccxt.live_order_cancel", {"exchange_id": normalized, "order_id": order_id, "symbol": symbol, "response": response})
+        return {"status": "submitted", "exchange_id": normalized, "order_id": order_id, "symbol": symbol, "exchange_response": response}
+
     @app.get("/exchanges/{exchange_id}/capabilities")
     def exchange_capabilities(exchange_id: str) -> dict[str, Any]:
         try:
@@ -471,6 +1357,28 @@ def create_app(
         except BitunixRequestError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
+    @app.get("/exchanges/bitunix/futures/trading-pairs")
+    def bitunix_futures_trading_pairs(symbols: str | None = None) -> dict[str, Any]:
+        try:
+            payload = BitunixRestClient(credentials=load_bitunix_credentials_from_env()).get_futures_trading_pairs(symbols)
+        except BitunixRequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        rows = payload.get("data") if isinstance(payload, dict) else []
+        if isinstance(rows, dict):
+            rows = [rows]
+        wanted = [str(item.get("symbol") or "").replace("/", "").upper() for item in rows if isinstance(item, dict)]
+        if symbols:
+            wanted = [part.strip().replace("/", "").upper() for part in symbols.split(",") if part.strip()]
+        return {
+            "source": "bitunix",
+            "raw": payload,
+            "leverage_bounds": {
+                symbol: bitunix_leverage_bounds(payload, symbol)
+                for symbol in wanted
+                if bitunix_leverage_bounds(payload, symbol) is not None
+            },
+        }
+
     @app.get("/exchanges/bitunix/futures/klines")
     def bitunix_futures_klines(
         symbol: str,
@@ -498,6 +1406,19 @@ def create_app(
         await verify_private_exchange_request(request)
         try:
             return BitunixRestClient(credentials=load_bitunix_credentials_from_env()).get_futures_account(margin_coin)
+        except BitunixConfigurationError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except BitunixRequestError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    @app.get("/exchanges/bitunix/futures/leverage")
+    async def bitunix_futures_leverage(request: Request, symbol: str, margin_coin: str = "USDT") -> dict[str, Any]:
+        await verify_private_exchange_request(request)
+        try:
+            return BitunixRestClient(credentials=load_bitunix_credentials_from_env()).get_futures_leverage_margin_mode(
+                symbol,
+                margin_coin,
+            )
         except BitunixConfigurationError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except BitunixRequestError as exc:
@@ -1678,7 +2599,7 @@ def create_app(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         result = intake.handle(signal)
         result["template"] = get_bracket_template(str(templated_payload["bracket_template"])).to_dict()
-        result["paper_only"] = True
+        result["broker_routed_only"] = True
         return result
 
     @app.post("/signals/exchange-plan")
@@ -1700,160 +2621,32 @@ def create_app(
 
     @app.post("/backtest/signal")
     async def backtest_signal(request: Request) -> dict[str, Any]:
-        payload = await request.json()
-        signal_payload = payload.get("signal") if isinstance(payload.get("signal"), dict) else payload
-        marks_payload = payload.get("prices") or payload.get("marks") or []
-        candles_payload = payload.get("candles") or []
-        if candles_payload and marks_payload:
-            raise HTTPException(status_code=400, detail="send either prices or candles, not both")
-        if candles_payload and not isinstance(candles_payload, list):
-            raise HTTPException(status_code=400, detail="candles must be a non-empty list")
-        if not candles_payload and (not isinstance(marks_payload, list) or not marks_payload):
-            raise HTTPException(status_code=400, detail="prices or candles must be a non-empty list")
-        try:
-            signal = normalize_signal(signal_payload, source="operator-backtest")
-            costs = _execution_cost_payload(payload)
-            close_final_positions = _truthy(payload.get("close_final_positions") or payload.get("force_close_final"))
-            if candles_payload:
-                candles = [_candle_payload(candle) for candle in candles_payload]
-                return run_signal_candle_backtest(
-                    engine,
-                    signal,
-                    candles,
-                    costs=costs,
-                    close_final_positions=close_final_positions,
-                ).to_dict()
-            prices = [_positive_decimal(price) for price in marks_payload]
-        except (SignalValidationError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return run_signal_backtest(
-            engine,
-            signal,
-            prices,
-            costs=costs,
-            close_final_positions=close_final_positions,
-        ).to_dict()
+        raise HTTPException(status_code=410, detail="Chain local backtests have been removed from runtime.")
 
     @app.post("/backtest/bitunix-klines")
     async def backtest_bitunix_klines(request: Request) -> dict[str, Any]:
-        payload = await request.json()
-        signal_payload = payload.get("signal") if isinstance(payload.get("signal"), dict) else payload
-        try:
-            signal = normalize_signal(signal_payload, source="operator-bitunix-kline-backtest")
-            costs = _execution_cost_payload(payload)
-            query = _bitunix_kline_query(payload)
-            raw = BitunixRestClient(credentials=load_bitunix_credentials_from_env()).get_futures_klines(**query)
-            candles = [_candle_payload(candle) for candle in bitunix_kline_candles(raw)]
-            if not candles:
-                raise ValueError("Bitunix returned no candles")
-        except (SignalValidationError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except BitunixRequestError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
-        summary = run_signal_candle_backtest(
-            engine,
-            signal,
-            candles,
-            costs=costs,
-            close_final_positions=_truthy(payload.get("close_final_positions") or payload.get("force_close_final")),
-        ).to_dict()
-        summary["market_data"] = {
-            "source": "bitunix",
-            "symbol": query["symbol"],
-            "interval": query["interval"],
-            "price_type": query.get("price_type"),
-            "candle_count": len(candles),
-        }
-        return summary
+        raise HTTPException(status_code=410, detail="Chain local backtests have been removed from runtime.")
 
     @app.post("/backtest/batch")
     async def backtest_batch(request: Request) -> dict[str, Any]:
-        payload = await request.json()
-        candidates_payload = payload.get("candidates")
-        base_signal = payload.get("signal") if isinstance(payload.get("signal"), dict) else {}
-        if not isinstance(candidates_payload, list) or not candidates_payload:
-            raise HTTPException(status_code=400, detail="candidates must be a non-empty list")
-        if len(candidates_payload) > 50:
-            raise HTTPException(status_code=400, detail="candidates cannot exceed 50")
-
-        results: list[dict[str, Any]] = []
-        for index, candidate_payload in enumerate(candidates_payload, start=1):
-            if not isinstance(candidate_payload, dict):
-                raise HTTPException(status_code=400, detail="candidate entries must be objects")
-            try:
-                candidate = _batch_backtest_candidate_payload(
-                    candidate_payload,
-                    base_signal=base_signal,
-                    default_name=f"candidate-{index}",
-                    default_payload=payload,
-                )
-                signal = normalize_signal(candidate["signal"], source="operator-batch-backtest")
-                summary = _run_backtest_candidate(
-                    engine,
-                    signal,
-                    candidate,
-                ).to_dict()
-            except (SignalValidationError, ValueError) as exc:
-                if not _truthy(payload.get("continue_on_error")):
-                    raise HTTPException(status_code=400, detail=f"{candidate_payload.get('name') or index}: {exc}") from exc
-                results.append(
-                    {
-                        "name": str(candidate_payload.get("name") or candidate_payload.get("label") or f"candidate-{index}"),
-                        "accepted": False,
-                        "status": "invalid",
-                        "error": str(exc),
-                    }
-                )
-                continue
-            result = {
-                "name": candidate["name"],
-                "symbol": signal.symbol,
-                **summary,
-            }
-            results.append(result)
-
-        accepted = [result for result in results if result.get("accepted")]
-        ranked = sorted(
-            accepted,
-            key=lambda result: (
-                _decimal(result.get("final_total_pnl"), default=Decimal("0")),
-                -_decimal(result.get("risk_summary", {}).get("max_drawdown"), default=Decimal("0")),
-            ),
-            reverse=True,
-        )
-        return {
-            "candidate_count": len(results),
-            "accepted_count": len(accepted),
-            "rejected_count": len(results) - len(accepted),
-            "best_by_total_pnl": _batch_result_rank_row(ranked[0]) if ranked else None,
-            "worst_by_total_pnl": _batch_result_rank_row(ranked[-1]) if ranked else None,
-            "worst_max_drawdown": str(
-                max(
-                    (_decimal(result.get("risk_summary", {}).get("max_drawdown"), default=Decimal("0")) for result in accepted),
-                    default=Decimal("0"),
-                )
-            ),
-            "ranked": [_batch_result_rank_row(result) for result in ranked],
-            "results": results,
-        }
+        raise HTTPException(status_code=410, detail="Chain local backtests have been removed from runtime.")
 
     @app.post("/backtest/stress")
     async def backtest_stress(request: Request) -> dict[str, Any]:
-        payload = await request.json()
-        signal_payload = payload.get("signal") if isinstance(payload.get("signal"), dict) else payload
-        scenarios_payload = payload.get("scenarios")
-        if not isinstance(scenarios_payload, list) or not scenarios_payload:
-            raise HTTPException(status_code=400, detail="scenarios must be a non-empty list")
-        try:
-            signal = normalize_signal(signal_payload, source="operator-stress-backtest")
-            scenarios = [_stress_scenario_payload(scenario) for scenario in scenarios_payload]
-        except (SignalValidationError, ValueError) as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return run_signal_stress_backtest(engine, signal, scenarios).to_dict()
+        raise HTTPException(status_code=410, detail="Chain local backtests have been removed from runtime.")
 
     @app.get("/audit")
     def audit() -> dict[str, Any]:
         return {"events": [event.to_dict() for event in repository.list_audit()] if repository else []}
+
+    # >>> Sentinel Chain Guardian Scanner add-on >>>
+    try:
+        from sentinel_chain.scanner.scanner_routes import register_scanner_routes
+        register_scanner_routes(app)
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("Sentinel scanner routes were not registered: %s", exc)
+    # <<< Sentinel Chain Guardian Scanner add-on <<<
 
     return app
 
@@ -1871,6 +2664,31 @@ def create_app_from_env() -> FastAPI:
 
 
 app = create_app()
+
+
+def _live_runtime_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [record for record in records if not _record_references_removed_paper_mode(record)]
+
+
+def _record_references_removed_paper_mode(value: Any) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            key_text = str(key).lower()
+            if key_text in {"mode", "exchange", "default_mode"} and str(item).strip().lower() == "paper":
+                return True
+            if key_text in {"order_id", "signal_id", "strategy_id"} and _paper_identifier(item):
+                return True
+            if _record_references_removed_paper_mode(item):
+                return True
+        return False
+    if isinstance(value, list):
+        return any(_record_references_removed_paper_mode(item) for item in value)
+    return False
+
+
+def _paper_identifier(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    return text.startswith("paper-") or "-paper-" in text or text.endswith("-paper")
 
 
 def _merge_runtime_controls(preview: dict[str, Any], summary: dict[str, Any]) -> None:
@@ -1946,7 +2764,7 @@ def _scalper_rebracket_payload(
             risk_amount=_optional_positive_decimal(payload.get("risk_amount")),
             risk_pct=_optional_positive_decimal(payload.get("risk_pct")),
             stop_distance=_optional_positive_decimal(payload.get("stop_distance") or payload.get("stop_loss_distance")),
-            exchange=str(payload.get("exchange") or "paper").strip().lower(),
+            exchange=str(payload.get("exchange") or payload.get("venue") or "").strip().lower(),
             market_type=str(payload.get("market_type") or "swap").strip().lower(),
         )
         if decision.new_band is not None
@@ -2011,183 +2829,6 @@ def _extend_unique(values: list[str], additions: list[str]) -> None:
         _append_unique(values, value)
 
 
-def _positive_decimal(value: Any) -> Decimal:
-    if value is None or value == "":
-        raise ValueError("price is required")
-    try:
-        parsed = Decimal(str(value))
-    except (InvalidOperation, ValueError) as exc:
-        raise ValueError(f"invalid price: {value}") from exc
-    if parsed <= 0:
-        raise ValueError("price must be positive")
-    return parsed
-
-
-def _optional_positive_decimal(value: Any) -> Decimal | None:
-    if value is None or value == "":
-        return None
-    try:
-        parsed = Decimal(str(value))
-    except (InvalidOperation, ValueError) as exc:
-        raise ValueError(f"invalid decimal: {value}") from exc
-    if parsed <= 0:
-        raise ValueError("decimal value must be positive")
-    return parsed
-
-
-def _optional_datetime(value: Any) -> datetime | None:
-    if value is None or value == "":
-        return None
-    if isinstance(value, datetime):
-        return value
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ValueError(f"invalid datetime: {value}") from exc
-
-
-def _truthy(value: Any) -> bool:
-    if value is None or value == "":
-        return False
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() not in {"0", "false", "no", "off"}
-
-
-def _non_negative_int(value: Any, *, default: int) -> int:
-    if value is None or value == "":
-        return default
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"invalid integer: {value}") from exc
-    if parsed < 0:
-        raise ValueError("integer value must be non-negative")
-    return parsed
-
-
-def _candle_payload(value: Any) -> dict[str, Decimal]:
-    if not isinstance(value, dict):
-        raise ValueError("candles entries must be objects")
-    high = _positive_decimal(value.get("high"))
-    low = _positive_decimal(value.get("low"))
-    if low > high:
-        raise ValueError("candle low cannot exceed high")
-    return {
-        "label": value.get("label") or value.get("time") or value.get("timestamp"),
-        "high": high,
-        "low": low,
-        "close": _positive_decimal(value.get("close")),
-    }
-
-
-def _stress_scenario_payload(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise ValueError("scenario entries must be objects")
-    marks_payload = value.get("prices") or value.get("marks") or []
-    candles_payload = value.get("candles") or []
-    if candles_payload and marks_payload:
-        raise ValueError("scenario must send either prices or candles, not both")
-    if candles_payload:
-        if not isinstance(candles_payload, list):
-            raise ValueError("scenario candles must be a list")
-        path = {"candles": [_candle_payload(candle) for candle in candles_payload]}
-    else:
-        if not isinstance(marks_payload, list) or not marks_payload:
-            raise ValueError("scenario prices or candles must be a non-empty list")
-        path = {"prices": [_positive_decimal(price) for price in marks_payload]}
-    costs_payload = value.get("costs") if isinstance(value.get("costs"), dict) else value
-    return {
-        "name": str(value.get("name") or value.get("label") or "scenario"),
-        **path,
-        "close_final_positions": _truthy(value.get("close_final_positions") or value.get("force_close_final")),
-        "costs": ExecutionCostConfig(
-            fee_bps=_non_negative_decimal(costs_payload.get("fee_bps"), default=Decimal("0")),
-            slippage_bps=_non_negative_decimal(costs_payload.get("slippage_bps"), default=Decimal("0")),
-            funding_rate_bps=_decimal(costs_payload.get("funding_rate_bps"), default=Decimal("0")),
-            funding_periods_per_mark=_non_negative_decimal(
-                costs_payload.get("funding_periods_per_mark"),
-                default=Decimal("0"),
-            ),
-        ),
-    }
-
-
-def _batch_backtest_candidate_payload(
-    value: dict[str, Any],
-    *,
-    base_signal: dict[str, Any],
-    default_name: str,
-    default_payload: dict[str, Any],
-) -> dict[str, Any]:
-    candidate_signal = value.get("signal") if isinstance(value.get("signal"), dict) else {}
-    inline_signal = {
-        key: item
-        for key, item in value.items()
-        if key
-        not in {
-            "name",
-            "label",
-            "signal",
-            "prices",
-            "marks",
-            "candles",
-            "costs",
-            "close_final_positions",
-            "force_close_final",
-        }
-    }
-    signal_payload = {**base_signal, **inline_signal, **candidate_signal}
-    if not signal_payload.get("symbol") and value.get("symbol"):
-        signal_payload["symbol"] = value["symbol"]
-
-    marks_payload = value.get("prices") or value.get("marks") or []
-    candles_payload = value.get("candles") or []
-    if candles_payload and marks_payload:
-        raise ValueError("candidate must send either prices or candles, not both")
-    if candles_payload:
-        if not isinstance(candles_payload, list):
-            raise ValueError("candidate candles must be a list")
-        path = {"candles": [_candle_payload(candle) for candle in candles_payload]}
-    else:
-        if not isinstance(marks_payload, list) or not marks_payload:
-            raise ValueError("candidate prices or candles must be a non-empty list")
-        path = {"prices": [_positive_decimal(price) for price in marks_payload]}
-
-    cost_payload = {**default_payload, **value}
-    return {
-        "name": str(value.get("name") or value.get("label") or signal_payload.get("symbol") or default_name),
-        "signal": signal_payload,
-        **path,
-        "close_final_positions": _truthy(
-            value.get("close_final_positions")
-            if "close_final_positions" in value
-            else value.get("force_close_final")
-            if "force_close_final" in value
-            else default_payload.get("close_final_positions") or default_payload.get("force_close_final")
-        ),
-        "costs": _execution_cost_payload(cost_payload),
-    }
-
-
-def _run_backtest_candidate(engine: TradingEngine, signal: CryptoSignal, candidate: dict[str, Any]) -> Any:
-    if "candles" in candidate:
-        return run_signal_candle_backtest(
-            engine,
-            signal,
-            candidate["candles"],
-            costs=candidate["costs"],
-            close_final_positions=candidate["close_final_positions"],
-        )
-    return run_signal_backtest(
-        engine,
-        signal,
-        candidate["prices"],
-        costs=candidate["costs"],
-        close_final_positions=candidate["close_final_positions"],
-    )
-
-
 def _batch_result_rank_row(result: dict[str, Any]) -> dict[str, Any]:
     metrics = result.get("report_metrics", {})
     risk = result.get("risk_summary", {})
@@ -2203,77 +2844,6 @@ def _batch_result_rank_row(result: dict[str, Any]) -> dict[str, Any]:
         "max_drawdown": risk.get("max_drawdown"),
         "total_triggers": result.get("total_triggers"),
     }
-
-
-def _execution_cost_payload(payload: dict[str, Any]) -> ExecutionCostConfig:
-    costs = payload.get("costs") if isinstance(payload.get("costs"), dict) else {}
-    fee_bps = costs.get("fee_bps") if costs else payload.get("fee_bps")
-    slippage_bps = costs.get("slippage_bps") if costs else payload.get("slippage_bps")
-    funding_rate_bps = costs.get("funding_rate_bps") if costs else payload.get("funding_rate_bps")
-    funding_periods_per_mark = (
-        costs.get("funding_periods_per_mark") if costs else payload.get("funding_periods_per_mark")
-    )
-    return ExecutionCostConfig(
-        fee_bps=_non_negative_decimal(fee_bps, default=Decimal("0")),
-        slippage_bps=_non_negative_decimal(slippage_bps, default=Decimal("0")),
-        funding_rate_bps=_decimal(funding_rate_bps, default=Decimal("0")),
-        funding_periods_per_mark=_non_negative_decimal(funding_periods_per_mark, default=Decimal("0")),
-    )
-
-
-def _bitunix_kline_query(payload: dict[str, Any]) -> dict[str, Any]:
-    market_data = payload.get("market_data") if isinstance(payload.get("market_data"), dict) else {}
-    symbol = str(payload.get("symbol") or market_data.get("symbol") or "").strip().upper()
-    if not symbol:
-        signal = payload.get("signal") if isinstance(payload.get("signal"), dict) else {}
-        symbol = str(signal.get("symbol") or "").strip().upper().replace("/", "")
-    interval = str(payload.get("interval") or market_data.get("interval") or "").strip()
-    if not symbol:
-        raise ValueError("Bitunix kline symbol is required")
-    if not interval:
-        raise ValueError("Bitunix kline interval is required")
-    limit = payload.get("limit") if payload.get("limit") is not None else market_data.get("limit")
-    query: dict[str, Any] = {
-        "symbol": symbol,
-        "interval": interval,
-        "start_time": _optional_int(payload.get("start_time") or market_data.get("start_time")),
-        "end_time": _optional_int(payload.get("end_time") or market_data.get("end_time")),
-        "limit": _optional_int(limit),
-        "price_type": payload.get("price_type") or market_data.get("price_type") or payload.get("type"),
-    }
-    if query["limit"] is not None and (query["limit"] <= 0 or query["limit"] > 200):
-        raise ValueError("Bitunix kline limit must be between 1 and 200")
-    return query
-
-
-def _optional_int(value: Any) -> int | None:
-    if value is None or value == "":
-        return None
-    try:
-        return int(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"invalid integer: {value}") from exc
-
-
-def _non_negative_decimal(value: Any, *, default: Decimal) -> Decimal:
-    if value is None or value == "":
-        return default
-    try:
-        parsed = Decimal(str(value))
-    except (InvalidOperation, ValueError) as exc:
-        raise ValueError(f"invalid decimal: {value}") from exc
-    if parsed < 0:
-        raise ValueError("value must be non-negative")
-    return parsed
-
-
-def _decimal(value: Any, *, default: Decimal) -> Decimal:
-    if value is None or value == "":
-        return default
-    try:
-        return Decimal(str(value))
-    except (InvalidOperation, ValueError) as exc:
-        raise ValueError(f"invalid decimal: {value}") from exc
 
 
 def _templated_signal_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -2367,249 +2937,6 @@ def _trigger_gap(triggered: dict, exit_order: Any) -> Decimal:
             return fill_price - exit_order.trigger_price
         return exit_order.trigger_price - fill_price
     return abs(fill_price - exit_order.trigger_price)
-
-
-def _risk_config_to_dict(config: RiskConfig) -> dict[str, Any]:
-    return {
-        "max_order_notional": str(config.max_order_notional),
-        "max_open_notional": str(config.max_open_notional),
-        "max_symbol_open_notional": str(config.max_symbol_open_notional),
-        "max_open_risk_amount": str(config.max_open_risk_amount),
-        "max_open_risk_equity_pct": str(config.max_open_risk_equity_pct),
-        "max_position_equity_pct": str(config.max_position_equity_pct),
-        "max_risk_amount": str(config.max_risk_amount),
-        "max_risk_per_trade_pct": str(config.max_risk_per_trade_pct),
-        "max_entry_volatility_pct": str(config.max_entry_volatility_pct),
-        "max_leverage": str(config.max_leverage),
-        "max_daily_loss": str(config.max_daily_loss),
-        "max_consecutive_losses": config.max_consecutive_losses,
-        "require_stop_loss": config.require_stop_loss,
-        "max_stop_loss_pct": str(config.max_stop_loss_pct),
-        "max_trailing_stop_pct": str(config.max_trailing_stop_pct),
-        "min_reward_risk_ratio": str(config.min_reward_risk_ratio),
-        "min_total_reward_risk_ratio": str(config.min_total_reward_risk_ratio),
-        "max_take_profit_targets": config.max_take_profit_targets,
-        "max_slippage_bps": config.max_slippage_bps,
-        "allowed_exchanges": sorted(config.allowed_exchanges),
-        "allowed_symbols": sorted(config.allowed_symbols),
-        "blocked_symbols": sorted(config.blocked_symbols),
-        "require_fixed_stop_for_pending_trailing": config.require_fixed_stop_for_pending_trailing,
-    }
-
-
-def _account_state_to_dict(account_state: AccountState) -> dict[str, Any]:
-    return {
-        "equity": str(account_state.equity),
-        "daily_pnl": str(account_state.daily_pnl),
-        "open_notional": str(account_state.open_notional),
-        "symbol_open_notional": str(account_state.symbol_open_notional),
-        "open_risk_amount": str(account_state.open_risk_amount),
-        "consecutive_losses": account_state.consecutive_losses,
-    }
-
-
-def _signal_to_dict(signal: CryptoSignal) -> dict[str, Any]:
-    return {
-        "signal_id": signal.signal_id,
-        "source": signal.source,
-        "symbol": signal.symbol,
-        "side": signal.side,
-        "exchange": signal.exchange,
-        "market_type": signal.market_type,
-        "quote_amount": str(signal.quote_amount) if signal.quote_amount is not None else None,
-        "base_amount": str(signal.base_amount) if signal.base_amount is not None else None,
-        "risk_amount": str(signal.risk_amount) if signal.risk_amount is not None else None,
-        "risk_pct": str(signal.risk_pct) if signal.risk_pct is not None else None,
-        "volatility_pct": str(signal.volatility_pct) if signal.volatility_pct is not None else None,
-        "price": str(signal.price) if signal.price is not None else None,
-        "stop_loss_pct": str(signal.stop_loss_pct) if signal.stop_loss_pct is not None else None,
-        "stop_loss_price": str(signal.stop_loss_price) if signal.stop_loss_price is not None else None,
-        "take_profit_pct": str(signal.take_profit_pct) if signal.take_profit_pct is not None else None,
-        "take_profit_price": str(signal.take_profit_price) if signal.take_profit_price is not None else None,
-        "take_profit_targets": [
-            {
-                "pct": str(target.pct) if target.pct is not None else None,
-                "trigger_price": str(target.trigger_price) if target.trigger_price is not None else None,
-                "close_pct": str(target.close_pct),
-            }
-            for target in signal.take_profit_targets
-        ],
-        "trailing_stop_pct": str(signal.trailing_stop_pct) if signal.trailing_stop_pct is not None else None,
-        "trailing_stop_amount": str(signal.trailing_stop_amount) if signal.trailing_stop_amount is not None else None,
-        "trailing_stop_price": str(signal.trailing_stop_price) if signal.trailing_stop_price is not None else None,
-        "trailing_step_pct": str(signal.trailing_step_pct) if signal.trailing_step_pct is not None else None,
-        "trailing_step_amount": str(signal.trailing_step_amount) if signal.trailing_step_amount is not None else None,
-        "trailing_activation_pct": str(signal.trailing_activation_pct)
-        if signal.trailing_activation_pct is not None
-        else None,
-        "trailing_activation_price": str(signal.trailing_activation_price)
-        if signal.trailing_activation_price is not None
-        else None,
-        "trail_after_take_profit": signal.trail_after_take_profit,
-        "breakeven_trigger_pct": str(signal.breakeven_trigger_pct)
-        if signal.breakeven_trigger_pct is not None
-        else None,
-        "breakeven_after_take_profit": signal.breakeven_after_take_profit,
-        "profit_lock_after_take_profit_pct": str(signal.profit_lock_after_take_profit_pct)
-        if signal.profit_lock_after_take_profit_pct is not None
-        else None,
-        "max_hold_marks": signal.max_hold_marks,
-        "oca_group": signal.oca_group,
-        "leverage": str(signal.leverage),
-        "max_slippage_bps": signal.max_slippage_bps,
-        "reduce_only": signal.reduce_only,
-        "strategy_id": signal.strategy_id,
-    }
-
-
-def _risk_decision_to_dict(decision: RiskDecision) -> dict[str, Any]:
-    return {
-        "approved": decision.approved,
-        "reason_codes": decision.reason_codes,
-        "order_notional": _decimal_to_plain(decision.order_notional) if decision.order_notional is not None else None,
-    }
-
-
-def _signal_preview(
-    signal: CryptoSignal,
-    engine: TradingEngine,
-    *,
-    require_approval: bool,
-) -> dict[str, Any]:
-    decision = evaluate_signal(signal, engine.risk_config, engine.account_state)
-    if engine.halted:
-        next_status = "halted"
-    elif not decision.approved:
-        next_status = "rejected"
-    elif require_approval:
-        next_status = "approval_required"
-    else:
-        next_status = "accepted"
-
-    return {
-        "signal": _signal_to_dict(signal),
-        "risk": _risk_decision_to_dict(decision),
-        "execution": {
-            "next_status": next_status,
-            "would_place_order": decision.approved and not engine.halted and not require_approval,
-            "halted": engine.halted,
-            "halt_reason": engine.halt_reason,
-            "approval_required": require_approval,
-        },
-        "bracket_plan": _bracket_plan_to_dict(signal, decision, engine.account_state),
-        "account": _account_state_to_dict(engine.account_state),
-    }
-
-
-def _bracket_plan_to_dict(signal: CryptoSignal, decision: RiskDecision, account_state: AccountState) -> dict[str, Any]:
-    exits = build_exit_orders(signal)
-    exit_side = "sell" if signal.side == "buy" else "buy"
-    trailing_starts_armed = (
-        (signal.trailing_stop_pct is not None or signal.trailing_stop_amount is not None)
-        and signal.trailing_activation_pct is None
-        and signal.trailing_activation_price is None
-        and not signal.trail_after_take_profit
-    )
-    trailing_activation_price = _planned_trailing_activation_price(signal)
-    stop_exit = next((exit_order for exit_order in exits if exit_order.kind == "stop_loss"), None)
-    first_target = next((exit_order for exit_order in exits if exit_order.kind == "take_profit"), None)
-    estimated_quantity = (
-        decision.order_notional / signal.price
-        if decision.order_notional is not None and signal.price is not None
-        else None
-    )
-    worst_case_loss = _worst_case_loss(signal, decision.order_notional, stop_exit)
-    first_target_reward = _target_reward(signal, decision.order_notional, first_target)
-    total_target_reward = _total_target_reward(signal, decision.order_notional, exits)
-    return {
-        "entry_side": signal.side,
-        "exit_side": exit_side,
-        "oca_group": exits[0].oca_group if exits else None,
-        "trailing_starts_armed": trailing_starts_armed,
-        "trailing_activation_price": _decimal_to_plain(trailing_activation_price)
-        if trailing_activation_price is not None
-        else None,
-        "trail_after_take_profit": signal.trail_after_take_profit,
-        "breakeven_after_take_profit": signal.breakeven_after_take_profit,
-        "profit_lock_after_take_profit_pct": _decimal_to_plain(signal.profit_lock_after_take_profit_pct)
-        if signal.profit_lock_after_take_profit_pct is not None
-        else None,
-        "max_hold_marks": signal.max_hold_marks,
-        "estimated_notional": _decimal_to_plain(decision.order_notional) if decision.order_notional is not None else None,
-        "estimated_quantity": _decimal_to_plain(estimated_quantity) if estimated_quantity is not None else None,
-        "worst_case_loss": _decimal_to_plain(worst_case_loss) if worst_case_loss is not None else None,
-        "risk_pct_of_equity": _decimal_to_plain(worst_case_loss / account_state.equity * Decimal("100"))
-        if worst_case_loss is not None and account_state.equity > 0
-        else None,
-        "first_target_reward": _decimal_to_plain(first_target_reward) if first_target_reward is not None else None,
-        "first_target_reward_risk_ratio": _decimal_to_plain(first_target_reward / worst_case_loss)
-        if first_target_reward is not None and worst_case_loss is not None and worst_case_loss > 0
-        else None,
-        "total_target_reward": _decimal_to_plain(total_target_reward) if total_target_reward is not None else None,
-        "total_target_reward_risk_ratio": _decimal_to_plain(total_target_reward / worst_case_loss)
-        if total_target_reward is not None and worst_case_loss is not None and worst_case_loss > 0
-        else None,
-        "exits": [
-            {
-                "kind": exit_order.kind,
-                "trigger_price": str(exit_order.trigger_price),
-                "close_pct": str(exit_order.close_pct),
-                "oca_group": exit_order.oca_group,
-                "status": exit_order.status,
-                "trailing_step_pct": str(signal.trailing_step_pct)
-                if exit_order.kind == "trailing_stop" and signal.trailing_step_pct is not None
-                else None,
-                "trailing_step_amount": str(signal.trailing_step_amount)
-                if exit_order.kind == "trailing_stop" and signal.trailing_step_amount is not None
-                else None,
-                "trail_after_take_profit": signal.trail_after_take_profit
-                if exit_order.kind == "trailing_stop"
-                else None,
-                "max_hold_marks": signal.max_hold_marks if exit_order.kind == "time_exit" else None,
-            }
-            for exit_order in exits
-        ],
-    }
-
-
-def _worst_case_loss(signal: CryptoSignal, notional: Decimal | None, stop_exit: Any | None) -> Decimal | None:
-    if notional is None or signal.price is None or stop_exit is None:
-        return None
-    stop_distance = (
-        signal.price - stop_exit.trigger_price
-        if signal.side == "buy"
-        else stop_exit.trigger_price - signal.price
-    )
-    if stop_distance <= 0:
-        return None
-    return notional * stop_distance / signal.price
-
-
-def _target_reward(signal: CryptoSignal, notional: Decimal | None, target_exit: Any | None) -> Decimal | None:
-    if notional is None or signal.price is None or target_exit is None:
-        return None
-    target_distance = (
-        target_exit.trigger_price - signal.price
-        if signal.side == "buy"
-        else signal.price - target_exit.trigger_price
-    )
-    if target_distance <= 0:
-        return None
-    target_notional = notional * target_exit.close_pct / Decimal("100")
-    return target_notional * target_distance / signal.price
-
-
-def _total_target_reward(signal: CryptoSignal, notional: Decimal | None, exits: list[Any]) -> Decimal | None:
-    rewards = [
-        reward
-        for exit_order in exits
-        if exit_order.kind == "take_profit"
-        for reward in [_target_reward(signal, notional, exit_order)]
-        if reward is not None
-    ]
-    if not rewards:
-        return None
-    return sum(rewards, Decimal("0"))
 
 
 def _position_realized_pnl(exchange: PaperExchange, symbol: str) -> Decimal:
@@ -2797,660 +3124,6 @@ def _exit_touched_by_candle(lot: Any, exit_order: Any, *, high: Decimal, low: De
     return False
 
 
-def _planned_trailing_activation_price(signal: CryptoSignal) -> Decimal | None:
-    if signal.price is None or (signal.trailing_stop_pct is None and signal.trailing_stop_amount is None):
-        return None
-    if signal.trailing_activation_price is not None:
-        return signal.trailing_activation_price
-    if signal.trailing_activation_pct is None:
-        return None
-    direction = Decimal("1") if signal.side == "buy" else Decimal("-1")
-    return signal.price * (Decimal("1") + direction * signal.trailing_activation_pct / Decimal("100"))
-
-
-def _decimal_to_plain(value: Decimal) -> str:
-    return decimal_to_plain(value)
-
-
-def _active_exits_to_dict(
-    lots: list[Any],
-    *,
-    signal_id: str | None = None,
-    mark_price: Decimal | None = None,
-) -> list[dict[str, Any]]:
-    return [
-        _active_exit_to_dict(lot, exit_order, mark_price=mark_price)
-        for lot in sorted(lots, key=lambda item: (item.symbol, item.signal_id))
-        if lot.remaining_quantity > 0 and (signal_id is None or lot.signal_id == signal_id)
-        for exit_order in lot.exit_orders
-    ]
-
-
-def _active_exit_to_dict(lot: Any, exit_order: Any, *, mark_price: Decimal | None) -> dict[str, Any]:
-    activation_price = trailing_activation_price(lot) if exit_order.kind == "trailing_stop" else None
-    distance = exit_distance(lot, exit_order, mark_price) if mark_price is not None else None
-    trailing_telemetry = _trailing_telemetry(lot, exit_order, mark_price=mark_price)
-    return {
-        **active_exit_payload(lot, exit_order, bool_style="string"),
-        "computed_trailing_activation_price": str(activation_price) if activation_price is not None else None,
-        "next_trailing_trigger": trailing_telemetry["next_trailing_trigger"],
-        "next_trailing_trigger_change": trailing_telemetry["next_trailing_trigger_change"],
-        "trailing_step_required": trailing_telemetry["trailing_step_required"],
-        "trailing_ratchet_ready_at_mark": trailing_telemetry["trailing_ratchet_ready_at_mark"],
-        "trailing_activation_ready_at_mark": trailing_telemetry["trailing_activation_ready_at_mark"],
-        "distance_to_trigger": str(distance) if distance is not None else None,
-        "distance_to_trigger_pct": str(distance / mark_price * Decimal("100"))
-        if distance is not None and mark_price is not None and mark_price > 0
-        else None,
-        "breakeven_trigger_pct": str(lot.breakeven_trigger_pct) if lot.breakeven_trigger_pct else None,
-        "profit_lock_after_take_profit_pct": str(lot.profit_lock_after_take_profit_pct)
-        if lot.profit_lock_after_take_profit_pct
-        else None,
-    }
-
-
-def _trailing_preview_snapshot(
-    lots: list[Any],
-    *,
-    signal_id: str,
-    mark_price: Decimal | None,
-) -> list[dict[str, Any]]:
-    return [
-        _active_exit_to_dict(lot, exit_order, mark_price=mark_price)
-        for lot in lots
-        if lot.signal_id == signal_id and lot.remaining_quantity > 0
-        for exit_order in lot.exit_orders
-        if exit_order.kind == "trailing_stop"
-    ]
-
-
-def _trailing_snapshot_ratcheted(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> bool:
-    before_by_group = _trailing_snapshot_by_group(before)
-    after_by_group = _trailing_snapshot_by_group(after)
-    for key, before_row in before_by_group.items():
-        after_row = after_by_group.get(key)
-        if after_row is None:
-            continue
-        if before_row.get("trigger_price") != after_row.get("trigger_price"):
-            return True
-    return False
-
-
-def _trailing_snapshot_activated(before: list[dict[str, Any]], after: list[dict[str, Any]]) -> bool:
-    before_by_group = _trailing_snapshot_by_group(before)
-    after_by_group = _trailing_snapshot_by_group(after)
-    for key, before_row in before_by_group.items():
-        after_row = after_by_group.get(key)
-        if after_row is None:
-            continue
-        if before_row.get("status") != "open" and after_row.get("status") == "open":
-            return True
-        if before_row.get("trailing_activated") == "false" and after_row.get("trailing_activated") == "true":
-            return True
-    return False
-
-
-def _trailing_snapshot_by_group(rows: list[dict[str, Any]]) -> dict[tuple[str | None, str | None], dict[str, Any]]:
-    return {
-        (row.get("signal_id"), row.get("oca_group")): row
-        for row in rows
-    }
-
-
-def _active_brackets_to_dict(lots: list[Any]) -> list[dict[str, Any]]:
-    brackets: list[dict[str, Any]] = []
-    for lot in sorted(lots, key=lambda item: (item.symbol, item.signal_id)):
-        if lot.remaining_quantity <= 0 or not lot.exit_orders:
-            continue
-        brackets.append(
-            {
-                "signal_id": lot.signal_id,
-                "symbol": lot.symbol,
-                "direction": lot.direction,
-                "remaining_quantity": str(lot.remaining_quantity),
-                "entry_price": str(lot.entry_price),
-                "summary": _bracket_summary(lot),
-                "exits": _active_exits_to_dict([lot], signal_id=lot.signal_id),
-            }
-        )
-    return brackets
-
-
-def _bracket_exit_ladder_to_dict(lot: Any, *, mark_price: Decimal | None = None) -> dict[str, Any]:
-    ordered_exits = sorted(lot.exit_orders, key=lambda exit_order: exit_ladder_sort_key(lot, exit_order))
-    rows = [
-        _exit_ladder_row(lot, exit_order, trigger_order=index + 1, mark_price=mark_price)
-        for index, exit_order in enumerate(ordered_exits)
-    ]
-    return {
-        "signal_id": lot.signal_id,
-        "symbol": lot.symbol,
-        "direction": lot.direction,
-        "entry_price": str(lot.entry_price),
-        "remaining_quantity": str(lot.remaining_quantity),
-        "remaining_notional": _decimal_to_plain(lot.remaining_quantity * lot.entry_price),
-        "exit_count": len(rows),
-        "full_close_count": sum(1 for row in rows if row["would_close_remaining"]),
-        "partial_close_count": sum(1 for row in rows if not row["would_close_remaining"]),
-        "rows": rows,
-    }
-
-
-def _bracket_decision_support_to_dict(lot: Any, *, mark_price: Decimal | None = None) -> dict[str, Any]:
-    rows = [
-        _decision_support_row(lot, exit_order, trigger_order=index + 1, mark_price=mark_price)
-        for index, exit_order in enumerate(
-            sorted(lot.exit_orders, key=lambda exit_order: exit_ladder_sort_key(lot, exit_order))
-        )
-    ]
-    next_trigger = next((row for row in rows if row["status"] == "open"), rows[0] if rows else None)
-    trailing_rows = [row for row in rows if row["kind"] == "trailing_stop"]
-    return {
-        "signal_id": lot.signal_id,
-        "symbol": lot.symbol,
-        "direction": lot.direction,
-        "entry_price": str(lot.entry_price),
-        "remaining_quantity": str(lot.remaining_quantity),
-        "summary": _bracket_summary(lot),
-        "health": _bracket_health_row(lot),
-        "next_open_trigger": next_trigger,
-        "trailing": trailing_rows,
-        "trigger_sequence": rows,
-    }
-
-
-def _bracket_coverage_to_dict(lot: Any) -> dict[str, Any]:
-    return bracket_coverage_payload(lot)
-
-
-def _bracket_preview_impact(
-    lots: list[Any],
-    *,
-    preview_exchange: Any | None,
-    signal_id: str,
-    would_trigger: list[dict[str, Any]],
-) -> dict[str, Any]:
-    preview_lots = [
-        lot
-        for lot in (preview_exchange.lots if preview_exchange is not None else [])
-        if lot.signal_id == signal_id and lot.remaining_quantity > 0 and lot.exit_orders
-    ]
-    before_quantity = sum((lot.remaining_quantity for lot in lots), Decimal("0"))
-    after_quantity = sum((lot.remaining_quantity for lot in preview_lots), Decimal("0"))
-    return {
-        "mutates_state": False,
-        "will_trigger": bool(would_trigger),
-        "triggered_kinds": [item["kind"] for item in would_trigger],
-        "will_close_bracket": before_quantity > 0 and after_quantity == 0,
-        "remaining_quantity_before": _decimal_to_plain(before_quantity),
-        "remaining_quantity_after": _decimal_to_plain(after_quantity),
-        "quantity_delta": _decimal_to_plain(after_quantity - before_quantity),
-        "trailing_ratchets": trailing_ratchet_impacts(lots, preview_lots),
-    }
-
-
-def _decision_support_row(
-    lot: Any,
-    exit_order: Any,
-    *,
-    trigger_order: int,
-    mark_price: Decimal | None,
-) -> dict[str, Any]:
-    row = _exit_ladder_row(lot, exit_order, trigger_order=trigger_order, mark_price=mark_price)
-    row["protective"] = exit_order.kind in {"stop_loss", "trailing_stop"}
-    row["profit_taking"] = exit_order.kind == "take_profit"
-    row["paper_only"] = True
-    row.update(_trailing_telemetry(lot, exit_order, mark_price=mark_price))
-    return row
-
-
-def _exit_ladder_row(
-    lot: Any,
-    exit_order: Any,
-    *,
-    trigger_order: int,
-    mark_price: Decimal | None,
-) -> dict[str, Any]:
-    quantity = exit_close_quantity(lot, exit_order)
-    estimated_notional = quantity * exit_order.trigger_price
-    estimated_pnl = exit_pnl(lot, exit_order, quantity)
-    distance = exit_distance(lot, exit_order, mark_price) if mark_price is not None else None
-    return {
-        "trigger_order": trigger_order,
-        "kind": exit_order.kind,
-        "intent": exit_intent(exit_order),
-        "status": exit_order.status,
-        "trigger_price": str(exit_order.trigger_price),
-        "close_pct": str(exit_order.close_pct),
-        "estimated_exit_quantity": _decimal_to_plain(quantity),
-        "estimated_exit_notional": _decimal_to_plain(estimated_notional),
-        "estimated_pnl": _decimal_to_plain(estimated_pnl),
-        "estimated_pnl_pct": _decimal_to_plain(estimated_pnl / (quantity * lot.entry_price) * Decimal("100"))
-        if quantity > 0 and lot.entry_price > 0
-        else None,
-        "would_close_remaining": quantity >= lot.remaining_quantity,
-        "oca_group": exit_order.oca_group,
-        "distance_to_trigger": str(distance) if distance is not None else None,
-        "distance_to_trigger_pct": str(distance / mark_price * Decimal("100"))
-        if distance is not None and mark_price is not None and mark_price > 0
-        else None,
-        "trailing_activation_price": str(trailing_activation_price(lot))
-        if exit_order.kind == "trailing_stop" and trailing_activation_price(lot) is not None
-        else None,
-        "marks_remaining": max(lot.max_hold_marks - lot.marks_seen, 0)
-        if exit_order.kind == "time_exit" and lot.max_hold_marks is not None
-        else None,
-        **_trailing_telemetry(lot, exit_order, mark_price=mark_price),
-    }
-
-def _trailing_telemetry(lot: Any, exit_order: Any, *, mark_price: Decimal | None) -> dict[str, Any]:
-    empty = {
-        "next_trailing_trigger": None,
-        "next_trailing_trigger_change": None,
-        "trailing_step_required": None,
-        "trailing_ratchet_ready_at_mark": None,
-        "trailing_activation_ready_at_mark": None,
-    }
-    if exit_order.kind != "trailing_stop":
-        return empty
-
-    activation_ready = _trailing_activation_ready(lot, mark_price) if mark_price is not None else None
-    step_required = _trailing_step_required(lot, exit_order.trigger_price)
-    if mark_price is None or exit_order.status != "open":
-        return {
-            **empty,
-            "trailing_step_required": _decimal_to_plain(step_required) if step_required is not None else None,
-            "trailing_activation_ready_at_mark": str(activation_ready).lower() if activation_ready is not None else None,
-        }
-
-    next_trigger = _candidate_trailing_trigger(lot, mark_price)
-    if next_trigger is None:
-        return {
-            **empty,
-            "trailing_step_required": _decimal_to_plain(step_required) if step_required is not None else None,
-            "trailing_ratchet_ready_at_mark": "false",
-            "trailing_activation_ready_at_mark": str(activation_ready).lower() if activation_ready is not None else None,
-        }
-    change = next_trigger - exit_order.trigger_price if lot.direction == "long" else exit_order.trigger_price - next_trigger
-    ratchet_ready = change > 0 and (step_required is None or change >= step_required)
-    return {
-        "next_trailing_trigger": str(next_trigger) if ratchet_ready else None,
-        "next_trailing_trigger_change": _decimal_to_plain(change) if change > 0 else None,
-        "trailing_step_required": _decimal_to_plain(step_required) if step_required is not None else None,
-        "trailing_ratchet_ready_at_mark": str(ratchet_ready).lower(),
-        "trailing_activation_ready_at_mark": str(activation_ready).lower() if activation_ready is not None else None,
-    }
-
-
-def _trailing_activation_ready(lot: Any, mark_price: Decimal | None) -> bool | None:
-    activation_price = trailing_activation_price(lot)
-    if activation_price is None or mark_price is None:
-        return None
-    return mark_price >= activation_price if lot.direction == "long" else mark_price <= activation_price
-
-
-def _candidate_trailing_trigger(lot: Any, mark_price: Decimal) -> Decimal | None:
-    if lot.trailing_stop_pct is None and lot.trailing_stop_amount is None:
-        return None
-    if lot.direction == "long":
-        water_mark = max(lot.high_water_mark or lot.entry_price, mark_price)
-        distance = _trailing_distance(lot, water_mark)
-        return _money(water_mark - distance)
-    water_mark = min(lot.low_water_mark or lot.entry_price, mark_price)
-    distance = _trailing_distance(lot, water_mark)
-    return _money(water_mark + distance)
-
-
-def _trailing_distance(lot: Any, price: Decimal) -> Decimal:
-    if lot.trailing_stop_amount is not None:
-        return lot.trailing_stop_amount
-    if lot.trailing_stop_pct is None:
-        return Decimal("0")
-    return price * lot.trailing_stop_pct / Decimal("100")
-
-
-def _trailing_step_required(lot: Any, current_trigger: Decimal) -> Decimal | None:
-    if lot.trailing_step_amount is not None:
-        return lot.trailing_step_amount
-    if lot.trailing_step_pct is not None:
-        return current_trigger * lot.trailing_step_pct / Decimal("100")
-    return Decimal("0")
-
-
-def _money(value: Decimal) -> Decimal:
-    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-
-
-def _bracket_risk_summary(lots: list[Any]) -> dict[str, Any]:
-    active_lots = [lot for lot in lots if lot.remaining_quantity > 0 and lot.exit_orders]
-    by_symbol: dict[str, dict[str, Any]] = {}
-    totals = _empty_bracket_totals()
-    for lot in active_lots:
-        summary = _bracket_summary(lot)
-        _accumulate_bracket_totals(totals, lot, summary)
-        symbol_totals = by_symbol.setdefault(lot.symbol, _empty_bracket_totals(symbol=lot.symbol))
-        _accumulate_bracket_totals(symbol_totals, lot, summary)
-
-    return {
-        "bracket_count": len(active_lots),
-        "long_bracket_count": sum(1 for lot in active_lots if lot.direction == "long"),
-        "short_bracket_count": sum(1 for lot in active_lots if lot.direction == "short"),
-        "exit_count": sum(len(lot.exit_orders) for lot in active_lots),
-        "trailing_stop_count": sum(
-            1 for lot in active_lots for exit_order in lot.exit_orders if exit_order.kind == "trailing_stop"
-        ),
-        "pending_trailing_stop_count": sum(
-            1
-            for lot in active_lots
-            for exit_order in lot.exit_orders
-            if exit_order.kind == "trailing_stop" and exit_order.status == "pending_activation"
-        ),
-        "time_stop_count": sum(1 for lot in active_lots for exit_order in lot.exit_orders if exit_order.kind == "time_exit"),
-        "totals": _bracket_totals_to_dict(totals),
-        "by_symbol": [_bracket_totals_to_dict(by_symbol[symbol]) for symbol in sorted(by_symbol)],
-    }
-
-
-def _bracket_health(lots: list[Any]) -> dict[str, Any]:
-    active_lots = [lot for lot in lots if lot.remaining_quantity > 0 and lot.exit_orders]
-    oca_conflict_signal_ids = _oca_conflict_signal_ids(active_lots)
-    rows = [
-        _bracket_health_row(lot, oca_conflict_signal_ids=oca_conflict_signal_ids)
-        for lot in sorted(active_lots, key=lambda item: (item.symbol, item.signal_id))
-    ]
-    issue_counts: dict[str, int] = {}
-    for row in rows:
-        for issue in row["issues"]:
-            issue_counts[issue] = issue_counts.get(issue, 0) + 1
-    return {
-        "bracket_count": len(rows),
-        "healthy_count": sum(1 for row in rows if row["status"] == "healthy"),
-        "attention_count": sum(1 for row in rows if row["status"] == "attention"),
-        "issue_counts": issue_counts,
-        "brackets": rows,
-    }
-
-
-def _bracket_health_row(lot: Any, *, oca_conflict_signal_ids: set[str] | None = None) -> dict[str, Any]:
-    summary = _bracket_summary(lot)
-    protective_exit = _nearest_protective_exit(lot)
-    first_reward_ratio = _decimal_or_none(summary["first_target_reward_risk_ratio"])
-    total_reward_ratio = _decimal_or_none(summary["total_target_reward_risk_ratio"])
-    open_take_profit_count = sum(
-        1 for exit_order in lot.exit_orders if exit_order.kind == "take_profit" and exit_order.status == "open"
-    )
-    pending_trailing_count = sum(
-        1
-        for exit_order in lot.exit_orders
-        if exit_order.kind == "trailing_stop" and exit_order.status in {"pending_activation", "pending_take_profit"}
-    )
-    issues: list[str] = []
-    if protective_exit is None:
-        issues.append("no_open_protective_exit")
-    elif _decimal_or_zero(summary["worst_case_loss"]) > 0:
-        issues.append("protective_exit_still_at_risk")
-    if pending_trailing_count:
-        issues.append("trailing_stop_pending")
-    if open_take_profit_count == 0:
-        issues.append("no_open_take_profit_exit")
-    elif first_reward_ratio is not None and first_reward_ratio < 1:
-        issues.append("first_target_reward_below_risk")
-    if total_reward_ratio is not None and total_reward_ratio < 1:
-        issues.append("total_target_reward_below_risk")
-    if oca_conflict_signal_ids and lot.signal_id in oca_conflict_signal_ids:
-        issues.append("oca_group_reused_across_brackets")
-    return {
-        "signal_id": lot.signal_id,
-        "symbol": lot.symbol,
-        "direction": lot.direction,
-        "status": "attention" if issues else "healthy",
-        "issues": issues,
-        "remaining_quantity": str(lot.remaining_quantity),
-        "remaining_notional": summary["remaining_notional"],
-        "protective_exit_kind": summary["protective_exit_kind"],
-        "protective_trigger_price": summary["protective_trigger_price"],
-        "worst_case_loss": summary["worst_case_loss"],
-        "protective_locked_pnl": summary["protective_locked_pnl"],
-        "first_target_reward_risk_ratio": summary["first_target_reward_risk_ratio"],
-        "total_target_reward_risk_ratio": summary["total_target_reward_risk_ratio"],
-        "open_take_profit_count": open_take_profit_count,
-        "pending_trailing_count": pending_trailing_count,
-        "oca_groups": _lot_oca_groups(lot),
-    }
-
-
-def _bracket_oca_groups(lots: list[Any]) -> dict[str, Any]:
-    active_lots = [lot for lot in lots if lot.remaining_quantity > 0 and lot.exit_orders]
-    groups: dict[str, dict[str, Any]] = {}
-    for lot in active_lots:
-        for group in _lot_oca_groups(lot):
-            row = groups.setdefault(
-                group,
-                {
-                    "oca_group": group,
-                    "signal_ids": set(),
-                    "symbols": set(),
-                    "directions": set(),
-                    "exit_count": 0,
-                },
-            )
-            row["signal_ids"].add(lot.signal_id)
-            row["symbols"].add(lot.symbol)
-            row["directions"].add(lot.direction)
-            row["exit_count"] += sum(1 for exit_order in lot.exit_orders if exit_order.oca_group == group)
-
-    rows: list[dict[str, Any]] = []
-    for group in sorted(groups):
-        row = groups[group]
-        signal_ids = sorted(row["signal_ids"])
-        symbols = sorted(row["symbols"])
-        directions = sorted(row["directions"])
-        notes: list[str] = []
-        if len(signal_ids) > 1:
-            notes.append("oca_group_reused_across_brackets")
-        if len(symbols) > 1:
-            notes.append("oca_group_spans_symbols")
-        if len(directions) > 1:
-            notes.append("oca_group_spans_directions")
-        rows.append(
-            {
-                "oca_group": group,
-                "bracket_count": len(signal_ids),
-                "exit_count": row["exit_count"],
-                "signal_ids": signal_ids,
-                "symbols": symbols,
-                "directions": directions,
-                "reused_across_brackets": len(signal_ids) > 1,
-                "notes": notes,
-            }
-        )
-    return {
-        "group_count": len(rows),
-        "reused_group_count": sum(1 for row in rows if row["reused_across_brackets"]),
-        "groups": rows,
-    }
-
-
-def _oca_conflict_signal_ids(lots: list[Any]) -> set[str]:
-    conflicts: set[str] = set()
-    for row in _bracket_oca_groups(lots)["groups"]:
-        if row["reused_across_brackets"]:
-            conflicts.update(row["signal_ids"])
-    return conflicts
-
-
-def _lot_oca_groups(lot: Any) -> list[str]:
-    return sorted(
-        {
-            exit_order.oca_group
-            for exit_order in lot.exit_orders
-            if exit_order.status not in {"canceled", "filled"} and exit_order.oca_group
-        }
-    )
-
-
-def _empty_bracket_totals(*, symbol: str | None = None) -> dict[str, Any]:
-    return {
-        "symbol": symbol,
-        "bracket_count": 0,
-        "remaining_notional": Decimal("0"),
-        "worst_case_loss": Decimal("0"),
-        "protective_locked_pnl": Decimal("0"),
-        "first_target_reward": Decimal("0"),
-        "total_target_reward": Decimal("0"),
-    }
-
-
-def _accumulate_bracket_totals(totals: dict[str, Any], lot: Any, summary: dict[str, str | None]) -> None:
-    totals["bracket_count"] += 1
-    totals["remaining_notional"] += lot.remaining_quantity * lot.entry_price
-    totals["worst_case_loss"] += _decimal_or_zero(summary["worst_case_loss"])
-    totals["protective_locked_pnl"] += _decimal_or_zero(summary["protective_locked_pnl"])
-    totals["first_target_reward"] += _decimal_or_zero(summary["first_target_reward"])
-    totals["total_target_reward"] += _decimal_or_zero(summary["total_target_reward"])
-
-
-def _bracket_totals_to_dict(totals: dict[str, Any]) -> dict[str, Any]:
-    payload = {
-        "bracket_count": totals["bracket_count"],
-        "remaining_notional": _decimal_to_plain(totals["remaining_notional"]),
-        "worst_case_loss": _decimal_to_plain(totals["worst_case_loss"]),
-        "protective_locked_pnl": _decimal_to_plain(totals["protective_locked_pnl"]),
-        "first_target_reward": _decimal_to_plain(totals["first_target_reward"]),
-        "first_target_reward_risk_ratio": _decimal_to_plain(
-            totals["first_target_reward"] / totals["worst_case_loss"]
-        )
-        if totals["worst_case_loss"] > 0
-        else None,
-        "total_target_reward": _decimal_to_plain(totals["total_target_reward"]),
-        "total_target_reward_risk_ratio": _decimal_to_plain(
-            totals["total_target_reward"] / totals["worst_case_loss"]
-        )
-        if totals["worst_case_loss"] > 0
-        else None,
-    }
-    if totals["symbol"] is not None:
-        payload["symbol"] = totals["symbol"]
-    return payload
-
-
-def _decimal_or_zero(value: str | None) -> Decimal:
-    return Decimal(value) if value is not None else Decimal("0")
-
-
-def _decimal_or_none(value: str | None) -> Decimal | None:
-    return Decimal(value) if value is not None else None
-
-
-def _bracket_summary(lot: Any) -> dict[str, str | None]:
-    remaining_notional = lot.remaining_quantity * lot.entry_price
-    protective_exit = _nearest_protective_exit(lot)
-    first_target = _nearest_take_profit_exit(lot)
-    worst_case_loss = _lot_protective_loss(lot, protective_exit)
-    protective_locked_pnl = _lot_protective_locked_pnl(lot, protective_exit)
-    protective_distance_pct = _lot_protective_distance_pct(lot, protective_exit)
-    first_target_reward = _lot_target_reward(lot, first_target)
-    total_target_reward = _lot_total_target_reward(lot)
-    return {
-        "remaining_notional": _decimal_to_plain(remaining_notional),
-        "protective_exit_kind": protective_exit.kind if protective_exit is not None else None,
-        "protective_trigger_price": str(protective_exit.trigger_price) if protective_exit is not None else None,
-        "protective_distance_pct": _decimal_to_plain(protective_distance_pct)
-        if protective_distance_pct is not None
-        else None,
-        "worst_case_loss": _decimal_to_plain(worst_case_loss) if worst_case_loss is not None else None,
-        "protective_locked_pnl": _decimal_to_plain(protective_locked_pnl)
-        if protective_locked_pnl is not None
-        else None,
-        "first_target_price": str(first_target.trigger_price) if first_target is not None else None,
-        "first_target_reward": _decimal_to_plain(first_target_reward) if first_target_reward is not None else None,
-        "first_target_reward_risk_ratio": _decimal_to_plain(first_target_reward / worst_case_loss)
-        if first_target_reward is not None and worst_case_loss is not None and worst_case_loss > 0
-        else None,
-        "total_target_reward": _decimal_to_plain(total_target_reward) if total_target_reward is not None else None,
-        "total_target_reward_risk_ratio": _decimal_to_plain(total_target_reward / worst_case_loss)
-        if total_target_reward is not None and worst_case_loss is not None and worst_case_loss > 0
-        else None,
-    }
-
-
-def _nearest_protective_exit(lot: Any) -> Any | None:
-    protective_exits = [
-        exit_order
-        for exit_order in lot.exit_orders
-        if exit_order.kind in {"stop_loss", "trailing_stop"} and exit_order.status == "open"
-    ]
-    if lot.direction == "long":
-        return max(protective_exits, key=lambda item: item.trigger_price, default=None)
-    return min(protective_exits, key=lambda item: item.trigger_price, default=None)
-
-
-def _nearest_take_profit_exit(lot: Any) -> Any | None:
-    targets = [
-        exit_order
-        for exit_order in lot.exit_orders
-        if exit_order.kind == "take_profit" and exit_order.status != "canceled"
-    ]
-    if lot.direction == "long":
-        return min(targets, key=lambda item: item.trigger_price, default=None)
-    return max(targets, key=lambda item: item.trigger_price, default=None)
-
-
-def _lot_protective_loss(lot: Any, protective_exit: Any | None) -> Decimal | None:
-    if protective_exit is None:
-        return None
-    if lot.direction == "long":
-        distance = lot.entry_price - protective_exit.trigger_price
-    else:
-        distance = protective_exit.trigger_price - lot.entry_price
-    return max(distance, Decimal("0")) * lot.remaining_quantity
-
-
-def _lot_protective_locked_pnl(lot: Any, protective_exit: Any | None) -> Decimal | None:
-    if protective_exit is None:
-        return None
-    if lot.direction == "long":
-        distance = protective_exit.trigger_price - lot.entry_price
-    else:
-        distance = lot.entry_price - protective_exit.trigger_price
-    return distance * lot.remaining_quantity
-
-
-def _lot_protective_distance_pct(lot: Any, protective_exit: Any | None) -> Decimal | None:
-    if protective_exit is None or lot.entry_price <= 0:
-        return None
-    if lot.direction == "long":
-        distance = lot.entry_price - protective_exit.trigger_price
-    else:
-        distance = protective_exit.trigger_price - lot.entry_price
-    return distance / lot.entry_price * Decimal("100")
-
-
-def _lot_target_reward(lot: Any, target_exit: Any | None) -> Decimal | None:
-    if target_exit is None:
-        return None
-    if lot.direction == "long":
-        distance = target_exit.trigger_price - lot.entry_price
-    else:
-        distance = lot.entry_price - target_exit.trigger_price
-    if distance <= 0:
-        return None
-    target_quantity = min(lot.remaining_quantity, lot.original_quantity * target_exit.close_pct / Decimal("100"))
-    return distance * target_quantity
-
-
-def _lot_total_target_reward(lot: Any) -> Decimal | None:
-    rewards = [
-        reward
-        for exit_order in lot.exit_orders
-        if exit_order.kind == "take_profit" and exit_order.status != "canceled"
-        for reward in [_lot_target_reward(lot, exit_order)]
-        if reward is not None
-    ]
-    if not rewards:
-        return None
-    return sum(rewards, Decimal("0"))
-
 # BEGIN SENTINEL CHAIN WAR ROOM ADDON ROUTES
 try:
     from sentinel_chain.charting.routes import register_war_room_routes as _sc_register_war_room_routes
@@ -3485,3 +3158,48 @@ else:
     if "app" in globals():
         app = _sc_wire_war_room_routes(app)
 # END SENTINEL CHAIN WAR ROOM ADDON ROUTES
+
+# BEGIN SENTINEL CHAIN GUARDIAN CHART ROUTES
+try:
+    from sentinel_chain.sentinel_guardian_routes import (
+        register_guardian_chart_routes as _sc_register_guardian_chart_routes,
+    )
+except Exception as _sc_guardian_exc:  # pragma: no cover - defensive startup logging only.
+    import logging as _sc_guardian_logging
+
+    _sc_guardian_logging.getLogger(__name__).warning(
+        "Sentinel Chain Guardian chart routes were not registered: %s",
+        _sc_guardian_exc,
+    )
+else:
+    def _sc_wire_guardian_chart_routes(_sc_app):
+        try:
+            return _sc_register_guardian_chart_routes(_sc_app)
+        except Exception as _sc_route_exc:  # pragma: no cover - defensive startup logging only.
+            import logging as _sc_guardian_logging
+
+            _sc_guardian_logging.getLogger(__name__).exception(
+                "Failed to register Sentinel Chain Guardian chart routes: %s",
+                _sc_route_exc,
+            )
+            return _sc_app
+
+    if "create_app_from_env" in globals() and not getattr(create_app_from_env, "_sc_guardian_chart_wrapped", False):
+        _sc_original_create_app_from_env_guardian = create_app_from_env
+
+        def create_app_from_env(*args, **kwargs):
+            return _sc_wire_guardian_chart_routes(_sc_original_create_app_from_env_guardian(*args, **kwargs))
+
+        create_app_from_env._sc_guardian_chart_wrapped = True
+
+    if "create_app" in globals() and not getattr(create_app, "_sc_guardian_chart_wrapped", False):
+        _sc_original_create_app_guardian = create_app
+
+        def create_app(*args, **kwargs):
+            return _sc_wire_guardian_chart_routes(_sc_original_create_app_guardian(*args, **kwargs))
+
+        create_app._sc_guardian_chart_wrapped = True
+
+    if "app" in globals():
+        app = _sc_wire_guardian_chart_routes(app)
+# END SENTINEL CHAIN GUARDIAN CHART ROUTES

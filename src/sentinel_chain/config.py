@@ -58,7 +58,7 @@ def load_settings() -> AppSettings:
             min_total_reward_risk_ratio=Decimal(os.getenv("AUTO_CRYPTO_MIN_TOTAL_REWARD_RISK_RATIO", "0")),
             max_take_profit_targets=int(os.getenv("AUTO_CRYPTO_MAX_TAKE_PROFIT_TARGETS", "0")),
             max_slippage_bps=int(os.getenv("AUTO_CRYPTO_MAX_SLIPPAGE_BPS", "100")),
-            allowed_exchanges=_csv_set(os.getenv("AUTO_CRYPTO_ALLOWED_EXCHANGES", "paper")),
+            allowed_exchanges=_csv_set(os.getenv("AUTO_CRYPTO_ALLOWED_EXCHANGES", "bitunix")),
             require_fixed_stop_for_pending_trailing=_bool(
                 os.getenv("AUTO_CRYPTO_REQUIRE_FIXED_STOP_FOR_PENDING_TRAILING", "true")
             ),
@@ -91,9 +91,11 @@ def _csv_set(value: str) -> set[str]:
 
 
 def _validate_live_readiness(settings: AppSettings, *, live_enabled_flags: list[str]) -> None:
-    non_paper_exchanges = settings.risk.allowed_exchanges - {"paper"}
+    if "paper" in settings.risk.allowed_exchanges:
+        raise ValueError("paper exchange execution has been removed; configure a live exchange adapter")
+    non_paper_exchanges = settings.risk.allowed_exchanges
     if not non_paper_exchanges and not live_enabled_flags:
-        return
+        raise ValueError("at least one live exchange must be configured")
     if not settings.require_approval:
         raise ValueError(
             "AUTO_CRYPTO_REQUIRE_APPROVAL=true is required when non-paper exchanges "

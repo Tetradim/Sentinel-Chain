@@ -25,7 +25,7 @@ def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(mo
     monkeypatch.setenv("AUTO_CRYPTO_MIN_REWARD_RISK_RATIO", "2")
     monkeypatch.setenv("AUTO_CRYPTO_MIN_TOTAL_REWARD_RISK_RATIO", "1.5")
     monkeypatch.setenv("AUTO_CRYPTO_MAX_TAKE_PROFIT_TARGETS", "3")
-    monkeypatch.setenv("AUTO_CRYPTO_ALLOWED_EXCHANGES", "paper,binance, kraken")
+    monkeypatch.setenv("AUTO_CRYPTO_ALLOWED_EXCHANGES", "binance, kraken")
     monkeypatch.setenv("AUTO_CRYPTO_WEBHOOK_SECRET", "x" * 32)
     monkeypatch.setenv("AUTO_CRYPTO_WEBHOOK_TOLERANCE_SECONDS", "120")
     monkeypatch.setenv("AUTO_CRYPTO_REQUIRE_APPROVAL", "true")
@@ -53,7 +53,7 @@ def test_load_settings_maps_environment_to_risk_webhook_and_repository_config(mo
     assert settings.risk.min_reward_risk_ratio == Decimal("2")
     assert settings.risk.min_total_reward_risk_ratio == Decimal("1.5")
     assert settings.risk.max_take_profit_targets == 3
-    assert settings.risk.allowed_exchanges == {"paper", "binance", "kraken"}
+    assert settings.risk.allowed_exchanges == {"binance", "kraken"}
     assert settings.risk.require_fixed_stop_for_pending_trailing is False
 
 
@@ -87,7 +87,7 @@ def test_docker_entrypoint_uses_env_backed_app_factory():
 
 def test_non_paper_exchange_config_requires_approval_and_signed_webhooks(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("AUTO_CRYPTO_ALLOWED_EXCHANGES", "paper,bitunix")
+    monkeypatch.setenv("AUTO_CRYPTO_ALLOWED_EXCHANGES", "bitunix")
     monkeypatch.setenv("AUTO_CRYPTO_WEBHOOK_SECRET", "x" * 32)
     monkeypatch.setenv("AUTO_CRYPTO_REQUIRE_APPROVAL", "false")
 
@@ -109,7 +109,7 @@ def test_non_paper_exchange_config_requires_approval_and_signed_webhooks(monkeyp
 
 def test_non_paper_exchange_config_rejects_weak_webhook_secret(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("AUTO_CRYPTO_ALLOWED_EXCHANGES", "paper,bitunix")
+    monkeypatch.setenv("AUTO_CRYPTO_ALLOWED_EXCHANGES", "bitunix")
     monkeypatch.setenv("AUTO_CRYPTO_REQUIRE_APPROVAL", "true")
     monkeypatch.setenv("AUTO_CRYPTO_WEBHOOK_SECRET", "secret")
 
@@ -119,7 +119,7 @@ def test_non_paper_exchange_config_rejects_weak_webhook_secret(monkeypatch, tmp_
 
 def test_live_enabled_flag_requires_approval_and_signed_webhooks(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("AUTO_CRYPTO_ALLOWED_EXCHANGES", "paper")
+    monkeypatch.setenv("AUTO_CRYPTO_ALLOWED_EXCHANGES", "")
     monkeypatch.setenv("AUTO_CRYPTO_BITUNIX_LIVE_ENABLED", "true")
     monkeypatch.setenv("AUTO_CRYPTO_REQUIRE_APPROVAL", "false")
     monkeypatch.setenv("AUTO_CRYPTO_WEBHOOK_SECRET", "x" * 32)
@@ -137,4 +137,15 @@ def test_live_enabled_flag_requires_approval_and_signed_webhooks(monkeypatch, tm
     monkeypatch.delenv("AUTO_CRYPTO_LIVE_TRADING_CONFIRMATION", raising=False)
 
     with pytest.raises(ValueError, match="AUTO_CRYPTO_LIVE_TRADING_CONFIRMATION"):
+        load_settings()
+
+
+def test_paper_exchange_config_is_rejected(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AUTO_CRYPTO_ALLOWED_EXCHANGES", "paper,bitunix")
+    monkeypatch.setenv("AUTO_CRYPTO_REQUIRE_APPROVAL", "true")
+    monkeypatch.setenv("AUTO_CRYPTO_WEBHOOK_SECRET", "x" * 32)
+    monkeypatch.setenv("AUTO_CRYPTO_LIVE_TRADING_CONFIRMATION", "ENABLE LIVE CRYPTO TRADING")
+
+    with pytest.raises(ValueError, match="paper exchange execution has been removed"):
         load_settings()

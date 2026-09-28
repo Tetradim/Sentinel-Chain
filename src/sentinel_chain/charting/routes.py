@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, Field
 
-from .automap import analyze_market_structure, backtest_auto_strategy, generate_demo_candles, playbook_catalog
+from .automap import analyze_market_structure, playbook_catalog
 
 STATIC_DIR = Path(__file__).resolve().parents[1] / "static"
 
@@ -37,7 +37,7 @@ class BacktestPayload(AnalyzePayload):
 class TicketPayload(BaseModel):
     symbol: str = "BTCUSDT"
     timeframe: str = "15m"
-    venue: str = "paper"
+    venue: str = "bitunix"
     market_type: str = "swap"
     side: Optional[str] = None
     account_equity: float = 10000.0
@@ -80,9 +80,7 @@ def trading_war_room_features() -> dict[str, Any]:
         "name": "Sentinel Chain Trading War Room",
         "routes": {
             "ui": "/war-room/ui",
-            "demo": "/war-room/demo?symbol=BTCUSDT&timeframe=15m&bars=260",
             "analyze": "POST /war-room/analyze",
-            "backtest": "POST /war-room/backtest",
             "ticket": "POST /war-room/ticket",
         },
         "feature_flags": {
@@ -101,7 +99,7 @@ def trading_war_room_features() -> dict[str, Any]:
             "bracket_plan": True,
             "futures_ticket_preview": True,
             "dom_ladder_projection": True,
-            "paper_submit_payload_builder": True,
+            "broker_submit_payload_builder": True,
         },
         "playbooks": playbook_catalog(),
     }
@@ -114,8 +112,7 @@ def trading_war_room_demo(
     bars: int = Query(260, ge=60, le=1200),
     seed: Optional[int] = Query(None),
 ) -> dict[str, Any]:
-    candles = generate_demo_candles(symbol=symbol, timeframe=timeframe, bars=bars, seed=seed)
-    return analyze_market_structure(candles, symbol=symbol, timeframe=timeframe)
+    raise HTTPException(status_code=410, detail="War Room demo candles have been removed; provide live candles to /war-room/analyze.")
 
 
 @router.post("/analyze")
@@ -126,8 +123,7 @@ def trading_war_room_analyze(payload: AnalyzePayload) -> dict[str, Any]:
 
 @router.post("/backtest")
 def trading_war_room_backtest(payload: BacktestPayload) -> dict[str, Any]:
-    candles = [item.dict() for item in payload.candles]
-    return backtest_auto_strategy(candles, symbol=payload.symbol, timeframe=payload.timeframe, settings=payload.settings)
+    raise HTTPException(status_code=410, detail="War Room quick backtests have been removed from runtime.")
 
 
 @router.post("/ticket")
@@ -152,6 +148,15 @@ def trading_war_room_ticket(payload: TicketPayload) -> dict[str, Any]:
         order_side = "buy" if side_key == "long" else "sell"
     plan = analysis["signals"]["trade_plans"][side_key]
     futures = payload.market_type in {"swap", "future", "futures", "perpetual"}
+    take_profit_targets = [
+        {
+            "trigger_price": target["target"],
+            "close_pct": target.get("close_pct", 100),
+            "label": target.get("label"),
+        }
+        for target in plan.get("targets", [])
+        if target.get("target") is not None
+    ]
     signal = {
         "source": "sentinel-war-room",
         "symbol": payload.symbol,
@@ -163,18 +168,10 @@ def trading_war_room_ticket(payload: TicketPayload) -> dict[str, Any]:
         "risk_pct": payload.risk_pct,
         "leverage": payload.leverage if futures else 1,
         "strategy_id": f"war_room_{analysis['signals'].get('recommendation', 'manual')}",
-        "bracket": {
-            "stop_loss": plan["stop_loss"],
-            "take_profit": plan["targets"][0]["target"] if plan.get("targets") else None,
-            "take_profit_targets": plan.get("targets", []),
-            "trailing_stop": {
-                "activation_rr": plan.get("trailing", {}).get("activation_rr", 1.0),
-                "callback_atr_multiple": plan.get("trailing", {}).get("callback_atr_multiple", 1.15),
-                "after_take_profit": True,
-            },
-            "breakeven_after_take_profit": True,
-            "profit_lock_after_take_profit": True,
-        },
+        "stop_loss_price": plan["stop_loss"],
+        "take_profit_targets": take_profit_targets,
+        "breakeven_after_take_profit": True,
+        "profit_lock_after_take_profit_pct": 0.25,
         "operator_note": analysis["signals"].get("why", {}).get("headline"),
         "paper_only": True,
         "reduce_only_exits": futures,

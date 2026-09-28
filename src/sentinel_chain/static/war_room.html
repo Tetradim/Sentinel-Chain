@@ -18,7 +18,7 @@
       </div>
       <div id="tickerStrip" class="ticker-strip" aria-live="polite"></div>
       <div class="top-actions">
-        <span class="mode-pill paper">Paper-first</span>
+        <span class="mode-pill broker">Broker-routed</span>
         <span id="apiState" class="mode-pill">API checking</span>
         <a href="/ui" class="ghost-link">Classic UI</a>
       </div>
@@ -28,7 +28,7 @@
       <button class="rail-btn active" data-panel="automap" title="Auto Map">⌁<span>Map</span></button>
       <button class="rail-btn" data-panel="ticket" title="Trade Ticket">⇅<span>Trade</span></button>
       <button class="rail-btn" data-panel="playbooks" title="Playbooks">◎<span>Why</span></button>
-      <button class="rail-btn" data-panel="backtest" title="Backtest">▥<span>Test</span></button>
+      <button class="rail-btn" data-panel="analysis" title="Analyze">▥<span>Test</span></button>
       <button class="rail-btn" data-panel="data" title="Data Loader">⇪<span>Data</span></button>
     </aside>
 
@@ -60,7 +60,7 @@
             <option value="squeeze">Squeeze expansion</option>
           </select>
         </div>
-        <button id="loadDemoBtn" class="primary-btn">Load Auto Map</button>
+        <button id="loadLive DataBtn" class="primary-btn">Load Auto Map</button>
         <button id="analyzeBtn" class="secondary-btn">Re-analyze</button>
         <button id="autoBtn" class="secondary-btn" aria-pressed="false">Auto off</button>
       </section>
@@ -109,7 +109,7 @@
           </section>
 
           <section class="dom-panel glass-panel">
-            <div class="panel-title"><h2>DOM Ladder Projection</h2><span id="domSpread">synthetic</span></div>
+            <div class="panel-title"><h2>DOM Ladder Projection</h2><span id="domSpread">broker-routed</span></div>
             <div id="domLadder" class="dom-ladder"></div>
           </section>
 
@@ -135,7 +135,7 @@
     <section id="ticketPanel" class="drawer glass-panel side-drawer">
       <div class="drawer-head"><h2>Bracket Trade Ticket</h2><button class="drawer-close">×</button></div>
       <div class="ticket-grid">
-        <label>Venue<select id="venueInput"><option>paper</option><option>bitunix</option><option>binanceusdm</option><option>bybit</option><option>okx</option><option>coinbase</option><option>kraken</option></select></label>
+        <label>Venue<select id="venueInput"><option>broker</option><option>bitunix</option><option>binanceusdm</option><option>bybit</option><option>okx</option><option>coinbase</option><option>kraken</option></select></label>
         <label>Market<select id="marketTypeInput"><option value="spot">Spot bracket</option><option value="swap" selected>Perpetual futures</option><option value="future">Dated futures</option></select></label>
         <label>Side<select id="sideInput"><option value="auto">Auto</option><option value="long">Buy / Long</option><option value="short">Sell / Short</option></select></label>
         <label>Margin<select id="marginModeInput"><option>isolated</option><option>cross</option></select></label>
@@ -146,11 +146,11 @@
       </div>
       <button id="buildTicketBtn" class="primary-btn full">Build Ticket From Current Map</button>
       <div class="ticket-preview">
-        <h3>Paper Submit Payload</h3>
+        <h3>Broker Submit Payload</h3>
         <pre id="ticketJson">{}</pre>
         <div class="ticket-actions">
           <button id="copyTicketBtn" class="secondary-btn">Copy JSON</button>
-          <button id="submitPaperBtn" class="danger-btn">Submit Paper Signal</button>
+          <button id="submitBrokerBtn" class="danger-btn">Submit Broker Signal</button>
         </div>
       </div>
       <div id="planSummary" class="plan-summary"></div>
@@ -163,16 +163,16 @@
       <div id="playbookList" class="playbook-list"></div>
     </section>
 
-    <section id="backtestPanel" class="drawer glass-panel side-drawer">
-      <div class="drawer-head"><h2>Quick Backtest</h2><button class="drawer-close">×</button></div>
+    <section id="analysisPanel" class="drawer glass-panel side-drawer">
+      <div class="drawer-head"><h2>Analyze Range</h2><button class="drawer-close">×</button></div>
       <div class="ticket-grid">
         <label>Fast EMA<input id="fastEmaInput" type="number" value="20" /></label>
         <label>Slow EMA<input id="slowEmaInput" type="number" value="50" /></label>
         <label>Risk %<input id="btRiskInput" type="number" value="1" step="0.1" /></label>
         <label>Max bars<input id="maxBarsInput" type="number" value="48" /></label>
       </div>
-      <button id="runBacktestBtn" class="primary-btn full">Run Fast EMA / RSI Backtest</button>
-      <div id="backtestMetrics" class="metric-grid"></div>
+      <button id="runAnalyzeBtn" class="primary-btn full">Analyze Fast EMA / RSI</button>
+      <div id="analysisMetrics" class="metric-grid"></div>
       <canvas id="equityCanvas" width="620" height="220"></canvas>
       <div id="tradeList" class="trade-list"></div>
     </section>
@@ -189,7 +189,7 @@
 
     <footer class="statusbar">
       <span id="statusLine">Ready.</span>
-      <span>Paper-first decision support. Live execution remains gated by Sentinel Chain risk controls.</span>
+      <span>Broker-routed decision support. Live execution remains gated by Sentinel Chain risk controls.</span>
     </footer>
   </div>
 

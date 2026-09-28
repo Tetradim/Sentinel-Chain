@@ -27,7 +27,7 @@ class RiskConfig:
     min_total_reward_risk_ratio: Decimal = Decimal("0")
     max_take_profit_targets: int = 0
     max_slippage_bps: int = 100
-    allowed_exchanges: set[str] = field(default_factory=lambda: {"paper"})
+    allowed_exchanges: set[str] = field(default_factory=lambda: {"bitunix"})
     allowed_symbols: set[str] = field(default_factory=set)
     blocked_symbols: set[str] = field(default_factory=set)
     require_fixed_stop_for_pending_trailing: bool = True

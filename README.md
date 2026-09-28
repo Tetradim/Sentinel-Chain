@@ -84,8 +84,11 @@ Default installed URLs:
 | Service | URL |
 | --- | --- |
 | Operator UI | `http://127.0.0.1:8004/ui` |
+| Guardian TP/SL Chart UI | `http://127.0.0.1:8004/guardian/ui` |
 | API docs | `http://127.0.0.1:8004/docs` |
 | Health check | `http://127.0.0.1:8004/health` |
+
+Guardian chart planning notes are in [`docs/SENTINEL_CHAIN_GUARDIAN_CHART_UI.md`](docs/SENTINEL_CHAIN_GUARDIAN_CHART_UI.md).
 
 ## Windows Launcher
 

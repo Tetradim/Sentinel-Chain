@@ -19,10 +19,14 @@ def test_bracket_template_catalog_exposes_paper_only_presets():
         "fixed_bracket",
         "activation_trailer",
         "staged_runner",
+        "vcp_structure_runner",
     }
     staged = next(template for template in body["templates"] if template["name"] == "staged_runner")
     assert staged["fields"]["trail_after_take_profit"] is True
     assert staged["fields"]["breakeven_after_take_profit"] is True
+    structure_runner = next(template for template in body["templates"] if template["name"] == "vcp_structure_runner")
+    assert structure_runner["fields"]["take_profit_targets"][0]["pct"] == "4.5"
+    assert structure_runner["fields"]["take_profit_targets"][1]["pct"] == "9.6"
 
 
 def test_apply_bracket_template_keeps_explicit_signal_fields_and_overrides_last():

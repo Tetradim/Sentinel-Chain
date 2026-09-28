@@ -80,18 +80,18 @@
     };
   }
 
-  async function loadDemo() {
+  async function loadLive Data() {
     const symbol = currentSymbol();
     const timeframe = currentTimeframe();
     const bars = Number($("#barsInput").value || 280);
-    setStatus(`Loading ${symbol} ${timeframe} demo auto-map...`);
-    const payload = await api(`/war-room/demo?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&bars=${bars}`);
+    setStatus(`Loading ${symbol} ${timeframe} auto-map...`);
+    const payload = await api(`/war-room/live-data?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&bars=${bars}`);
     ingestAnalysis(payload);
     setStatus(`Auto-map ready for ${symbol} ${timeframe}.`, "ok");
   }
 
   async function analyzeCurrent() {
-    if (!state.candles.length) return loadDemo();
+    if (!state.candles.length) return loadLive Data();
     const payload = await api("/war-room/analyze", {
       method: "POST",
       body: JSON.stringify({ symbol: currentSymbol(), timeframe: currentTimeframe(), candles: state.candles, settings: payloadSettings() }),
@@ -546,7 +546,7 @@
   }
 
   async function buildTicket() {
-    if (!state.candles.length) await loadDemo();
+    if (!state.candles.length) await loadLive Data();
     const sideRaw = $("#sideInput").value;
     const payload = {
       symbol: currentSymbol(), timeframe: currentTimeframe(), venue: $("#venueInput").value,
@@ -558,15 +558,15 @@
     state.ticket = result.signal;
     $("#ticketJson").textContent = JSON.stringify(result.signal, null, 2);
     renderPlanSummary(result.plan);
-    setStatus("Built paper-first bracket/futures ticket from current map.", "ok");
+    setStatus("Built broker-routed bracket/futures ticket from current map.", "ok");
   }
 
-  async function submitPaperSignal() {
+  async function submitBrokerSignal() {
     if (!state.ticket) await buildTicket();
-    const ok = confirm("Submit this payload to Sentinel Chain paper signal intake? Live execution stays subject to existing bot gates.");
+    const ok = confirm("Submit this payload to Sentinel Chain broker signal intake? Live execution stays subject to existing bot gates.");
     if (!ok) return;
     const result = await api("/webhooks/tradingview", { method: "POST", body: JSON.stringify(state.ticket) });
-    setStatus(`Paper signal submitted: ${result.status || result.message || "accepted"}.`, "ok");
+    setStatus(`Broker signal submitted: ${result.status || result.message || "accepted"}.`, "ok");
   }
 
   function parsePastedData(text) {
@@ -600,23 +600,23 @@
     setStatus(`Analyzed ${candles.length} pasted candles.`, "ok");
   }
 
-  async function runBacktest() {
-    if (!state.candles.length) await loadDemo();
-    const payload = await api("/war-room/backtest", {
+  async function runAnalyze() {
+    if (!state.candles.length) await loadLive Data();
+    const payload = await api("/war-room/analysis", {
       method: "POST",
       body: JSON.stringify({
         symbol: currentSymbol(), timeframe: currentTimeframe(), candles: state.candles,
         settings: { fast_ema: Number($("#fastEmaInput").value || 20), slow_ema: Number($("#slowEmaInput").value || 50), risk_pct: Number($("#btRiskInput").value || 1), max_bars: Number($("#maxBarsInput").value || 48), allow_short: true },
       }),
     });
-    renderBacktest(payload);
-    setStatus("Backtest complete.", "ok");
+    renderAnalyze(payload);
+    setStatus("Analyze complete.", "ok");
   }
 
-  function renderBacktest(result) {
+  function renderAnalyze(result) {
     const metrics = result.metrics || {};
     const cards = Object.entries({ Return: format.pct(metrics.return_pct), Trades: metrics.total_trades, "Win rate": format.pct(metrics.win_rate_pct), "Profit factor": metrics.profit_factor, Drawdown: format.pct(metrics.max_drawdown_pct), "End equity": format.money(metrics.ending_equity) });
-    $("#backtestMetrics").innerHTML = cards.map(([k, v]) => `<div class="metric-card"><span>${k}</span><b>${v}</b></div>`).join("");
+    $("#analysisMetrics").innerHTML = cards.map(([k, v]) => `<div class="metric-card"><span>${k}</span><b>${v}</b></div>`).join("");
     drawEquity(result.equity_curve || []);
     $("#tradeList").innerHTML = (result.trades || []).slice(-20).reverse().map((t) => `<div class="trade-card"><span>${t.side.toUpperCase()} ${t.entry_index} → ${t.exit_index} • ${t.reason}</span><b class="${t.pnl >= 0 ? "gain" : "loss"}">${format.money(t.pnl)}</b></div>`).join("") || `<div class="trade-card"><span>No trades</span><b>-</b></div>`;
   }
@@ -679,15 +679,15 @@
   }
 
   function wireEvents() {
-    $("#loadDemoBtn").addEventListener("click", () => loadDemo().catch((e) => setStatus(e.message, "error")));
+    $("#loadLive DataBtn").addEventListener("click", () => loadLive Data().catch((e) => setStatus(e.message, "error")));
     $("#analyzeBtn").addEventListener("click", () => analyzeCurrent().catch((e) => setStatus(e.message, "error")));
     $("#autoBtn").addEventListener("click", toggleAuto);
     $("#buildTicketBtn").addEventListener("click", () => buildTicket().catch((e) => setStatus(e.message, "error")));
-    $("#submitPaperBtn").addEventListener("click", () => submitPaperSignal().catch((e) => setStatus(e.message, "error")));
+    $("#submitBrokerBtn").addEventListener("click", () => submitBrokerSignal().catch((e) => setStatus(e.message, "error")));
     $("#copyTicketBtn").addEventListener("click", async () => { await navigator.clipboard.writeText($("#ticketJson").textContent); setStatus("Ticket JSON copied.", "ok"); });
     $("#loadDataBtn").addEventListener("click", () => loadPastedData().catch((e) => setStatus(e.message, "error")));
     $("#sampleDataBtn").addEventListener("click", () => { $("#dataInput").value = JSON.stringify(state.candles, null, 2); setStatus("Current candles copied into loader.", "ok"); });
-    $("#runBacktestBtn").addEventListener("click", () => runBacktest().catch((e) => setStatus(e.message, "error")));
+    $("#runAnalyzeBtn").addEventListener("click", () => runAnalyze().catch((e) => setStatus(e.message, "error")));
     $$(".rail-btn").forEach((btn) => btn.addEventListener("click", () => showPanel(btn.dataset.panel)));
     $$(".drawer-close").forEach((btn) => btn.addEventListener("click", () => $$(".side-drawer").forEach((p) => p.classList.remove("active"))));
     $$(".layer-toggle").forEach((box) => box.addEventListener("change", () => { state.layers[box.dataset.layer] = box.checked; renderMainChart(); }));
@@ -705,9 +705,9 @@
   }
 
   wireEvents();
-  loadDemo().catch((error) => {
+  loadLive Data().catch((error) => {
     $("#apiState").textContent = "API offline";
     $("#apiState").classList.add("error");
-    setStatus(`Unable to load War Room demo: ${error.message}`, "error");
+    setStatus(`Unable to load War Room live-data: ${error.message}`, "error");
   });
 })();

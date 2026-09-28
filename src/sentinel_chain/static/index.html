@@ -28,7 +28,7 @@
       </nav>
 
       <div class="rail-card">
-        <span>Paper engine</span>
+        <span>Broker engine</span>
         <strong id="railMode">Checking</strong>
       </div>
       <div class="rail-card">
@@ -68,7 +68,7 @@
           <div class="mode-pills">
             <span class="pill live" id="webhookPill">Webhook intake</span>
             <span class="pill" id="approvalPill">Approvals</span>
-            <span class="pill paper">Paper fills only</span>
+            <span class="pill broker">Broker fills only</span>
           </div>
         </div>
 
@@ -164,7 +164,7 @@
             <div class="builder-actions">
               <button type="button" id="parseSignalButton">Parse</button>
               <button type="button" id="previewSignalButton">Preview Risk</button>
-              <button type="button" id="submitSignalButton" class="primary">Submit Paper Signal</button>
+              <button type="button" id="submitSignalButton" class="primary">Submit Broker Signal</button>
             </div>
             <div class="parsed-grid" id="parsedSignal"></div>
             <div class="risk-preview" id="riskPreview" aria-label="Risk Preview"></div>
@@ -176,7 +176,7 @@
               <div><strong>Parser</strong><span>normalized signal</span></div>
               <div><strong>Risk</strong><span>limits checked</span></div>
               <div><strong>Approval</strong><span>operator gate</span></div>
-              <div><strong>Paper Fill</strong><span>audit stored</span></div>
+              <div><strong>Broker Fill</strong><span>audit stored</span></div>
             </div>
           </section>
 
@@ -232,7 +232,7 @@
         <div class="view-head">
           <div>
             <p>Trading Desk</p>
-            <h1>Paper execution terminal</h1>
+            <h1>Broker execution terminal</h1>
           </div>
           <div class="pair-selector">
             <button type="button" data-pair="BTCUSDT">BTC/USDT</button>
@@ -384,8 +384,8 @@
           <section class="panel span-2 texture gold">
             <div class="banner-copy">
               <span>Guarded strategy presets</span>
-              <h2>Import strategy defaults, then let Sentinel Chain enforce paper mode, stops, and risk limits.</h2>
-              <p>Copy fills the trading desk and alert builder. Backtest uses the API report metrics for comparison.</p>
+              <h2>Import strategy defaults, then let Sentinel Chain enforce broker routing, stops, and risk limits.</h2>
+              <p>Copy fills the trading desk and alert builder. Analyze uses the API report metrics for comparison.</p>
             </div>
           </section>
           <div class="strategy-card-grid" id="strategyCards"></div>
@@ -415,7 +415,7 @@
           <section class="panel asset-ring">
             <div class="panel-title">
               <h2>Allocation</h2>
-              <span id="navAmount">$0 paper NAV</span>
+              <span id="navAmount">$0 broker NAV</span>
             </div>
             <canvas id="allocationChart" width="340" height="300" aria-label="Allocation chart"></canvas>
           </section>

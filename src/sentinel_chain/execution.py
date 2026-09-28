@@ -217,7 +217,11 @@ class ExecutionResult:
 
 
 class PaperExchange:
-    """Paper exchange that records accepted orders without touching live venues."""
+    """Legacy order-state container.
+
+    Runtime submissions through this exchange are disabled; broker-routed exchange
+    adapters must be used for new orders.
+    """
 
     def __init__(self, *, costs: ExecutionCostConfig | None = None) -> None:
         self.orders: list[PaperOrder] = []
@@ -234,6 +238,7 @@ class PaperExchange:
         return exchange
 
     def submit(self, signal: CryptoSignal, decision: RiskDecision) -> PaperOrder:
+        raise RuntimeError("Local paper exchange submission has been removed; route orders through a live exchange adapter.")
         if decision.order_notional is None:
             raise ValueError("approved order requires notional")
         exit_orders = build_exit_orders(signal)

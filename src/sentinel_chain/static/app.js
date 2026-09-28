@@ -11,7 +11,7 @@ const {
   baseAsset,
   prettySymbol,
   coinClass,
-  formatBacktestTime,
+  formatAnalyzeTime,
   formatAuditTime,
   csvCell,
   formatDraftTime,
@@ -19,8 +19,8 @@ const {
 const {
   readPinnedStrategies,
   writePinnedStrategies,
-  readStoredBacktests,
-  writeStoredBacktests,
+  readStoredAnalyzes,
+  writeStoredAnalyzes,
   readStoredTicketDraft,
   writeStoredTicketDraft,
   clearStoredTicketDraft,
@@ -50,7 +50,7 @@ const appState = {
   parsedSignal: null,
   riskPreview: null,
   lastPayload: null,
-  backtests: readStoredBacktests(),
+  analysiss: readStoredAnalyzes(),
   selectedExchange: null,
   markPrices: {},
   refreshInFlight: false,
@@ -58,8 +58,8 @@ const appState = {
   autoRefreshMs: 10000,
 };
 
-function backtestSortValue(strategy, key) {
-  const value = Number(appState.backtests[strategy.id]?.[key]);
+function analysisSortValue(strategy, key) {
+  const value = Number(appState.analysiss[strategy.id]?.[key]);
   return Number.isFinite(value) ? value : null;
 }
 
@@ -149,7 +149,7 @@ async function loadStrategyPresets(showStatus = true) {
 
 function strategyPresetCard(preset) {
   const defaults = preset.signal_defaults || {};
-  const backtest = preset.backtest_defaults || {};
+  const analysis = preset.analysis_defaults || {};
   const pair = preset.name === "dip_reclaim" ? "ETHUSDT" : preset.name === "range_reversion_short" ? "SOLUSDT" : "BTCUSDT";
   return {
     id: preset.name,
@@ -170,7 +170,7 @@ function strategyPresetCard(preset) {
     side: defaults.side || "buy",
     market_type: defaults.market_type || "swap",
     bracketTemplate: preset.suggested_bracket_template,
-    interval: backtest.interval || "1h",
+    interval: analysis.interval || "1h",
     entryLogic: preset.entry_logic || [],
   };
 }
@@ -206,7 +206,7 @@ function renderExecutionMode() {
   $("#approvalPill").textContent = requiresApproval
     ? `Approval gate on | ${approvalCount} queued`
     : `Approval gate off | ${approvalCount} queued`;
-  $("#submitSignalButton").textContent = requiresApproval ? "Queue for Approval" : "Submit Paper Signal";
+  $("#submitSignalButton").textContent = requiresApproval ? "Queue for Approval" : "Submit Broker Signal";
   $("#submitTicketButton").textContent = requiresApproval ? "Queue Approval" : "Submit";
 }
 
@@ -255,7 +255,7 @@ function renderDashboard() {
       ? approvals.slice(0, 3).map(signalRow).join("")
       : signals.length > 0
         ? signals.slice(-3).reverse().map((signal) => signalRow(signal, "seen")).join("")
-        : `<div class="empty-state">No queued signals yet. Use Signal Forge to parse and submit a paper signal.</div>`;
+        : `<div class="empty-state">No queued signals yet. Use Signal Forge to parse and submit a broker signal.</div>`;
 
   const openNotional = Number(data.account?.open_notional || 0);
   const maxOpen = Number(data.risk?.max_open_notional || 0) || Number(data.account?.equity || 10000);
@@ -278,7 +278,7 @@ function renderDashboard() {
 
   $("#exchangeFabric").innerHTML =
     appState.exchanges.slice(0, 4).map((exchange) => {
-      const status = exchange.exchange_id === "paper" ? "paper ready" : exchange.driver_available ? exchange.driver : "offline";
+      const status = exchange.exchange_id === "broker" ? "broker ready" : exchange.driver_available ? exchange.driver : "offline";
       return `<div><strong>${escapeHtml(exchange.exchange_id)}</strong><span>${escapeHtml(status)}</span><em class="${exchange.driver_available ? "up" : "down"}">${exchange.live_execution_enabled ? "live" : "locked"}</em></div>`;
     }).join("") || `<div class="empty-state">No exchange data loaded.</div>`;
 
@@ -286,7 +286,7 @@ function renderDashboard() {
   $("#runtimeRows").innerHTML =
     filteredOrders.length > 0
       ? filteredOrders.slice(-8).reverse().map(orderRuntimeRow).join("")
-      : `<tr><td colspan="7">No paper orders yet.</td></tr>`;
+      : `<tr><td colspan="7">No broker orders yet.</td></tr>`;
 
   $("#auditPreview").innerHTML =
     audit.length > 0
@@ -493,7 +493,7 @@ function renderRiskPreview() {
   const statusClass = execution.next_status === "halted" || !approved ? "down" : execution.next_status === "approval_required" ? "amber" : "up";
   const orderText = risk.order_notional ? money(risk.order_notional) : "unknown";
   const nextStep = execution.would_place_order
-    ? "Paper order would be placed"
+    ? "Broker order would be placed"
     : execution.next_status === "approval_required"
       ? "Would queue for operator approval"
       : execution.next_status === "halted"
@@ -621,14 +621,14 @@ function renderOperatorSnapshot() {
     {
       label: "Positions",
       value: positions.length,
-      detail: positions.length ? `${positions.map((position) => position.symbol).slice(0, 3).join(", ")}` : "flat paper book",
+      detail: positions.length ? `${positions.map((position) => position.symbol).slice(0, 3).join(", ")}` : "flat broker book",
       tone: positions.length ? "" : "quiet",
       target: "trading",
     },
     {
       label: "Active exits",
       value: exits.length,
-      detail: exits.length ? `${exits.filter((exit) => exit.status === "pending_activation").length} pending activation` : "no synthetic exits",
+      detail: exits.length ? `${exits.filter((exit) => exit.status === "pending_activation").length} pending activation` : "no broker exits",
       tone: exits.length ? "warn" : "quiet",
       target: "portfolio",
     },
@@ -648,10 +648,10 @@ function renderOperatorPreflight() {
   const exits = data.active_exits || [];
   const checks = [
     ["Live trading", "locked by config", true],
-    ["Execution intent", data.execution?.submit_intent === "queue_for_approval" ? "queues approval" : "paper order only", true],
+    ["Execution intent", data.execution?.submit_intent === "queue_for_approval" ? "queues approval" : "broker order required", true],
     ["Global control", data.control?.halted ? data.control?.reason || "halted" : "ready", !data.control?.halted],
     ["Approval queue", approvals.length ? `${approvals.length} waiting` : "clear", approvals.length === 0],
-    ["Exit coverage", exits.length ? `${exits.length} synthetic exits visible` : "none active", true],
+    ["Exit coverage", exits.length ? `${exits.length} broker exits visible` : "none active", true],
     ["Audit visibility", (data.audit || []).length ? `${data.audit.length} events loaded` : "no events yet", true],
   ];
   $("#preflightState").textContent = checks.every(([, , ok]) => ok) ? "ready" : "review";
@@ -727,7 +727,7 @@ function renderDeskTable() {
           </tr>
         `;
       }).join("")
-      : `<tr><td colspan="7">${appState.deskSearch.trim() && allPositions.length > 0 ? "No positions match the current filter." : "No open positions. Submit a paper buy with a price to create one."}</td></tr>`;
+      : `<tr><td colspan="7">${appState.deskSearch.trim() && allPositions.length > 0 ? "No positions match the current filter." : "No open positions. Submit a broker buy with a price to create one."}</td></tr>`;
 }
 
 function renderStrategies() {
@@ -744,12 +744,12 @@ function renderStrategies() {
       const pinnedDelta = Number(pinned.has(right.id)) - Number(pinned.has(left.id));
       if (pinnedDelta) return pinnedDelta;
       if (appState.strategySort === "sim-return") {
-        const compared = compareOptional(backtestSortValue(left, "return_pct"), backtestSortValue(right, "return_pct"));
+        const compared = compareOptional(analysisSortValue(left, "return_pct"), analysisSortValue(right, "return_pct"));
         if (compared) return compared;
       }
       if (appState.strategySort === "sim-drawdown") {
-        const leftDrawdown = backtestSortValue(left, "max_drawdown_pct");
-        const rightDrawdown = backtestSortValue(right, "max_drawdown_pct");
+        const leftDrawdown = analysisSortValue(left, "max_drawdown_pct");
+        const rightDrawdown = analysisSortValue(right, "max_drawdown_pct");
         const compared = compareOptional(
           leftDrawdown === null ? null : Math.abs(leftDrawdown),
           rightDrawdown === null ? null : Math.abs(rightDrawdown),
@@ -770,10 +770,10 @@ function renderStrategies() {
   const imported = readImportedStrategy();
   $("#importStatus").textContent = imported ? `loaded: ${imported.name}` : "waiting";
   $("#strategyChecklist").innerHTML = [
-    ["Backtest window", imported ? "365-day local simulation ready" : "run or copy a strategy", Boolean(imported)],
-    ["Venue support", imported ? "paper venue mapped" : "pending", Boolean(imported)],
+    ["Analyze window", imported ? "365-day analysis ready" : "run or copy a strategy", Boolean(imported)],
+    ["Venue support", imported ? "broker venue mapped" : "pending", Boolean(imported)],
     ["Risk envelope", imported ? "stop and take-profit loaded" : "pending", Boolean(imported)],
-    ["Operator gate", "paper-first; live trading locked", true],
+    ["Operator gate", "broker-routed; live trading locked", true],
   ]
     .map(([label, value, done]) => `<li class="${done ? "done" : ""}"><strong>${escapeHtml(label)}</strong><span>${escapeHtml(value)}</span></li>`)
     .join("");
@@ -788,26 +788,26 @@ function strategyCard(strategy, isPinned) {
       <span>${escapeHtml(strategy.type.toUpperCase())} | ${prettySymbol(strategy.pair)}${strategy.bracketTemplate ? ` | ${escapeHtml(strategy.bracketTemplate)}` : ""}</span>
         <button type="button" data-action="toggle-strategy-pin" data-strategy-id="${strategy.id}" aria-pressed="${isPinned}">${isPinned ? "Pinned" : "Pin"}</button>
       </div>
-      <canvas data-strategy-spark="${strategy.id}" width="320" height="96" aria-label="${escapeHtml(strategy.name)} backtest curve"></canvas>
-      ${strategyBacktestSummary(strategy)}
+      <canvas data-strategy-spark="${strategy.id}" width="320" height="96" aria-label="${escapeHtml(strategy.name)} analysis curve"></canvas>
+      ${strategyAnalyzeSummary(strategy)}
       <dl>
         <div><dt>Preset</dt><dd>${escapeHtml(strategy.strategy_id || strategy.roi)}</dd></div>
         <div><dt>Win rate</dt><dd>${escapeHtml(strategy.win)}</dd></div>
         <div><dt>Max DD</dt><dd>${escapeHtml(strategy.drawdown)}</dd></div>
       </dl>
       <div class="strategy-actions">
-        <button type="button" data-action="backtest-strategy" data-strategy-id="${strategy.id}">Backtest</button>
+        <button type="button" data-action="analysis-strategy" data-strategy-id="${strategy.id}">Analyze</button>
         <button type="button" data-action="copy-strategy" data-strategy-id="${strategy.id}">Load Ticket</button>
       </div>
     </article>
   `;
 }
 
-function strategyBacktestSummary(strategy) {
-  const backtest = appState.backtests[strategy.id];
-  if (!backtest) {
+function strategyAnalyzeSummary(strategy) {
+  const analysis = appState.analysiss[strategy.id];
+  if (!analysis) {
     return `
-      <div class="strategy-backtest is-empty">
+      <div class="strategy-analysis is-empty">
         <span>Sim return<strong>-</strong></span>
         <span>Sim DD<strong>-</strong></span>
         <span>Last run<strong>not run</strong></span>
@@ -815,19 +815,19 @@ function strategyBacktestSummary(strategy) {
     `;
   }
   return `
-    <div class="strategy-backtest">
-      <span>Sim return<strong class="${backtest.return_pct >= 0 ? "up" : "down"}">${percent(backtest.return_pct)}</strong></span>
-      <span>Win rate<strong>${backtest.win_rate_pct === null || backtest.win_rate_pct === undefined ? "-" : `${Number(backtest.win_rate_pct).toFixed(1)}%`}</strong></span>
-      <span>PF<strong>${backtest.profit_factor === null || backtest.profit_factor === undefined ? "-" : Number(backtest.profit_factor).toFixed(2)}</strong></span>
-      <span>Sim DD<strong>${Math.abs(Number(backtest.max_drawdown_pct || 0)).toFixed(2)}%</strong></span>
-      <span>Last run<strong>${escapeHtml(formatBacktestTime(backtest.updated_at))}</strong></span>
+    <div class="strategy-analysis">
+      <span>Sim return<strong class="${analysis.return_pct >= 0 ? "up" : "down"}">${percent(analysis.return_pct)}</strong></span>
+      <span>Win rate<strong>${analysis.win_rate_pct === null || analysis.win_rate_pct === undefined ? "-" : `${Number(analysis.win_rate_pct).toFixed(1)}%`}</strong></span>
+      <span>PF<strong>${analysis.profit_factor === null || analysis.profit_factor === undefined ? "-" : Number(analysis.profit_factor).toFixed(2)}</strong></span>
+      <span>Sim DD<strong>${Math.abs(Number(analysis.max_drawdown_pct || 0)).toFixed(2)}%</strong></span>
+      <span>Last run<strong>${escapeHtml(formatAnalyzeTime(analysis.updated_at))}</strong></span>
     </div>
   `;
 }
 
 function renderPortfolio() {
   const account = appState.data?.account || {};
-  $("#navAmount").textContent = `${money(account.equity || 0)} paper NAV`;
+  $("#navAmount").textContent = `${money(account.equity || 0)} broker NAV`;
   const dailyPnl = Number(account.daily_pnl || 0);
   $("#dailyPnl").textContent = money(dailyPnl);
   $("#dailyPnl").className = `big-number ${dailyPnl >= 0 ? "up" : "down"}`;
@@ -1356,7 +1356,7 @@ async function closeBracketAtProtectiveExit(signalId) {
 }
 
 async function cancelBracket(signalId) {
-  if (!window.confirm(`Cancel synthetic exits for ${signalId}? The paper position stays open.`)) {
+  if (!window.confirm(`Cancel broker exits for ${signalId}? The broker position stays open.`)) {
     setStatus("Bracket cancellation aborted.", "warn");
     return;
   }
@@ -1365,7 +1365,7 @@ async function cancelBracket(signalId) {
     body: { reason: "operator UI bracket cancel" },
   });
   appState.lastPayload = result;
-  setStatus(`Canceled synthetic bracket exits for ${signalId}.`, "warn");
+  setStatus(`Canceled broker bracket exits for ${signalId}.`, "warn");
   await loadState(false);
 }
 
@@ -1455,16 +1455,16 @@ async function copyStrategy(strategyId) {
   $("#ticketStatus").textContent = `risk: ${status}`;
 }
 
-async function runBacktest(strategyId) {
+async function runAnalyze(strategyId) {
   const strategy = appState.strategies.find((item) => item.id === strategyId);
   if (!strategy) return;
   const entry = Number(strategy.price || currentMarkPrice(strategy.pair) || 100);
-  const points = simulatedBacktestPath(strategy, entry);
+  const points = simulatedAnalyzePath(strategy, entry);
   const body = {
     signal: {
       symbol: strategy.pair,
       side: strategy.side || "buy",
-      exchange: "paper",
+      exchange: "broker",
       market_type: strategy.market_type || "swap",
       quote_amount: strategy.amount || "100",
       price: String(entry),
@@ -1478,9 +1478,9 @@ async function runBacktest(strategyId) {
     close_final_positions: true,
     costs: { fee_bps: "6", slippage_bps: "5" },
   };
-  const result = await api("/backtest/signal", { method: "POST", body });
+  const result = await api("/analysis/signal", { method: "POST", body });
   const metrics = result.report_metrics || {};
-  appState.backtests[strategyId] = {
+  appState.analysiss[strategyId] = {
     points,
     return_pct: Number(metrics.total_return_pct ?? metrics.realized_return_pct ?? 0),
     max_drawdown_pct: Number(metrics.max_drawdown_pct ?? 0) * -1,
@@ -1491,12 +1491,12 @@ async function runBacktest(strategyId) {
     final_total_pnl: result.final_total_pnl,
     updated_at: new Date().toISOString(),
   };
-  writeStoredBacktests(appState.backtests);
+  writeStoredAnalyzes(appState.analysiss);
   renderStrategies();
-  setStatus(`${strategy.name} backtest: ${percent(appState.backtests[strategyId].return_pct)} return, ${Math.abs(appState.backtests[strategyId].max_drawdown_pct).toFixed(2)}% drawdown.`, "ok");
+  setStatus(`${strategy.name} analysis: ${percent(appState.analysiss[strategyId].return_pct)} return, ${Math.abs(appState.analysiss[strategyId].max_drawdown_pct).toFixed(2)}% drawdown.`, "ok");
 }
 
-function simulatedBacktestPath(strategy, entry) {
+function simulatedAnalyzePath(strategy, entry) {
   const side = String(strategy.side || "buy").toLowerCase();
   const drift = strategy.id === "dip_reclaim" ? 0.45 : strategy.id === "range_reversion_short" ? -0.35 : 0.65;
   return Array.from({ length: 32 }, (_, index) => {
@@ -1786,8 +1786,8 @@ function drawStrategySparks() {
   $$("[data-strategy-spark]").forEach((canvas) => {
     const id = canvas.dataset.strategySpark;
     const strategy = appState.strategies.find((item) => item.id === id);
-    const storedBacktest = appState.backtests[id];
-    const points = storedBacktest?.points || storedBacktest || Array.from({ length: 28 }, (_, index) => 42 + Math.sin((index + (strategy?.name || "").length) * 0.62) * 10 + index * 1.4);
+    const storedAnalyze = appState.analysiss[id];
+    const points = storedAnalyze?.points || storedAnalyze || Array.from({ length: 28 }, (_, index) => 42 + Math.sin((index + (strategy?.name || "").length) * 0.62) * 10 + index * 1.4);
     const { ctx, width, height } = setupCanvas(canvas);
     ctx.clearRect(0, 0, width, height);
     linePath(ctx, points, width, height, "#27d9ef", "rgba(39, 217, 239, 0.14)");
@@ -2058,7 +2058,7 @@ function bindEvents() {
       $("#ticketStatus").textContent = "preview failed";
       setStatus(`Strategy load failed: ${error.message}`, "error");
     });
-    if (action === "backtest-strategy") runBacktest(target.dataset.strategyId).catch((error) => setStatus(`Backtest failed: ${error.message}`, "error"));
+    if (action === "analysis-strategy") runAnalyze(target.dataset.strategyId).catch((error) => setStatus(`Analyze failed: ${error.message}`, "error"));
     if (action === "toggle-strategy-pin") toggleStrategyPin(target.dataset.strategyId);
     if (action === "copy-json") copyText(target.dataset.json).catch((error) => setStatus(error.message, "error"));
   });

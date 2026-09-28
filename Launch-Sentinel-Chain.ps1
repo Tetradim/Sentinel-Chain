@@ -1,5 +1,5 @@
 # Sentinel Chain Launcher
-# Runs the local source checkout with persistent paper-mode SQLite storage.
+# Runs the local source checkout with persistent live-routed SQLite storage.
 
 param(
     [int]$Port = 8004,
@@ -75,7 +75,7 @@ function Test-SentinelChainHealth {
     param([int]$PortToCheck)
     try {
         $health = Invoke-RestMethod -Uri "http://127.0.0.1:$PortToCheck/health" -Method Get -TimeoutSec 3
-        return ($health.status -eq "ok" -and $health.default_mode -eq "paper")
+        return ($health.status -eq "ok" -and $health.default_mode -ne "paper")
     } catch {
         return $false
     }
@@ -256,7 +256,7 @@ function Start-InstalledSentinelChain {
     $env:AUTO_CRYPTO_PORT = "$PortToUse"
     $env:AUTO_CRYPTO_DB_PATH = $DatabasePath
     if (-not $env:AUTO_CRYPTO_ALLOWED_EXCHANGES) {
-        $env:AUTO_CRYPTO_ALLOWED_EXCHANGES = "paper"
+        $env:AUTO_CRYPTO_ALLOWED_EXCHANGES = "bitunix"
     }
 
     Write-Status "Starting packaged SentinelChain.exe on $HostToUse`:$PortToUse"
@@ -424,7 +424,7 @@ try {
     $env:AUTO_CRYPTO_PORT = "$Port"
     $env:AUTO_CRYPTO_DB_PATH = $DbPath
     if (-not $env:AUTO_CRYPTO_ALLOWED_EXCHANGES) {
-        $env:AUTO_CRYPTO_ALLOWED_EXCHANGES = "paper"
+        $env:AUTO_CRYPTO_ALLOWED_EXCHANGES = "bitunix"
     }
 
     $healthUrl = "http://127.0.0.1:$Port/health"

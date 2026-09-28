@@ -24,7 +24,7 @@ class CryptoSignal:
     source: str
     symbol: str
     side: str
-    exchange: str = "paper"
+    exchange: str = "bitunix"
     market_type: str = "spot"
     quote_amount: Decimal | None = None
     base_amount: Decimal | None = None
@@ -235,7 +235,11 @@ def normalize_signal(payload: dict[str, Any], *, source: str) -> CryptoSignal:
     oca_group = _optional_identifier(_field(payload, bracket, "oca_group", "oco_group", "order_group"))
     leverage = _optional_positive_decimal(payload.get("leverage")) or Decimal("1")
     max_slippage_bps = _non_negative_int(payload.get("max_slippage_bps"), default=100)
-    exchange = str(payload.get("exchange") or payload.get("venue") or "paper").strip().lower()
+    exchange = str(payload.get("exchange") or payload.get("venue") or "").strip().lower()
+    if not exchange:
+        raise SignalValidationError("signal requires a live exchange")
+    if exchange in {"paper", "sandbox", "demo", "test"}:
+        raise SignalValidationError("paper/demo exchange execution has been removed")
     market_type = str(payload.get("market_type") or "spot").strip().lower()
     strategy_id = str(payload.get("strategy_id") or payload.get("strategy") or "manual").strip()
 

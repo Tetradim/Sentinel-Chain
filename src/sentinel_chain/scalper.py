@@ -190,7 +190,7 @@ def scalper_signal_payload(
     risk_amount: Decimal | None = None,
     risk_pct: Decimal | None = None,
     stop_distance: Decimal | None = None,
-    exchange: str = "paper",
+    exchange: str = "bitunix",
     market_type: str = "swap",
     strategy_id: str = "sentinel_pulse_scalper",
 ) -> dict[str, Any]:

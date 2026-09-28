@@ -21,14 +21,14 @@ def build_discord_client(engine: TradingEngine | None = None) -> discord.Client:
     tree = app_commands.CommandTree(client)
     trading_engine = engine or TradingEngine()
 
-    @tree.command(name="health", description="Show Sentinel Chain health and paper-order count.")
+    @tree.command(name="health", description="Show Sentinel Chain health and broker-order count.")
     async def health(interaction: discord.Interaction) -> None:
         await interaction.response.send_message(
-            f"Sentinel Chain online. Paper orders: {len(trading_engine.exchange.orders)}",
+            f"Sentinel Chain online. Broker-routed orders: {len(trading_engine.exchange.orders)}",
             ephemeral=True,
         )
 
-    @tree.command(name="signal_test", description="Validate and paper-trade a crypto signal.")
+    @tree.command(name="signal_test", description="Validate and route a crypto signal.")
     async def signal_test(
         interaction: discord.Interaction,
         symbol: str,
@@ -37,6 +37,7 @@ def build_discord_client(engine: TradingEngine | None = None) -> discord.Client:
         price: str,
         stop_loss_pct: str,
         take_profit_pct: str = "",
+        exchange: str = "bitunix",
     ) -> None:
         payload = {
             "symbol": symbol,
@@ -45,6 +46,7 @@ def build_discord_client(engine: TradingEngine | None = None) -> discord.Client:
             "price": price,
             "stop_loss_pct": stop_loss_pct,
             "take_profit_pct": take_profit_pct,
+            "exchange": exchange,
         }
         try:
             signal = normalize_signal(payload, source="discord")
@@ -53,7 +55,7 @@ def build_discord_client(engine: TradingEngine | None = None) -> discord.Client:
             await interaction.response.send_message(f"Rejected: {exc}", ephemeral=True)
             return
         await interaction.response.send_message(
-            f"Status: {result.status} | Symbol: {signal.symbol} | Mode: paper",
+            f"Status: {result.status} | Symbol: {signal.symbol} | Exchange: {signal.exchange}",
             ephemeral=True,
         )
 
@@ -69,4 +71,3 @@ def run_from_env() -> None:
     if not token:
         raise RuntimeError("DISCORD_BOT_TOKEN is required")
     build_discord_client().run(token)
-

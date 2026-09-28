@@ -19,11 +19,16 @@ def test_strategy_preset_catalog_is_preview_only():
         "momentum_breakout",
         "dip_reclaim",
         "range_reversion_short",
+        "short_reject_swing",
     }
     momentum = next(preset for preset in body["presets"] if preset["name"] == "momentum_breakout")
     assert momentum["suggested_bracket_template"] == "activation_trailer"
     assert "signal_defaults" in momentum
     assert "entry_logic" in momentum
+    short_reject = next(preset for preset in body["presets"] if preset["name"] == "short_reject_swing")
+    assert short_reject["suggested_bracket_template"] == "vcp_structure_runner"
+    assert short_reject["signal_defaults"]["side"] == "sell"
+    assert short_reject["backtest_defaults"]["interval"] == "15m"
 
 
 def test_apply_strategy_preset_keeps_signal_fields_and_applies_overrides():
@@ -100,6 +105,36 @@ def test_preview_strategy_allows_explicit_bracket_template_and_overrides():
     assert body["template"]["name"] == "fixed_bracket"
     assert body["signal"]["stop_loss_pct"] == "5"
     assert body["signal"]["take_profit_pct"] == "100"
+
+
+def test_preview_short_reject_swing_composes_structure_runner_without_order():
+    app = create_app()
+    client = TestClient(app)
+
+    response = client.post(
+        "/signals/preview-strategy",
+        json={
+            "strategy": "short_reject_swing",
+            "signal": {
+                "symbol": "ADAUSDT",
+                "quote_amount": "100",
+                "price": "0.60",
+            },
+        },
+    )
+    positions_after = client.get("/positions").json()["positions"]
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["strategy_preset"]["name"] == "short_reject_swing"
+    assert body["template"]["name"] == "vcp_structure_runner"
+    assert body["signal"]["side"] == "sell"
+    assert body["signal"]["leverage"] == "5"
+    assert body["signal"]["take_profit_targets"][0]["pct"] == "4.5"
+    assert body["signal"]["take_profit_targets"][1]["pct"] == "9.6"
+    assert body["paper_only"] is True
+    assert body["live_submission_enabled"] is False
+    assert positions_after == []
 
 
 def test_unknown_strategy_preset_is_rejected():

@@ -95,6 +95,37 @@ STRATEGY_PRESETS: dict[str, StrategyPreset] = {
             "close_final_positions": True,
         },
     ),
+    "short_reject_swing": StrategyPreset(
+        name="short_reject_swing",
+        description="Short swing setup for failed reclaims or rejection from prior structure, tuned for liquidation-safe paper testing before any live review.",
+        entry_logic=(
+            "Use after price rejects a prior pivot or range high and closes back below the active trend context.",
+            "Prefer liquid USDT pairs and validate the stop sits before estimated liquidation at the selected leverage.",
+            "Do not chase extended candles; wait for a controlled rejection or failed reclaim near resistance.",
+        ),
+        signal_defaults={
+            "side": "sell",
+            "market_type": "swap",
+            "strategy_id": "short_reject_swing",
+            "leverage": "5",
+            "max_slippage_bps": 100,
+        },
+        suggested_bracket_template="vcp_structure_runner",
+        backtest_defaults={
+            "lookback": "34d",
+            "interval": "15m",
+            "preferred_symbol": "ADAUSDT",
+            "leverage": "5",
+            "risk_plan": "fixed_margin_20",
+            "stop_basis": "prior_structure_high",
+            "targets": "1.5R/3.2R",
+            "close_final_positions": True,
+        },
+        notes=(
+            "Month optimizer validation for 2026-06-01 through 2026-07-04 found ADAUSDT 15m at 5x with no liquidation-unsafe trades in the tested data.",
+            "The preset documents the entry/risk profile; it does not generate or submit live signals by itself.",
+        ),
+    ),
 }
 
 

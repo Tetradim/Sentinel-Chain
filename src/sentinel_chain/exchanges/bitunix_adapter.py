@@ -42,9 +42,10 @@ class BitunixCredentials:
 class BitunixRestClient:
     """Small native Bitunix REST client for capability and account checks.
 
-    Live order placement is intentionally not exposed here yet. The adapter
-    verifies credentials and market/account connectivity behind the same
-    exchange boundary the rest of Sentinel Chain already uses.
+    Private account, pending-order, cancel, and place-order methods are
+    exposed for Sentinel's locked live-execution flow. Callers must enforce
+    environment signoff, risk checks, preview tickets, and operator
+    confirmation before invoking live order placement.
     """
 
     def __init__(
@@ -82,11 +83,11 @@ class BitunixRestClient:
         )
 
     def get_futures_trading_pairs(self, symbols: str | None = None) -> dict[str, Any]:
-        query = {"symbols": symbols} if symbols else None
+        query = {"symbols": ",".join(_compact_symbol(item) for item in symbols.split(","))} if symbols else None
         return self.request_json("GET", "/api/v1/futures/market/trading_pairs", query=query)
 
     def get_futures_tickers(self, symbols: str | None = None) -> dict[str, Any]:
-        query = {"symbols": symbols} if symbols else None
+        query = {"symbols": ",".join(_compact_symbol(item) for item in symbols.split(","))} if symbols else None
         return self.request_json("GET", "/api/v1/futures/market/tickers", query=query)
 
     def get_futures_klines(
@@ -99,7 +100,7 @@ class BitunixRestClient:
         limit: int | None = None,
         price_type: str | None = None,
     ) -> dict[str, Any]:
-        query: dict[str, Any] = {"symbol": symbol.upper(), "interval": interval}
+        query: dict[str, Any] = {"symbol": _compact_symbol(symbol), "interval": interval}
         if start_time is not None:
             query["startTime"] = start_time
         if end_time is not None:
@@ -118,9 +119,49 @@ class BitunixRestClient:
             signed=True,
         )
 
+    def change_futures_leverage(self, symbol: str, leverage: int, margin_coin: str = "USDT") -> dict[str, Any]:
+        return self.request_json(
+            "POST",
+            "/api/v1/futures/account/change_leverage",
+            body={
+                "symbol": _compact_symbol(symbol),
+                "leverage": int(leverage),
+                "marginCoin": margin_coin.upper(),
+            },
+            signed=True,
+        )
+
+    def get_futures_leverage_margin_mode(self, symbol: str, margin_coin: str = "USDT") -> dict[str, Any]:
+        return self.request_json(
+            "GET",
+            "/api/v1/futures/account/get_leverage_margin_mode",
+            query={"symbol": _compact_symbol(symbol), "marginCoin": margin_coin.upper()},
+            signed=True,
+        )
+
     def get_pending_positions(self, symbol: str | None = None) -> dict[str, Any]:
-        query = {"symbol": symbol.upper()} if symbol else None
+        query = {"symbol": _compact_symbol(symbol)} if symbol else None
         return self.request_json("GET", "/api/v1/futures/position/get_pending_positions", query=query, signed=True)
+
+    def get_pending_orders(self, symbol: str | None = None) -> dict[str, Any]:
+        query = {"symbol": _compact_symbol(symbol)} if symbol else None
+        return self.request_json("GET", "/api/v1/futures/trade/get_pending_orders", query=query, signed=True)
+
+    def place_futures_order(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        return self.request_json(
+            "POST",
+            "/api/v1/futures/trade/place_order",
+            body=dict(payload),
+            signed=True,
+        )
+
+    def cancel_futures_orders(self, symbol: str, order_list: list[Mapping[str, Any]]) -> dict[str, Any]:
+        return self.request_json(
+            "POST",
+            "/api/v1/futures/trade/cancel_orders",
+            body={"symbol": _compact_symbol(symbol), "orderList": [dict(item) for item in order_list]},
+            signed=True,
+        )
 
     def request_json(
         self,
@@ -266,6 +307,11 @@ def bitunix_kline_candles(payload: Mapping[str, Any]) -> list[dict[str, Decimal 
             low = _decimal_field(item, "low")
             close = _decimal_field(item, "close")
             open_price = _optional_decimal_field(item, "open")
+            volume = (
+                _optional_non_negative_decimal_field(item, "volume")
+                or _optional_non_negative_decimal_field(item, "quoteVol")
+                or _optional_non_negative_decimal_field(item, "baseVol")
+            )
         except (InvalidOperation, TypeError, ValueError) as exc:
             raise BitunixRequestError("Bitunix kline entry contains an invalid price") from exc
         if low > high:
@@ -278,9 +324,40 @@ def bitunix_kline_candles(payload: Mapping[str, Any]) -> list[dict[str, Decimal 
                 "high": high,
                 "low": low,
                 "close": close,
+                "volume": volume,
             }
         )
     return candles
+
+
+def bitunix_leverage_bounds(payload: Mapping[str, Any], symbol: str) -> dict[str, int | None] | None:
+    wanted = _compact_symbol(symbol)
+    rows = payload.get("data")
+    if isinstance(rows, Mapping):
+        rows = [rows]
+    if not isinstance(rows, list):
+        return None
+    for row in rows:
+        if not isinstance(row, Mapping):
+            continue
+        if _compact_symbol(str(row.get("symbol") or "")) != wanted:
+            continue
+        return {
+            "min_leverage": _optional_int(row.get("minLeverage")),
+            "max_leverage": _optional_int(row.get("maxLeverage")),
+            "default_leverage": _optional_int(row.get("defaultLeverage")),
+        }
+    return None
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
+def _compact_symbol(symbol: str) -> str:
+    return str(symbol or "").replace("/", "").strip().upper()
 
 
 def _decimal_field(item: Mapping[str, Any], field_name: str) -> Decimal:
@@ -300,6 +377,16 @@ def _optional_decimal_field(item: Mapping[str, Any], field_name: str) -> Decimal
     parsed = Decimal(str(value))
     if parsed <= 0:
         raise ValueError(f"{field_name} must be positive")
+    return parsed
+
+
+def _optional_non_negative_decimal_field(item: Mapping[str, Any], field_name: str) -> Decimal | None:
+    value = item.get(field_name)
+    if value in (None, ""):
+        return None
+    parsed = Decimal(str(value))
+    if parsed < 0:
+        raise ValueError(f"{field_name} must be non-negative")
     return parsed
 
 

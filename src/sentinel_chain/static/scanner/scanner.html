@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Sentinel Chain · Guardian Scan</title>
+  <link rel="stylesheet" href="/scanner/static/scanner.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="rail">
+      <div class="logo">SC</div>
+      <a class="rail-link" href="/ui" title="Guardian">G</a>
+      <a class="rail-link active" href="/scanner/ui" title="Scan">S</a>
+      <a class="rail-link" href="/war-room/ui" title="War Room">W</a>
+      <a class="rail-link" href="/futures/ui" title="Futures">F</a>
+      <div class="rail-spacer"></div>
+      <div class="pulse-dot" id="wsDot"></div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">Guardian Scanner</div>
+          <h1>Live-ready signal discovery layer</h1>
+        </div>
+        <div class="top-stats">
+          <div><span>Source</span><strong id="sourceStat">Guardian / Bitunix</strong></div>
+          <div><span>Hits</span><strong id="hitCount">0</strong></div>
+          <div><span>Best Score</span><strong id="bestScore">—</strong></div>
+          <div><span>Status</span><strong id="statusText">Idle</strong></div>
+        </div>
+      </header>
+
+      <section class="grid">
+        <section class="panel controls-panel">
+          <div class="panel-title">
+            <h2>Scan Console</h2>
+            <span class="badge hot">LIVE READY</span>
+          </div>
+
+          <label class="label">Watchlist</label>
+          <textarea id="watchlist" rows="4" spellcheck="false">BTCUSDT, ETHUSDT, SOLUSDT, ADAUSDT, XRPUSDT, LTCUSDT</textarea>
+
+          <div class="control-row">
+            <label><span>Exchange</span><select id="exchange"><option value="bitunix">Bitunix</option><option value="ccxt">CCXT Public</option><option value="binanceusdm">Binance-style Futures</option><option value="manual">Manual Candles</option></select></label>
+            <label><span>Source</span><select id="source"><option value="guardian">Guardian</option><option value="war-room">War Room</option><option value="bitunix">Bitunix</option><option value="ccxt">CCXT</option><option value="manual-candles">Manual Candles</option></select></label>
+          </div>
+
+          <label class="label">Timeframes</label>
+          <div class="chips" id="timeframes">
+            <label><input type="checkbox" value="1m" />1m</label>
+            <label><input type="checkbox" value="5m" checked />5m</label>
+            <label><input type="checkbox" value="15m" checked />15m</label>
+            <label><input type="checkbox" value="1h" />1h</label>
+            <label><input type="checkbox" value="4h" />4h</label>
+          </div>
+
+          <label class="label">Presets</label>
+          <div class="preset-grid" id="presetGrid">
+            <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+          </div>
+
+          <details class="rule-builder">
+            <summary>Custom Rule Builder</summary>
+            <div class="builder-actions">
+              <input id="ruleName" placeholder="Rule name, e.g. Liquidity Sweep Long" />
+              <select id="ruleSide"><option value="auto">Auto Side</option><option value="long">Long</option><option value="short">Short</option><option value="both">Both</option></select>
+            </div>
+            <div id="conditionRows"></div>
+            <div class="builder-actions">
+              <button class="ghost" id="addConditionBtn">+ Add Condition</button>
+              <button class="ghost" id="saveRuleBtn">Save Rule</button>
+            </div>
+          </details>
+
+          <details class="candle-paste">
+            <summary>Paste JSON candles for selected watchlist symbol</summary>
+            <p>Optional. Leave empty until live Guardian/Bitunix/CCXT wiring feeds this endpoint.</p>
+            <textarea id="candlesJson" rows="6" spellcheck="false" placeholder='[{"timestamp":1,"open":100,"high":104,"low":98,"close":102,"volume":900}]'></textarea>
+          </details>
+
+          <div class="button-row">
+            <button id="runBtn">Run Scan</button>
+            <button class="secondary" id="liveBtn">Start Loop</button>
+            <button class="danger" id="stopBtn">Stop</button>
+          </div>
+        </section>
+
+        <section class="panel results-panel">
+          <div class="panel-title">
+            <h2>Live Matches</h2>
+            <div class="toolbar">
+              <input id="filterText" placeholder="filter symbol/rule" />
+              <button class="ghost" id="refreshHitsBtn">Refresh Hits</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table id="resultsTable">
+              <thead><tr><th>Time</th><th>Symbol</th><th>TF</th><th>Side</th><th>Score</th><th>Rule</th><th>Price</th><th>Trigger</th><th>Actions</th></tr></thead>
+              <tbody><tr><td colspan="9" class="muted">Run a scan to populate matches.</td></tr></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel chart-panel">
+          <div class="panel-title">
+            <h2 id="chartTitle">Auto Map</h2>
+            <div class="legend"><span class="long"></span> Long <span class="short"></span> Short <span class="level"></span> S/R</div>
+          </div>
+          <canvas id="chartCanvas" width="960" height="420"></canvas>
+          <div class="micro-panels">
+            <div><span>Support</span><strong id="supportValue">—</strong></div>
+            <div><span>Resistance</span><strong id="resistanceValue">—</strong></div>
+            <div><span>VWAP</span><strong id="vwapValue">—</strong></div>
+            <div><span>ATR%</span><strong id="atrValue">—</strong></div>
+            <div><span>Vol Ratio</span><strong id="volValue">—</strong></div>
+          </div>
+        </section>
+
+        <section class="panel detail-panel">
+          <div class="panel-title">
+            <h2>Hit Detail</h2>
+            <span class="badge" id="confidenceBadge">No hit selected</span>
+          </div>
+          <div id="hitDetail" class="empty-state">Select a scanner hit to see why it matched, the bracket idea, and the next live-ready preview actions.</div>
+        </section>
+
+        <section class="panel playbook-panel">
+          <div class="panel-title"><h2>How / When / Why</h2></div>
+          <div class="playbook-grid">
+            <article><h3>Breakout</h3><p>Trade when price accepts above mapped resistance with volume expansion, thin overhead liquidity, and a clear invalidation below the reclaim.</p></article>
+            <article><h3>VCP</h3><p>Watch shrinking ranges and drying volume near a pivot. Trigger only after expansion or a controlled pullback into demand.</p></article>
+            <article><h3>Rejection Short</h3><p>Trade failed auctions at supply: upper wick, volume participation, weak close, and targets into value-area or prior demand.</p></article>
+            <article><h3>Trend Pullback</h3><p>Let a strong EMA/VWAP trend reset. Enter when structure holds and the next candle confirms continuation.</p></article>
+            <article><h3>Futures Context</h3><p>Check funding, spread, open interest, and reduce-only exit brackets before live preview.</p></article>
+            <article><h3>Promotion Path</h3><p>Scanner hit → chart overlay → bracket ticket → signal preview → Guardian live preview → existing submit gates.</p></article>
+          </div>
+        </section>
+      </section>
+    </main>
+  </div>
+  <script src="/scanner/static/scanner.js"></script>
+</body>
+</html>

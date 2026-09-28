@@ -1,3 +1,6 @@
+from fastapi.testclient import TestClient
+
+from sentinel_chain.app import create_app
 from sentinel_chain.charting.automap import analyze_market_structure, backtest_auto_strategy, generate_demo_candles
 
 
@@ -26,3 +29,33 @@ def test_too_few_candles_is_safe_error():
     result = analyze_market_structure(candles)
     assert result["ok"] is False
     assert "At least 30" in result["error"]
+
+
+def test_war_room_ticket_signal_can_preview_through_standard_signal_api():
+    client = TestClient(create_app())
+    candles = generate_demo_candles("BTCUSDT", "15m", 120, seed=11)
+
+    ticket = client.post(
+        "/war-room/ticket",
+        json={
+            "symbol": "BTCUSDT",
+            "timeframe": "15m",
+            "venue": "paper",
+            "market_type": "swap",
+            "side": "long",
+            "account_equity": 10000,
+            "risk_pct": 1,
+            "leverage": 2,
+            "candles": candles,
+        },
+    )
+
+    assert ticket.status_code == 200
+    signal = ticket.json()["signal"]
+    assert "stop_loss_price" in signal
+    assert "bracket" not in signal
+
+    preview = client.post("/signals/preview", json=signal)
+
+    assert preview.status_code == 200
+    assert preview.json()["signal"]["strategy_id"].startswith("war_room_")

@@ -5,7 +5,7 @@ from decimal import Decimal
 
 from .execution import ExecutionResult, PaperExchange
 from .idempotency import InMemoryIdempotencyStore
-from .risk import AccountState, RiskConfig, evaluate_signal
+from .risk import AccountState, RiskConfig, RiskDecision, evaluate_signal
 from .signals import CryptoSignal
 
 
@@ -55,6 +55,16 @@ class TradingEngine:
             return ExecutionResult(status="halted", decision=decision, reason=self.halt_reason or "trading_halted")
 
         decision = evaluate_signal(signal, self.risk_config, self.account_state)
+        decision = RiskDecision(
+            approved=False,
+            reason_codes=[*decision.reason_codes, "local_paper_execution_removed"],
+            order_notional=decision.order_notional,
+        )
+        return ExecutionResult(
+            status="rejected",
+            decision=decision,
+            reason="local paper execution has been removed; use a live exchange route",
+        )
         if not decision.approved:
             return ExecutionResult(status="rejected", decision=decision, reason="risk_rejected")
 

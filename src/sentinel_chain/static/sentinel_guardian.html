@@ -1,0 +1,563 @@
+<!doctype html>
+<html lang="en" data-theme="guardian" data-density="standard">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sentinel Chain Guardian Chart</title>
+  <link rel="stylesheet" href="static/sentinel_guardian.css" />
+</head>
+<body>
+  <div class="ambient ambient-purple" aria-hidden="true"></div>
+  <div class="ambient ambient-gold" aria-hidden="true"></div>
+  <div class="grid-glow" aria-hidden="true"></div>
+
+  <div class="app-shell" id="appShell">
+    <aside class="left-rail" aria-label="Sentinel Guardian navigation">
+      <div class="brand-block">
+        <div class="brand-mark" aria-hidden="true">SC</div>
+        <div>
+          <div class="brand-title">Sentinel Chain</div>
+          <div class="brand-subtitle">Guardian Chart</div>
+        </div>
+      </div>
+      <nav class="rail-nav">
+        <button class="rail-item active" data-panel="chart" type="button"><span>◈</span><b>Chart</b></button>
+        <button class="rail-item" data-panel="dashboard" type="button"><span>◎</span><b>Dash</b></button>
+        <button class="rail-item" data-panel="signals" type="button"><span>✦</span><b>Signals</b></button>
+        <button class="rail-item" data-panel="desk" type="button"><span>⌬</span><b>Desk</b></button>
+        <button class="rail-item" data-panel="risk" type="button"><span>⌁</span><b>Risk</b></button>
+        <button class="rail-item" data-panel="vcp" type="button"><span>△</span><b>VCP</b></button>
+        <button class="rail-item" data-panel="drawings" type="button"><span>╱</span><b>Lines</b></button>
+        <button class="rail-item" data-panel="portfolio" type="button"><span>◍</span><b>Port</b></button>
+        <button class="rail-item" data-panel="strategies" type="button"><span>✧</span><b>Strat</b></button>
+        <button class="rail-item" data-panel="exchanges" type="button"><span>⇆</span><b>Venue</b></button>
+        <button class="rail-item" data-panel="warroom" type="button"><span>♜</span><b>War</b></button>
+        <button class="rail-item" data-panel="audit" type="button"><span>☷</span><b>Audit</b></button>
+        <button class="rail-item" data-panel="data" type="button"><span>⇪</span><b>Data</b></button>
+      </nav>
+      <section class="rail-card">
+        <div class="feed-state"><span class="pulse-dot"></span><b>Broker-routed</b></div>
+        <p>Broker engine + Sentinel APIs wired. Live broker submit is available only through locked preview + confirmation gates.</p>
+      </section>
+      <section class="rail-card mini-help">
+        <div class="rail-card-title">Fast keys</div>
+        <p><b>1</b> long bracket · <b>2</b> short bracket · <b>T</b> trendline · <b>H</b> horizontal · <b>Z</b> zone · <b>Esc</b> cursor</p>
+      </section>
+    </aside>
+
+    <section class="main-shell">
+      <header class="topbar">
+        <div class="system-title">
+          <span class="title-dot"></span>
+          <div>
+            <h1>Guardian TP/SL Console</h1>
+            <p>Interactive bracket drawing · volatility contraction pattern checks · liquidation and MAE safety</p>
+          </div>
+        </div>
+        <div class="ticker-strip" id="tickerStrip" aria-label="Market ticker strip"></div>
+        <div class="topbar-actions">
+          <a class="link-button" href="/ui" title="Open Classic Operator UI">Classic</a>
+          <a class="link-button" href="/war-room/ui" title="Open standalone War Room">War Room</a>
+          <button class="icon-button" id="guardianRefreshBtn" type="button" title="Refresh Sentinel API state">⟳</button>
+          <button class="icon-button" id="autoRefreshBtn" type="button" title="Toggle API auto-refresh" aria-pressed="false">10s</button>
+          <button class="danger-mini" id="haltBtn" type="button" title="Global halt">Halt</button>
+          <button class="safe-mini" id="resumeBtn" type="button" title="Resume broker engine">Resume</button>
+          <button class="icon-button" id="themeBtn" type="button" title="Toggle gold/purple intensity">◐</button>
+          <button class="icon-button" id="exportBtn" type="button" title="Export current plan JSON">⇩</button>
+          <button class="icon-button" id="refreshBtn" type="button" title="Regenerate live market">↻</button>
+          <div class="clock-block"><span id="clockTime">--:--:--</span><small>local</small></div>
+        </div>
+      </header>
+
+      <section class="global-status-ribbon glass-panel">
+        <div class="status-pill" id="apiStatePill"><b>API</b><span>booting</span></div>
+        <div class="status-pill" id="brokerStatePill"><b>Broker</b><span>unknown</span></div>
+        <div class="status-pill" id="approvalStatePill"><b>Approval</b><span>unknown</span></div>
+        <div class="status-pill locked" id="liveLockPill"><b>Live</b><span>locked</span></div>
+        <div class="status-pill" id="edgeStreamPill"><b>Edge</b><span>offline</span></div>
+        <div class="status-pill" id="candleStreamPill"><b>WS</b><span>idle</span></div>
+        <label class="field compact halt-field">Halt reason
+          <input id="haltReasonInput" value="guardian manual halt" autocomplete="off" />
+        </label>
+        <div class="status-line" id="guardianStatusLine">Guardian booting. Refreshing Sentinel Chain state…</div>
+      </section>
+
+      <section class="control-ribbon glass-panel">
+        <label class="field compact">Symbol
+          <input id="symbolInput" value="BTCUSDT" autocomplete="off" />
+        </label>
+        <label class="field tiny">TF
+          <select id="timeframeInput">
+            <option>1m</option><option>3m</option><option selected>5m</option><option>15m</option><option>1h</option><option>4h</option>
+          </select>
+        </label>
+        <label class="field tiny">Bars
+          <input id="barsInput" type="number" min="80" max="420" value="180" />
+        </label>
+        <label class="field">Scenario
+          <select id="scenarioInput">
+            <option value="volatile" selected>Crypto futures volatility</option>
+            <option value="vcp">VCP contraction / breakout watch</option>
+            <option value="range">Range at resistance</option>
+            <option value="trend">Trend continuation</option>
+          </select>
+        </label>
+        <button class="primary-btn" id="loadLive DataBtn" type="button">Load live data</button>
+        <button class="secondary-btn" id="loadVcpBtn" type="button">Load VCP</button>
+        <button class="secondary-btn" id="loadEdgeBtn" type="button">Load Edge GEX</button>
+        <button class="secondary-btn" id="autoBracketBtn" type="button">Auto-safe bracket</button>
+      </section>
+
+      <main class="workspace view-panel active" data-view="chart" id="view-chart">
+        <section class="chart-column">
+          <section class="kpi-ribbon" aria-label="Plan risk metrics">
+            <article class="kpi-card good" id="scoreCard"><span>Sentinel Safety Score</span><strong id="safetyScore">--</strong><em id="scoreText">Waiting for bracket</em></article>
+            <article class="kpi-card"><span>Current Price</span><strong id="priceNow">--</strong><em id="priceSub">broker candles</em></article>
+            <article class="kpi-card purple"><span>Reward : Risk</span><strong id="rrValue">--</strong><em id="rrSub">drag TP/SL handles</em></article>
+            <article class="kpi-card warn"><span>Liquidation Buffer</span><strong id="liqBuffer">--</strong><em id="liqSub">rough estimate</em></article>
+            <article class="kpi-card cyan"><span>VCP Compression</span><strong id="vcpScore">--</strong><em id="vcpSub">watch pivot + volume</em></article>
+          </section>
+
+          <section class="chart-card glass-panel" id="chartCard">
+            <div class="chart-header">
+              <div>
+                <h2 id="chartTitle">BTCUSDT · 5m</h2>
+                <p id="chartSubtitle">Click Long/Short bracket, then drag Entry, Stop, TP1, and TP2 price handles directly on the chart.</p>
+              </div>
+              <div class="chart-layer-toggles">
+                <label><input type="checkbox" class="layer-toggle" data-layer="emas" checked /> EMAs</label>
+                <label><input type="checkbox" class="layer-toggle" data-layer="sr" checked /> S/R</label>
+                <label><input type="checkbox" class="layer-toggle" data-layer="heat" checked /> Heat</label>
+                <label><input type="checkbox" class="layer-toggle" data-layer="vcp" checked /> VCP</label>
+                <label><input type="checkbox" class="layer-toggle" data-layer="mae" checked /> MAE</label>
+              </div>
+            </div>
+            <div class="tool-strip" role="toolbar" aria-label="Drawing tools">
+              <button class="tool-btn active" data-tool="cursor" type="button">Cursor</button>
+              <button class="tool-btn long" data-tool="long" type="button">Long TP/SL</button>
+              <button class="tool-btn short" data-tool="short" type="button">Short TP/SL</button>
+              <button class="tool-btn" data-tool="trend" type="button">Trendline</button>
+              <button class="tool-btn" data-tool="horizontal" type="button">Horizontal</button>
+              <button class="tool-btn" data-tool="zone" type="button">Zone</button>
+              <button class="tool-btn" data-tool="eraser" type="button">Eraser</button>
+              <button class="tool-btn ghost" id="clearDrawingsBtn" type="button">Clear lines</button>
+              <button class="tool-btn ghost" id="resetBracketBtn" type="button">Reset bracket</button>
+            </div>
+            <div class="canvas-wrap" id="canvasWrap">
+              <canvas id="chartCanvas" width="1320" height="720" aria-label="Interactive Sentinel Chain futures chart"></canvas>
+              <div id="crosshairReadout" class="crosshair-readout">Move over chart</div>
+              <div id="chartHint" class="chart-hint">Tip: use Long/Short TP/SL, then drag the colored price handles. Trend, horizontal, and zone tools create manual safety lines.</div>
+            </div>
+          </section>
+
+          <section class="bottom-grid">
+            <article class="glass-panel panel-card span-5" id="maePanel">
+              <header><h3>MAE / MFE Safety Replay</h3><span id="maeState">needs bracket</span></header>
+              <div class="mini-bars">
+                <div><span>Maximum adverse excursion</span><meter id="maeMeter" min="0" max="100" value="0"></meter><b id="maeValue">--</b></div>
+                <div><span>Maximum favorable excursion</span><meter id="mfeMeter" min="0" max="100" value="0"></meter><b id="mfeValue">--</b></div>
+                <div><span>Stop survival buffer</span><meter id="survivalMeter" min="0" max="100" value="0"></meter><b id="survivalValue">--</b></div>
+              </div>
+            </article>
+            <article class="glass-panel panel-card span-7" id="notesPanel">
+              <header><h3>Ingested Playbook Notes</h3><span>risk-first</span></header>
+              <div class="note-grid">
+                <div><b>Bracket discipline</b><p>Define entry, SL, and TP before any trade idea is considered valid.</p></div>
+                <div><b>Market vs limit</b><p>Market confirmation favors getting filled; limit retests may improve R:R but can miss the move.</p></div>
+                <div><b>VCP gate</b><p>Clean contractions need shrinking pullbacks, volume dry-up, a pivot, and controlled stop below final contraction.</p></div>
+              </div>
+            </article>
+          </section>
+        </section>
+
+        <aside class="right-stack">
+          <section class="glass-panel bracket-panel">
+            <header><h2>Bracket Control</h2><span id="bracketState">unlocked</span></header>
+            <div class="ticket-grid">
+              <label>Side
+                <select id="sideInput"><option value="long">Long</option><option value="short">Short</option></select>
+              </label>
+              <label>Order style
+                <select id="orderStyleInput"><option value="limit_retest">Limit retest</option><option value="market_confirmation">Market confirmation</option><option value="stop_breakout">Stop breakout</option></select>
+              </label>
+              <label>Entry<input id="entryInput" type="number" step="0.01" /></label>
+              <label>Stop Loss<input id="stopInput" type="number" step="0.01" /></label>
+              <label>TP1<input id="tp1Input" type="number" step="0.01" /></label>
+              <label>TP2<input id="tp2Input" type="number" step="0.01" /></label>
+              <label>Equity<input id="equityInput" type="number" value="10000" step="100" min="1" /></label>
+              <label>Risk %<input id="riskPctInput" type="number" value="1" step="0.05" min="0.05" max="10" /></label>
+              <label>Leverage<input id="leverageInput" type="number" value="3" step="1" min="1" max="200" /></label>
+              <label>Fee bps<input id="feeBpsInput" type="number" value="6" step="1" min="0" max="100" /></label>
+            </div>
+            <div class="button-row">
+              <button class="primary-btn" id="applyBracketBtn" type="button">Apply inputs</button>
+              <button class="secondary-btn" id="lastCloseBtn" type="button">Use last close</button>
+              <button class="secondary-btn" id="lockPlanBtn" type="button">Lock</button>
+            </div>
+            <div class="plan-metrics" id="planMetrics"></div>
+          </section>
+
+          <section class="glass-panel guard-panel">
+            <header><h2>Sentinel Guardrails</h2><span id="guardSummary">0 checks</span></header>
+            <div class="guard-list" id="guardList"></div>
+          </section>
+
+          <section class="glass-panel vcp-panel">
+            <header><h2>VCP / Pattern Watch</h2><span id="patternSummary">auto</span></header>
+            <div class="pattern-body" id="patternBody"></div>
+          </section>
+
+          <section class="glass-panel json-panel">
+            <header><h2>Broker Plan JSON</h2><button id="copyPlanBtn" type="button">Copy</button></header>
+            <pre id="planJson">{}</pre>
+          </section>
+        </aside>
+      </main>
+
+      <main class="ops-view view-panel" data-view="dashboard" id="view-dashboard">
+        <section class="ops-grid two-one">
+          <article class="glass-panel ops-card span-2">
+            <header><h2>Guardian Dashboard</h2><span id="dashboardTimestamp">not refreshed</span></header>
+            <div class="ops-kpis" id="dashboardKpis"></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Operator Snapshot</h3><span id="operatorSnapshotState">API</span></header>
+            <div class="compact-list" id="operatorSnapshot"></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Signal Inbox Preview</h3><span id="signalInboxCount">0</span></header>
+            <div class="compact-list" id="dashboardSignals"></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Bot Runtime Table</h3><span>runtime</span></header>
+            <div class="table-wrap"><table><thead><tr><th>Mode</th><th>Status</th><th>Reason</th></tr></thead><tbody id="runtimeTable"></tbody></table></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Audit Feed Preview</h3><span id="dashboardAuditCount">0</span></header>
+            <div class="compact-list" id="dashboardAudit"></div>
+          </article>
+        </section>
+      </main>
+
+      <main class="ops-view view-panel" data-view="signals" id="view-signals">
+        <section class="ops-grid two-one">
+          <article class="glass-panel ops-card span-2">
+            <header><h2>Signal Console</h2><span>Discord · TradingView · Operator</span></header>
+            <div class="form-grid four">
+              <label>Channel<select id="signalChannelInput"><option value="operator-ui">Operator</option><option value="discord">Discord</option><option value="tradingview">TradingView</option></select></label>
+              <label>Search<input id="signalSearchInput" placeholder="symbol, id, source" /></label>
+              <label>Reject reason<input id="rejectReasonInput" value="operator rejected" /></label>
+              <label>Actions<div class="inline-actions"><button class="secondary-btn" id="sampleSignalBtn" type="button">Sample</button><button class="secondary-btn" id="copySignalPayloadBtn" type="button">Copy JSON</button></div></label>
+            </div>
+            <textarea class="signal-textarea" id="signalTextInput" spellcheck="false" placeholder="BUY BTCUSDT $100 @ 65000 SL @ 64000 TP1 @ 67000 50% TP2 @ 69000 50% TRAIL 2% ACT 1% BE 1%"></textarea>
+            <div class="button-row wide">
+              <button class="primary-btn" id="parseSignalBtn" type="button">Parse</button>
+              <button class="secondary-btn" id="previewSignalBtn" type="button">Preview Risk</button>
+              <button class="secondary-btn" id="submitTextSignalBtn" type="button">Submit Broker Signal</button>
+            </div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Pending Approvals</h3><span id="pendingApprovalCount">0</span></header>
+            <div class="compact-list action-list" id="pendingApprovalsList"></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Payload Preview</h3><span id="signalPreviewState">empty</span></header>
+            <pre id="signalPayloadPreview">{}</pre>
+          </article>
+          <article class="glass-panel ops-card span-2">
+            <header><h3>Signal History</h3><span id="signalHistoryCount">0</span></header>
+            <div class="table-wrap"><table><thead><tr><th>ID</th><th>Symbol</th><th>Side</th><th>Size</th><th>Strategy</th><th>Action</th></tr></thead><tbody id="signalHistoryTable"></tbody></table></div>
+          </article>
+        </section>
+      </main>
+
+      <main class="ops-view view-panel" data-view="desk" id="view-desk">
+        <section class="ops-grid two-one">
+          <article class="glass-panel ops-card span-2">
+            <header><h2>Trading Desk</h2><span>broker-routed order ticket</span></header>
+            <div class="quick-row">
+              <button class="secondary-btn quick-symbol" data-symbol="BTCUSDT" type="button">BTC</button>
+              <button class="secondary-btn quick-symbol" data-symbol="ETHUSDT" type="button">ETH</button>
+              <button class="secondary-btn quick-symbol" data-symbol="SOLUSDT" type="button">SOL</button>
+              <button class="secondary-btn ticket-tf" data-tf="1m" type="button">1m</button>
+              <button class="secondary-btn ticket-tf" data-tf="5m" type="button">5m</button>
+              <button class="secondary-btn ticket-tf" data-tf="15m" type="button">15m</button>
+              <button class="secondary-btn ticket-tf" data-tf="1h" type="button">1h</button>
+              <button class="secondary-btn" id="loadPlanToTicketBtn" type="button">Load Guardian Plan</button>
+              <button class="secondary-btn" id="saveDraftBtn" type="button">Save Draft</button>
+              <button class="secondary-btn" id="forgetDraftBtn" type="button">Forget Draft</button>
+            </div>
+            <div class="form-grid six ticket-form">
+              <label>Strategy<select id="ticketStrategyInput"></select></label>
+              <label>Symbol<input id="ticketSymbolInput" value="BTCUSDT" /></label>
+              <label>Side<select id="ticketSideInput"><option value="buy">Buy / Long</option><option value="sell">Sell / Short</option></select></label>
+              <label>Size mode<select id="ticketSizeModeInput"><option value="quote">Quote USD</option><option value="base">Base qty</option><option value="risk">Risk %</option></select></label>
+              <label>Size<input id="ticketSizeInput" type="number" step="0.0001" value="100" /></label>
+              <label>Leverage<input id="ticketLeverageInput" type="number" value="3" min="1" max="200" /></label>
+              <label>Entry price<input id="ticketPriceInput" type="number" step="0.01" /></label>
+              <label>Stop loss<input id="ticketStopInput" type="number" step="0.01" /></label>
+              <label>Take profit<input id="ticketTakeProfitInput" type="number" step="0.01" /></label>
+              <label>Trailing stop<input id="ticketTrailingInput" type="number" step="0.01" /></label>
+              <label>Trail activation<input id="ticketTrailActivationInput" type="number" step="0.01" /></label>
+              <label>Breakeven %<input id="ticketBreakevenInput" type="number" step="0.1" /></label>
+            </div>
+            <div class="quick-row">
+              <button class="secondary-btn size-preset" data-size="25" type="button">$25</button>
+              <button class="secondary-btn size-preset" data-size="100" type="button">$100</button>
+              <button class="secondary-btn size-preset" data-size="max" type="button">Max Order</button>
+              <button class="secondary-btn size-preset" data-size="remaining" type="button">Remaining Cap</button>
+              <button class="primary-btn" id="buildTicketBtn" type="button">Build Alert</button>
+              <button class="secondary-btn" id="previewTicketBtn" type="button">Preview Risk</button>
+              <button class="secondary-btn" id="submitTicketBtn" type="button">Submit</button>
+              <button class="secondary-btn" id="previewLiveOrderBtn" type="button">Preview Live</button>
+              <button class="secondary-btn" id="copyTicketAlertBtn" type="button">Copy Alert</button>
+              <button class="secondary-btn" id="copyTicketJsonBtn" type="button">Copy JSON</button>
+            </div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Operator Preflight</h3><span id="ticketPreviewState">waiting</span></header>
+            <div class="compact-list" id="ticketPreflightList"></div>
+            <pre id="ticketJsonPreview">{}</pre>
+            <div class="form-grid two live-confirm-grid">
+              <label>Live confirm<input id="liveConfirmInput" placeholder="PLACE LIVE ORDER" autocomplete="off" /></label>
+              <label>Preview ID<input id="livePreviewIdInput" readonly placeholder="preview after validation" /></label>
+            </div>
+            <div class="button-row wide">
+              <button class="danger-mini" id="submitLiveOrderBtn" type="button">Submit Live Bitunix</button>
+            </div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Market / Mark Price</h3><span>broker mark engine</span></header>
+            <div class="form-grid two">
+              <label>Mark symbol<input id="markSymbolInput" value="BTCUSDT" /></label>
+              <label>Mark price<input id="markPriceInput" type="number" step="0.01" /></label>
+            </div>
+            <div class="button-row wide"><button class="secondary-btn" id="previewMarkBtn" type="button">Preview Mark</button><button class="primary-btn" id="applyMarkBtn" type="button">Apply Mark</button></div>
+            <div class="compact-list" id="markResultBox"></div>
+          </article>
+          <article class="glass-panel ops-card span-2">
+            <header><h3>Positions / Orders</h3><span><button class="mini-tab active" data-desk-table="positions" type="button">Positions</button><button class="mini-tab" data-desk-table="orders" type="button">Orders</button></span></header>
+            <label class="search-line">Search<input id="deskSearchInput" placeholder="symbol, id, side" /></label>
+            <div class="table-wrap"><table><thead id="deskTableHead"></thead><tbody id="deskTableBody"></tbody></table></div>
+          </article>
+        </section>
+      </main>
+
+      <main class="ops-view view-panel" data-view="risk" id="view-risk">
+        <section class="ops-grid two-one">
+          <article class="glass-panel ops-card span-2">
+            <header><h2>Risk Center</h2><span>Guardrails + Sentinel engine</span></header>
+            <div class="ops-kpis" id="riskKpis"></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Guardian Guardrails</h3><span id="riskGuardSummary">local</span></header>
+            <div class="guard-list" id="riskGuardList"></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Futures Risk API</h3><span id="futuresRiskState">preview</span></header>
+            <div class="form-grid two">
+              <label>Maintenance %<input id="futuresMaintenanceInput" type="number" value="0.5" step="0.1" /></label>
+              <label>Funding bps<input id="futuresFundingInput" type="number" value="0" step="1" /></label>
+            </div>
+            <button class="primary-btn full" id="previewFuturesRiskBtn" type="button">Preview Futures Risk</button>
+            <pre id="futuresRiskPreview">{}</pre>
+          </article>
+          <article class="glass-panel ops-card span-2">
+            <header><h3>Bracket Ledger / Active Exit Actions</h3><span id="bracketLedgerCount">0</span></header>
+            <div class="table-wrap"><table><thead><tr><th>Signal</th><th>Symbol</th><th>Direction</th><th>Worst loss</th><th>Target R</th><th>Actions</th></tr></thead><tbody id="bracketLedgerTable"></tbody></table></div>
+          </article>
+        </section>
+      </main>
+
+      <main class="ops-view view-panel" data-view="vcp" id="view-vcp">
+        <section class="ops-grid two-one">
+          <article class="glass-panel ops-card span-2">
+            <header><h2>VCP Lab</h2><span>contraction scanner</span></header>
+            <div class="ops-kpis" id="vcpKpis"></div>
+            <div class="quick-row"><button class="primary-btn" id="vcpBuildTicketBtn" type="button">Build Breakout Ticket</button><button class="secondary-btn" id="vcpAnalyzeBtn" type="button">Analyze Range</button><button class="secondary-btn" id="vcpLoadLive DataBtn" type="button">Load VCP Data</button></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Contraction Map</h3><span id="vcpContractionCount">0</span></header>
+            <div class="compact-list" id="vcpContractionList"></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>VCP Safety Notes</h3><span>playbook</span></header>
+            <div class="compact-list" id="vcpSafetyNotes"></div>
+          </article>
+          <article class="glass-panel ops-card span-2">
+            <header><h3>VCP Analyze Result</h3><span id="vcpAnalyzeState">waiting</span></header>
+            <pre id="vcpAnalyzePreview">{}</pre>
+          </article>
+        </section>
+      </main>
+
+      <main class="ops-view view-panel" data-view="drawings" id="view-drawings">
+        <section class="ops-grid two-one">
+          <article class="glass-panel ops-card span-2">
+            <header><h2>Lines / Levels Lab</h2><span>manual + War Room structure</span></header>
+            <div class="quick-row"><button class="secondary-btn" id="activateTrendToolBtn" type="button">Trendline</button><button class="secondary-btn" id="activateHorizontalToolBtn" type="button">Horizontal</button><button class="secondary-btn" id="activateZoneToolBtn" type="button">Risk Zone</button><button class="secondary-btn" id="saveServerDrawingsBtn" type="button">Save Server Lines</button><button class="secondary-btn" id="loadServerDrawingsBtn" type="button">Load Server Lines</button><button class="secondary-btn" id="deleteServerDrawingsBtn" type="button">Delete Server Lines</button><button class="secondary-btn" id="copyDrawingsBtn" type="button">Copy Lines</button><button class="secondary-btn" id="clearDrawingsLabBtn" type="button">Clear Lines</button></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Manual Drawings</h3><span id="drawingCount">0</span></header><div class="compact-list" id="drawingServerState"></div>
+            <div class="compact-list" id="drawingList"></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Nearest Levels</h3><span>S/R</span></header>
+            <div class="compact-list" id="nearestLevelList"></div>
+          </article>
+          <article class="glass-panel ops-card span-2">
+            <header><h3>War Room Auto-Map Levels</h3><span id="warRoomLevelState">not loaded</span></header>
+            <div class="table-wrap"><table><thead><tr><th>Kind</th><th>Price</th><th>Zone</th><th>Touches</th><th>Score</th></tr></thead><tbody id="warRoomLevelsTable"></tbody></table></div>
+          </article>
+        </section>
+      </main>
+
+      <main class="ops-view view-panel" data-view="portfolio" id="view-portfolio">
+        <section class="ops-grid two-one">
+          <article class="glass-panel ops-card span-2">
+            <header><h2>Portfolio</h2><span>broker state</span></header>
+            <div class="quick-row"><button class="secondary-btn" id="exportStateBtn" type="button">Export State JSON</button><button class="secondary-btn" id="refreshBracketsBtn" type="button">Refresh Brackets</button></div>
+            <div class="ops-kpis" id="portfolioKpis"></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Exposure Limits</h3><span>risk config</span></header>
+            <div class="compact-list" id="exposureLimits"></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Daily P&amp;L / Equity Curve</h3><span>ranges</span></header>
+            <div class="mini-chart" id="equityCurveMini"></div>
+          </article>
+          <article class="glass-panel ops-card span-2">
+            <header><h3>Positions</h3><span id="portfolioPositionCount">0</span></header>
+            <div class="table-wrap"><table><thead><tr><th>Symbol</th><th>Qty</th><th>Avg</th><th>Notional</th><th>Unrealized</th></tr></thead><tbody id="portfolioPositionsTable"></tbody></table></div>
+          </article>
+        </section>
+      </main>
+
+      <main class="ops-view view-panel" data-view="strategies" id="view-strategies">
+        <section class="ops-grid">
+          <article class="glass-panel ops-card span-3">
+            <header><h2>Strategies</h2><span>/strategy-presets</span></header>
+            <div class="form-grid four">
+              <label>Filter<select id="strategyFilterInput"><option value="all">All</option><option value="signal">Signals</option><option value="grid">Grid</option><option value="dca">DCA</option></select></label>
+              <label>Search<input id="strategySearchInput" placeholder="preset or checklist" /></label>
+              <label>Sort<select id="strategySortInput"><option value="name">Name</option><option value="pinned">Pinned first</option><option value="type">Type</option></select></label>
+              <label>Action<button class="secondary-btn" id="refreshStrategiesBtn" type="button">Refresh Presets</button></label>
+            </div>
+          </article>
+          <article class="strategy-card-grid span-3" id="strategyCards"></article>
+          <article class="glass-panel ops-card span-3">
+            <header><h3>Strategy Preview / Checklist</h3><span id="strategyPreviewState">select card</span></header>
+            <pre id="strategyPreviewJson">{}</pre>
+          </article>
+        </section>
+      </main>
+
+      <main class="ops-view view-panel" data-view="exchanges" id="view-exchanges">
+        <section class="ops-grid two-one">
+          <article class="glass-panel ops-card span-2">
+            <header><h2>Exchanges</h2><span>venue capabilities</span></header>
+            <div class="form-grid four">
+              <label>Search<input id="exchangeSearchInput" placeholder="bitunix, binance, broker" /></label>
+              <label>Bitunix symbols<input id="bitunixSymbolsInput" value="BTCUSDT,ETHUSDT,SOLUSDT" /></label>
+              <label>Action<button class="secondary-btn" id="refreshVenuesBtn" type="button">Refresh Venues</button></label>
+              <label>Bitunix<button class="secondary-btn" id="loadBitunixTickersBtn" type="button">Load Tickers</button></label>
+            </div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Live Execution Gate</h3><span id="liveExecutionGateState">locked</span></header>
+            <div class="compact-list" id="liveStatusList"></div>
+            <div class="button-row wide"><button class="secondary-btn" id="refreshLiveStatusBtn" type="button">Refresh Live Status</button><button class="secondary-btn" id="venuePreviewLiveBtn" type="button">Preview Ticket Live</button></div>
+            <pre id="liveOrderPreviewJson">{}</pre>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Trading Platform Grid</h3><span id="platformCount">0</span></header>
+            <div class="table-wrap"><table><thead><tr><th>Platform</th><th>Status</th><th>Broker</th><th>Live</th></tr></thead><tbody id="platformTable"></tbody></table></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Venue List</h3><span id="exchangeCount">0</span></header>
+            <div class="compact-list action-list" id="exchangeList"></div>
+          </article>
+          <article class="glass-panel ops-card span-2">
+            <header><h3>Capability / Integration Viewer</h3><span><button id="copyVenueJsonBtn" class="mini-tab" type="button">Copy JSON</button><button id="checkBitunixAccountBtn" class="mini-tab" type="button">Bitunix Account</button></span></header>
+            <pre id="venueJsonPreview">{}</pre>
+          </article>
+        </section>
+      </main>
+
+      <main class="ops-view view-panel" data-view="warroom" id="view-warroom">
+        <section class="ops-grid two-one">
+          <article class="glass-panel ops-card span-2">
+            <header><h2>War Room Auto-Charting</h2><span>/war-room APIs</span></header>
+            <div class="quick-row"><button class="primary-btn" id="warRoomLive DataBtn" type="button">Auto Map</button><button class="secondary-btn" id="warRoomAnalyzeBtn" type="button">Analyze Current Candles</button><button class="secondary-btn" id="warRoomTicketBtn" type="button">Build Bracket Ticket</button><button class="secondary-btn" id="warRoomAnalyzeBtn" type="button">Analyze Range</button><button class="secondary-btn" id="warRoomCopyCandlesBtn" type="button">Copy Current Candles</button><button class="secondary-btn" id="warRoomSubmitSignalBtn" type="button">Submit Broker Signal</button></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Auto-Chart Features</h3><span id="warFeatureState">loading</span></header>
+            <div class="compact-list" id="warFeatureList"></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>How / When / Why</h3><span id="warRoomWhyState">waiting</span></header>
+            <div class="compact-list" id="warRoomWhy"></div>
+          </article>
+          <article class="glass-panel ops-card span-2">
+            <header><h3>War Room Analysis / Ticket JSON</h3><span id="warRoomAnalysisState">empty</span></header>
+            <pre id="warRoomJsonPreview">{}</pre>
+          </article>
+        </section>
+      </main>
+
+      <main class="ops-view view-panel" data-view="audit" id="view-audit">
+        <section class="ops-grid">
+          <article class="glass-panel ops-card span-3">
+            <header><h2>Audit</h2><span>event history</span></header>
+            <div class="form-grid four">
+              <label>Search<input id="auditSearchInput" placeholder="event, signal, order" /></label>
+              <label>Filter<select id="auditFilterInput"><option value="all">All</option><option value="signal">Signal</option><option value="bracket">Bracket</option><option value="control">Control</option><option value="runtime">Runtime</option></select></label>
+              <label>Refresh<button class="secondary-btn" id="refreshAuditBtn" type="button">Refresh Audit</button></label>
+              <label>Export<button class="secondary-btn" id="exportAuditCsvBtn" type="button">Export CSV</button></label>
+            </div>
+          </article>
+          <article class="glass-panel ops-card span-3">
+            <div class="table-wrap tall"><table><thead><tr><th>Time</th><th>Type</th><th>Details</th><th>Action</th></tr></thead><tbody id="auditTable"></tbody></table></div>
+          </article>
+        </section>
+      </main>
+
+      <main class="ops-view view-panel" data-view="data" id="view-data">
+        <section class="ops-grid two-one">
+          <article class="glass-panel ops-card span-2">
+            <header><h2>Data Loader</h2><span>candles · Bitunix · Edge</span></header>
+            <div class="quick-row"><button class="secondary-btn" id="openDataDialogBtn" type="button">Paste Dialog</button><button class="secondary-btn" id="loadBitunixCandlesBtn" type="button">Load Bitunix Candles</button><button class="secondary-btn" id="startCandleStreamBtn" type="button">Start Candle WS</button><button class="secondary-btn" id="startEdgeStreamBtn" type="button">Start Edge Stream</button><button class="secondary-btn" id="publishEdgeSampleBtn" type="button">Publish Edge Sample</button><button class="secondary-btn" id="stopStreamsBtn" type="button">Stop Streams</button><button class="secondary-btn" id="loadEdgePanelBtn" type="button">Load Edge GEX</button><button class="secondary-btn" id="copyCurrentCandlesBtn" type="button">Copy Candles</button></div>
+            <textarea class="signal-textarea" id="panelDataInput" spellcheck="false" placeholder='Paste JSON candles or CSV: time,open,high,low,close,volume'></textarea>
+            <button class="primary-btn" id="loadPanelDataBtn" type="button">Analyze Pasted Data</button>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Data Status</h3><span id="dataPanelState">local</span></header>
+            <div class="compact-list" id="dataStatusList"></div>
+          </article>
+          <article class="glass-panel ops-card">
+            <header><h3>Current Candle Snapshot</h3><span id="dataCandleCount">0</span></header>
+            <pre id="dataPreviewJson">[]</pre>
+          </article>
+        </section>
+      </main>
+
+    </section>
+  </div>
+
+  <dialog id="dataDialog" class="data-dialog">
+    <form method="dialog">
+      <header><h2>Load candles / Edge packet</h2><button value="cancel" aria-label="Close">×</button></header>
+      <p>Paste JSON candles or CSV with columns time,open,high,low,close,volume. The chart can also consume the locked Guardian candle WebSocket and Edge snapshot stream when the backend is running.</p>
+      <textarea id="dataInput" spellcheck="false" placeholder='[{"time":"09:30","open":100,"high":105,"low":98,"close":103,"volume":1200}]'></textarea>
+      <menu>
+        <button id="loadPastedBtn" value="default" class="primary-btn" type="button">Analyze pasted data</button>
+        <button value="cancel" class="secondary-btn">Cancel</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="static/sentinel_guardian.js"></script>
+</body>
+</html>

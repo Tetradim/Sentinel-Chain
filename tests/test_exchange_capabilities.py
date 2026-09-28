@@ -302,6 +302,44 @@ def test_bitunix_public_ticker_endpoint_delegates_to_native_client(monkeypatch):
     assert response.json()["data"] == [{"symbol": "BTCUSDT"}]
 
 
+def test_bitunix_trading_pairs_endpoint_reports_leverage_bounds(monkeypatch):
+    def fake_trading_pairs(self, symbols=None):
+        return {
+            "code": 0,
+            "data": [{"symbol": "BTCUSDT", "minLeverage": 1, "maxLeverage": 200, "defaultLeverage": 20}],
+            "msg": "Success",
+        }
+
+    monkeypatch.setattr(app_module.BitunixRestClient, "get_futures_trading_pairs", fake_trading_pairs)
+    client = TestClient(create_app())
+
+    response = client.get("/exchanges/bitunix/futures/trading-pairs?symbols=BTCUSDT")
+
+    assert response.status_code == 200
+    assert response.json()["leverage_bounds"]["BTCUSDT"] == {
+        "min_leverage": 1,
+        "max_leverage": 200,
+        "default_leverage": 20,
+    }
+
+
+def test_bitunix_leverage_endpoint_reads_current_symbol_setting(monkeypatch):
+    monkeypatch.setenv("AUTO_CRYPTO_BITUNIX_API_KEY", "configured-key")
+    monkeypatch.setenv("AUTO_CRYPTO_BITUNIX_SECRET_KEY", "configured-secret")
+
+    def fake_leverage(self, symbol, margin_coin="USDT"):
+        return {"code": 0, "data": {"symbol": symbol, "marginCoin": margin_coin, "leverage": 25, "marginMode": "ISOLATION"}, "msg": "Success"}
+
+    monkeypatch.setattr(app_module.BitunixRestClient, "get_futures_leverage_margin_mode", fake_leverage)
+    client = TestClient(create_app())
+    establish_operator_session(client)
+
+    response = client.get("/exchanges/bitunix/futures/leverage?symbol=BTCUSDT&margin_coin=USDT")
+
+    assert response.status_code == 200
+    assert response.json()["data"]["leverage"] == 25
+
+
 def test_bitunix_private_account_endpoint_delegates_to_native_client(monkeypatch):
     monkeypatch.setenv("AUTO_CRYPTO_BITUNIX_API_KEY", "configured-key")
     monkeypatch.setenv("AUTO_CRYPTO_BITUNIX_SECRET_KEY", "configured-secret")

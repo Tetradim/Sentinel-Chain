@@ -68,6 +68,23 @@ BRACKET_TEMPLATES: dict[str, BracketTemplate] = {
             "Remaining protective exits move to breakeven after the first target.",
         ),
     ),
+    "vcp_structure_runner": BracketTemplate(
+        name="vcp_structure_runner",
+        description="Staged paper bracket for contraction or rejection setups using a prior-structure invalidation.",
+        fields={
+            "stop_loss_pct": "3",
+            "take_profit_targets": [
+                {"pct": "4.5", "close_pct": "50"},
+                {"pct": "9.6", "close_pct": "50"},
+            ],
+            "breakeven_after_take_profit": True,
+        },
+        notes=(
+            "Defaults approximate a 1.5R first target and 3.2R runner from a 3% invalidation.",
+            "For best fidelity, override stop_loss_price with the prior contraction low for longs or prior rejection high for shorts.",
+            "This template is paper-first and does not imply venue-native staged TP support.",
+        ),
+    ),
 }
 
 
@@ -101,4 +118,3 @@ def apply_bracket_template(
         merged.update(deepcopy(overrides))
     merged["bracket_template"] = template.name
     return merged
-
